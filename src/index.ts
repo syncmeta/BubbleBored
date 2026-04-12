@@ -10,8 +10,9 @@ import { apiRoutes } from './api/routes';
 import { auditRoutes } from './api/audit';
 import { chatApiRoutes } from './api/bots';
 import { surfRoutes } from './api/surf';
+import { reviewRoutes } from './api/review';
 import { addMessage as debounceAdd, cancelPending } from './core/debounce';
-import { handleUserMessage } from './core/orchestrator';
+import { handleUserMessage, signalNewMessage } from './core/orchestrator';
 import { cancelPendingReview } from './core/review';
 import { startSurfingScheduler } from './core/surfing/trigger';
 import type { OutboundMessage } from './bus/types';
@@ -35,10 +36,13 @@ configManager.onChange(() => {
 // Setup MessageBus
 messageBus.register(webChannel);
 messageBus.setMessageHandler(({ conversationId, botId, userId, content, replyFn }) => {
+  // Signal any running generation to stop after 2s grace period
+  signalNewMessage(conversationId);
+
   // Handle /surf command
   if (content === '/surf') {
     import('./core/surfing/searcher').then(({ runSurf }) => {
-      runSurf(conversationId, botId, userId, replyFn).catch(e =>
+      runSurf(conversationId, botId, userId, replyFn, undefined, 'user').catch(e =>
         console.error('[surf] error:', e)
       );
     });
@@ -68,6 +72,7 @@ app.route('/api', apiRoutes);
 app.route('/api/audit', auditRoutes);
 app.route('/api', chatApiRoutes);
 app.route('/api/surf', surfRoutes);
+app.route('/api/review', reviewRoutes);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
@@ -117,4 +122,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`[server] BeyondBubble running at http://localhost:${port}`);
+console.log(`[server] BubbleBored running at http://localhost:${port}`);

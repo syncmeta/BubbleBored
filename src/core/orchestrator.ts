@@ -11,14 +11,30 @@ import {
 } from '../db/queries';
 import type { OutboundMessage } from '../bus/types';
 
+// Interrupt tracking: when a new user message arrives during generation,
+// give the current generation a 2s grace period then drop remaining segments.
+const interruptSignals = new Map<string, number>();
+
+export function signalNewMessage(conversationId: string) {
+  interruptSignals.set(conversationId, Date.now());
+}
+
+function isInterrupted(conversationId: string): boolean {
+  const t = interruptSignals.get(conversationId);
+  if (!t) return false;
+  return (Date.now() - t) >= 2000;
+}
+
 export async function handleUserMessage(params: {
   conversationId: string;
   botId: string;
   userId: string;
   mergedContent: string;
   replyFn: (msg: OutboundMessage) => void;
+  extraContext?: string;
 }): Promise<void> {
-  const { conversationId, botId, userId, mergedContent, replyFn } = params;
+  const { conversationId, botId, userId, mergedContent, replyFn, extraContext } = params;
+  interruptSignals.delete(conversationId); // clear stale interrupt from triggering message
   const botConfig = configManager.getBotConfig(botId);
 
   console.log(`\n[chat] ← user(${userId.slice(0, 8)}) → bot(${botId}): ${mergedContent}`);
@@ -48,6 +64,7 @@ export async function handleUserMessage(params: {
     botId,
     conversationId,
     userMessage: mergedContent,
+    extraContext,
   });
   console.log(`[chat] prompt: ${messages.length} messages, model: ${botConfig.model}`);
 
@@ -78,6 +95,7 @@ export async function handleUserMessage(params: {
 
     const sendSegment = (idx: number) => {
       if (sentSegments.has(idx)) return;
+      if (isInterrupted(conversationId)) return; // new message arrived, grace expired
       const content = segments.get(idx);
       if (content) {
         sentSegments.add(idx);
@@ -91,6 +109,12 @@ export async function handleUserMessage(params: {
     };
 
     for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta)) {
+      // Check if new message arrived and grace period expired
+      if (isInterrupted(conversationId)) {
+        console.log(`[chat] interrupted by new message, stopping generation`);
+        break;
+      }
+
       fullOutput += seg.delta;
 
       // Early [SILENT] detection
@@ -143,22 +167,31 @@ export async function handleUserMessage(params: {
       segments.set(0, fullOutput.trim());
     }
 
-    // Send any unsent segments
+    // Send any unsent segments (sendSegment checks interrupt)
     for (const [idx] of segments) {
       sendSegment(idx);
     }
 
-    console.log(`[chat] → sent ${segments.size} messages`);
+    const wasInterrupted = interruptSignals.has(conversationId);
+    if (wasInterrupted) {
+      console.log(`[chat] → interrupted, sent ${sentSegments.size}/${segments.size} segments`);
+    } else {
+      console.log(`[chat] → sent ${segments.size} messages`);
+    }
 
-    // Store bot messages
-    for (const [idx, content] of segments) {
+    // Store bot messages — only those actually sent to the user
+    for (const idx of sentSegments) {
+      const content = segments.get(idx);
+      if (!content) continue;
       const segMsgId = idx === 0 ? messageId : randomUUID();
       insertMessage(segMsgId, conversationId, 'bot', botId, content, idx);
     }
 
-    // Update conversation sender
-    const currentRound = conv?.round_count ?? 0;
-    updateConversationRound(conversationId, currentRound, 'bot');
+    // Update conversation sender only if we actually sent something
+    if (sentSegments.size > 0) {
+      const currentRound = conv?.round_count ?? 0;
+      updateConversationRound(conversationId, currentRound, 'bot');
+    }
 
     logAudit({
       conversationId, taskType: 'chat', model: botConfig.model,

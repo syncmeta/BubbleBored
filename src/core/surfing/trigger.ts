@@ -26,7 +26,7 @@ async function checkAllConversations(): Promise<void> {
   for (const conv of convs) {
     try {
       const botConfig = configManager.getBotConfig(conv.bot_id);
-      if (!botConfig.surfing.enabled) continue;
+      if (!botConfig.surfing.enabled || !botConfig.surfing.autoTrigger) continue;
 
       const lastSurf = conv.surf_last_at ?? 0;
       const interval = conv.surf_interval ?? botConfig.surfing.initialIntervalSec;
@@ -45,7 +45,7 @@ async function checkAllConversations(): Promise<void> {
 
       // Run surf
       const { runSurf } = await import('./searcher');
-      await runSurf(conv.id, conv.bot_id, conv.user_id, replyFn);
+      await runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, undefined, 'auto');
 
       // Update decay state
       const newInterval = Math.min(

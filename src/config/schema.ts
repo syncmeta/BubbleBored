@@ -8,6 +8,7 @@ export const ReviewConfigSchema = z.object({
 
 export const SurfingConfigSchema = z.object({
   enabled: z.boolean().default(true),
+  autoTrigger: z.boolean().default(true),
   initialIntervalSec: z.number().int().default(1800),
   multiplier: z.number().default(1.5),
   maxIntervalSec: z.number().int().default(86400),

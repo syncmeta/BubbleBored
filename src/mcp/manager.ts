@@ -27,7 +27,7 @@ class MCPManager {
         console.warn('[mcp] JINA_API_KEY not set, requests may be rate-limited');
       }
 
-      const client = new Client({ name: 'beyondbubble', version: '0.1.0' });
+      const client = new Client({ name: 'bubblebored', version: '0.1.0' });
       const transport = new StreamableHTTPClientTransport(
         new URL(JINA_MCP_URL),
         { requestInit: { headers } },

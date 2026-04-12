@@ -106,11 +106,16 @@ aside {
 }
 
 .bot-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13.5px;
   font-weight: 500;
   color: var(--text-1);
   letter-spacing: -0.01em;
 }
+
+.bot-name .status-dot { margin-left: auto; }
 
 .bot-status {
   font-size: 11.5px;
@@ -146,6 +151,19 @@ aside {
 .footer-btn:hover {
   color: var(--text-2);
   background: var(--bg-hover);
+}
+
+a.footer-btn {
+  text-decoration: none;
+}
+
+.footer-btn.danger { color: var(--text-4); }
+.footer-btn.danger:hover { color: #E5534B; background: rgba(229,83,75,0.06); }
+
+.footer-divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: 4px 0;
 }
 
 /* ── Main ── */

@@ -3,7 +3,7 @@ import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 
 const ROOT = join(import.meta.dir, '../..');
-const DB_PATH = join(ROOT, 'data', 'beyondbubble.sqlite');
+const DB_PATH = join(ROOT, 'data', 'bubblebored.sqlite');
 
 let db: Database;
 

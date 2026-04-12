@@ -15,8 +15,8 @@ export function getLlm(): OpenAI {
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: process.env.OPENROUTER_API_KEY,
       defaultHeaders: {
-        'X-Title': 'BeyondBubble',
-        'HTTP-Referer': 'https://beyondbubble.app',
+        'X-Title': 'BubbleBored',
+        'HTTP-Referer': 'https://bubblebored.app',
       },
       fetch: proxyUrl ? proxyFetch : undefined,
     });

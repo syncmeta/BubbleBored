@@ -153,6 +153,14 @@ export function clearDebounceBuffer(conversationId: string) {
   getDb().query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(conversationId);
 }
 
+export function resetConversation(conversationId: string) {
+  const db = getDb();
+  db.query('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
+  db.query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(conversationId);
+  db.query('DELETE FROM audit_log WHERE conversation_id = ?').run(conversationId);
+  db.query('UPDATE conversations SET round_count = 0, last_sender = NULL, surf_last_at = NULL WHERE id = ?').run(conversationId);
+}
+
 export function listConversationsByUser(userId: string) {
   return getDb().query<any, [string]>(
     `SELECT c.*, b.display_name as bot_name FROM conversations c

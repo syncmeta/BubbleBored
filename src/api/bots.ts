@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { listConversationsByUser, getMessages, findUserByChannel } from '../db/queries';
+import { listConversationsByUser, getMessages, findUserByChannel, findConversation, resetConversation } from '../db/queries';
 
 export const chatApiRoutes = new Hono();
 
@@ -19,4 +19,16 @@ chatApiRoutes.get('/conversations/:id/messages', (c) => {
   const limit = parseInt(c.req.query('limit') ?? '50');
   const msgs = getMessages(id, limit);
   return c.json(msgs);
+});
+
+// Reset conversation (clear messages + memory)
+chatApiRoutes.post('/conversations/reset', async (c) => {
+  const { userId, botId } = await c.req.json<{ userId: string; botId: string }>();
+  if (!userId || !botId) return c.json({ error: 'userId and botId required' }, 400);
+  const user = findUserByChannel('web', userId);
+  if (!user) return c.json({ error: 'user not found' }, 404);
+  const conv = findConversation(botId, user.id);
+  if (!conv) return c.json({ error: 'conversation not found' }, 404);
+  resetConversation(conv.id);
+  return c.json({ ok: true });
 });

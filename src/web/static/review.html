@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Review Monitor</title>
+  <style>
+    :root {
+      --bg: #F8F7F4;
+      --surface: #FFFFFF;
+      --border: #E2E1DC;
+      --border-light: #EBEAE5;
+      --text-1: #1A1A18;
+      --text-2: #5A5955;
+      --text-3: #88878A;
+      --text-4: #B0AFB3;
+      --accent: #6E5DE7;
+      --accent-hover: #5D4CD6;
+      --accent-bg: rgba(110, 93, 231, 0.06);
+      --green: #34D399;
+      --orange: #F59E0B;
+      --red: #E5534B;
+      --r-md: 12px;
+      --r-sm: 8px;
+      --fast: 120ms;
+      --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text-1);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    header h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.02em; }
+
+    .conn-status {
+      font-size: 11px;
+      color: var(--text-4);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .conn-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-4);
+    }
+    .conn-dot.ok { background: var(--green); }
+
+    .content { flex: 1; display: flex; min-height: 0; }
+
+    /* ── Left: Bot panel ── */
+    .bot-panel {
+      width: 280px;
+      border-right: 1px solid var(--border);
+      padding: 16px 12px;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .bot-card {
+      padding: 12px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border-light);
+      margin-bottom: 8px;
+      background: var(--surface);
+      cursor: pointer;
+      transition: border-color var(--fast) var(--ease);
+    }
+
+    .bot-card:hover { border-color: var(--accent); }
+    .bot-card.selected { border-color: var(--accent); background: var(--accent-bg); }
+
+    .bot-card-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+
+    .bot-card-meta {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }
+
+    .bot-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-family: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background var(--fast) var(--ease), opacity var(--fast) var(--ease);
+    }
+
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-secondary { background: var(--border); color: var(--text-2); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border-light); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .badge-ok { background: #dcfce7; color: #166534; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-off { background: #f3f4f6; color: #6b7280; }
+
+    /* ── Middle: Messages preview ── */
+    .msg-panel {
+      width: 360px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .msg-panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-3);
+      flex-shrink: 0;
+    }
+
+    .msg-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+
+    .msg-empty {
+      color: var(--text-4);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 40px;
+    }
+
+    .msg-item {
+      margin-bottom: 8px;
+      padding: 8px 12px;
+      border-radius: var(--r-sm);
+      font-size: 12.5px;
+      line-height: 1.6;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .msg-item.user {
+      background: #ECEAFD;
+      margin-left: 32px;
+    }
+
+    .msg-item.bot {
+      background: #F0EFEB;
+      margin-right: 32px;
+    }
+
+    .msg-sender {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-3);
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Right: Log panel ── */
+    .log-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .log-toolbar {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .log-toolbar label { font-size: 12px; color: var(--text-3); }
+
+    .log-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      font-size: 12.5px;
+      line-height: 1.8;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    }
+
+    .log-entry {
+      padding: 3px 0;
+      animation: fadeIn 200ms var(--ease) both;
+      display: flex;
+      gap: 10px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .log-time { color: var(--text-4); flex-shrink: 0; font-size: 11px; min-width: 70px; }
+    .log-bot { color: var(--accent); flex-shrink: 0; font-weight: 500; font-size: 11px; min-width: 80px; }
+    .log-text { color: var(--text-2); word-break: break-word; white-space: pre-wrap; }
+    .log-entry.done .log-text { color: var(--green); font-weight: 500; }
+    .log-entry.error .log-text { color: var(--red); }
+
+    .empty-log {
+      color: var(--text-4);
+      font-size: 13px;
+      text-align: center;
+      margin-top: 80px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Review Monitor</h1>
+    <div class="conn-status">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-text">connecting...</span>
+    </div>
+  </header>
+
+  <div class="content">
+    <div class="bot-panel" id="bot-panel"></div>
+    <div class="msg-panel">
+      <div class="msg-panel-header" id="msg-header">Conversation Preview</div>
+      <div class="msg-list" id="msg-list">
+        <div class="msg-empty">Select a bot to see messages</div>
+      </div>
+    </div>
+    <div class="log-panel">
+      <div class="log-toolbar">
+        <label>Review Log</label>
+        <button class="btn btn-secondary" onclick="clearLog()">Clear</button>
+        <label style="margin-left:auto">
+          <input type="checkbox" id="auto-scroll" checked> Auto-scroll
+        </label>
+      </div>
+      <div class="log-area" id="log-area">
+        <div class="empty-log">Waiting for review events...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let eventSource = null;
+    let logs = [];
+    let botMap = {};
+    let selectedBotId = null;
+
+    init();
+
+    async function init() {
+      await loadBots();
+      connectSSE();
+    }
+
+    async function loadBots() {
+      try {
+        const res = await fetch('/api/review/bots');
+        const bots = await res.json();
+        const panel = document.getElementById('bot-panel');
+        panel.innerHTML = '';
+
+        for (const bot of bots) {
+          botMap[bot.id] = bot;
+          const card = document.createElement('div');
+          card.className = 'bot-card';
+          card.id = `bot-${bot.id}`;
+          card.onclick = () => selectBot(bot.id);
+
+          const reviewEnabled = bot.review?.enabled ?? false;
+          const badgeClass = bot.hasPending ? 'badge-pending' : (reviewEnabled ? 'badge-ok' : 'badge-off');
+          const badgeText = bot.hasPending ? 'Pending' : (reviewEnabled ? 'Enabled' : 'Disabled');
+
+          card.innerHTML = `
+            <div class="bot-card-name">${esc(bot.display_name)}</div>
+            <div class="bot-card-meta">
+              <span class="badge ${badgeClass}">${badgeText}</span>
+              Round: ${bot.roundCount} / ${bot.review?.roundInterval ?? '?'}
+              &middot; ${bot.msgCount} msgs
+            </div>
+            <div class="bot-card-actions">
+              <button class="btn btn-primary" onclick="event.stopPropagation(); triggerReview('${esc(bot.id)}')">
+                Trigger Review
+              </button>
+              <button class="btn btn-secondary" onclick="event.stopPropagation(); forceReview('${esc(bot.id)}')">
+                Force (set round)
+              </button>
+            </div>
+          `;
+          panel.appendChild(card);
+        }
+      } catch (e) {
+        console.error('load bots error:', e);
+      }
+    }
+
+    function selectBot(botId) {
+      selectedBotId = botId;
+      document.querySelectorAll('.bot-card').forEach(c => c.classList.remove('selected'));
+      document.getElementById(`bot-${botId}`)?.classList.add('selected');
+      loadMessages(botId);
+    }
+
+    async function loadMessages(botId) {
+      const list = document.getElementById('msg-list');
+      const header = document.getElementById('msg-header');
+      header.textContent = `${botMap[botId]?.display_name ?? botId} — Messages`;
+
+      try {
+        const res = await fetch(`/api/review/messages/${botId}`);
+        const msgs = await res.json();
+
+        if (msgs.length === 0) {
+          list.innerHTML = '<div class="msg-empty">No messages yet</div>';
+          return;
+        }
+
+        list.innerHTML = '';
+        for (const msg of msgs) {
+          const el = document.createElement('div');
+          el.className = `msg-item ${msg.sender_type === 'user' ? 'user' : 'bot'}`;
+          el.innerHTML = `
+            <div class="msg-sender">${msg.sender_type}</div>
+            ${esc(msg.content)}
+          `;
+          list.appendChild(el);
+        }
+        list.scrollTop = list.scrollHeight;
+      } catch (e) {
+        list.innerHTML = '<div class="msg-empty">Failed to load messages</div>';
+      }
+    }
+
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource('/api/review/events');
+
+      eventSource.onopen = () => {
+        document.getElementById('conn-dot').classList.add('ok');
+        document.getElementById('conn-text').textContent = 'connected';
+      };
+
+      eventSource.onerror = () => {
+        document.getElementById('conn-dot').classList.remove('ok');
+        document.getElementById('conn-text').textContent = 'reconnecting...';
+      };
+
+      eventSource.addEventListener('init', (e) => {
+        // Could use pending info
+      });
+
+      eventSource.addEventListener('log', (e) => {
+        const data = JSON.parse(e.data);
+        addLog(data);
+      });
+
+      eventSource.addEventListener('done', (e) => {
+        const data = JSON.parse(e.data);
+        addLog({ ...data, type: 'done', content: `Review done: ${data.result}` });
+        // Refresh bot list to update badges
+        loadBots();
+      });
+    }
+
+    function addLog(entry) {
+      logs.push(entry);
+      renderLogEntry(entry);
+    }
+
+    function renderLogEntry(entry) {
+      const area = document.getElementById('log-area');
+      const empty = area.querySelector('.empty-log');
+      if (empty) empty.remove();
+
+      const el = document.createElement('div');
+      el.className = 'log-entry';
+      if (entry.type === 'done') el.classList.add('done');
+      if (entry.content?.startsWith('Error')) el.classList.add('error');
+
+      const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
+      const botName = botMap[entry.botId]?.display_name || entry.botId || '?';
+
+      el.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-bot">${esc(botName)}</span>
+        <span class="log-text">${esc(entry.content || '')}</span>
+      `;
+
+      area.appendChild(el);
+
+      if (document.getElementById('auto-scroll').checked) {
+        area.scrollTop = area.scrollHeight;
+      }
+    }
+
+    function clearLog() {
+      logs = [];
+      document.getElementById('log-area').innerHTML = '<div class="empty-log">Waiting for review events...</div>';
+    }
+
+    async function triggerReview(botId) {
+      try {
+        const res = await fetch(`/api/review/trigger/${botId}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.error) {
+          addLog({ botId, content: `Trigger failed: ${data.error}`, timestamp: Date.now() });
+        }
+      } catch (e) {
+        addLog({ botId, content: `Trigger failed: ${e.message}`, timestamp: Date.now() });
+      }
+    }
+
+    async function forceReview(botId) {
+      try {
+        const res = await fetch(`/api/review/force/${botId}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.error) {
+          addLog({ botId, content: `Force failed: ${data.error}`, timestamp: Date.now() });
+        } else {
+          addLog({ botId, content: `Forced round to ${data.forcedRound}, review triggered`, timestamp: Date.now() });
+          loadBots();
+        }
+      } catch (e) {
+        addLog({ botId, content: `Force failed: ${e.message}`, timestamp: Date.now() });
+      }
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>

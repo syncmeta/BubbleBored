@@ -1,4 +1,4 @@
-// BeyondBubble Web Client
+// BubbleBored Web Client
 
 const state = {
   userId: localStorage.getItem('bb_userId') || generateId(),
@@ -40,7 +40,7 @@ async function loadBots() {
       el.className = 'bot-item';
       el.dataset.botId = bot.id;
       el.innerHTML = `
-        <div class="bot-name">${esc(bot.display_name || bot.id)}</div>
+        <div class="bot-name">${esc(bot.display_name || bot.id)}<span class="status-dot" id="status-${bot.id}"></span></div>
         <div class="bot-status">点击开始对话</div>
       `;
       el.onclick = () => selectBot(bot.id, bot.display_name || bot.id);
@@ -62,6 +62,8 @@ function selectBot(botId, displayName) {
 
   const chatView = document.getElementById('chat-view');
   chatView.style.display = 'flex';
+
+  document.getElementById('reset-btn').style.display = '';
 
   document.querySelectorAll('.bot-item').forEach(el => {
     el.classList.toggle('active', el.dataset.botId === botId);
@@ -102,7 +104,7 @@ function connectWs() {
 
   state.ws.onopen = () => {
     state.reconnectDelay = 1000;
-    document.querySelector('.status-dot')?.classList.add('connected');
+    document.querySelectorAll('.status-dot').forEach(d => d.classList.add('connected'));
   };
 
   state.ws.onmessage = (e) => {
@@ -123,7 +125,7 @@ function connectWs() {
   };
 
   state.ws.onclose = () => {
-    document.querySelector('.status-dot')?.classList.remove('connected');
+    document.querySelectorAll('.status-dot').forEach(d => d.classList.remove('connected'));
     state.reconnectTimer = setTimeout(() => {
       state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
       connectWs();
@@ -288,4 +290,27 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ── Reset ──
+
+async function resetConversation() {
+  if (!state.currentBotId) return;
+  if (!confirm('确定要清空当前对话的所有消息和记忆吗？')) return;
+
+  try {
+    const res = await fetch('/api/conversations/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: state.userId, botId: state.currentBotId }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById('messages').innerHTML = '';
+    } else {
+      alert('清空失败: ' + (data.error || '未知错误'));
+    }
+  } catch (e) {
+    alert('清空失败: ' + e.message);
+  }
 }

@@ -16,6 +16,7 @@ defaults:
     timerMs: 10000
   surfing:
     enabled: true
+    autoTrigger: false
     initialIntervalSec: 1800
     multiplier: 1.5
     maxIntervalSec: 86400

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BeyondBubble</title>
+  <title>BubbleBored</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -11,12 +11,34 @@
     <aside id="sidebar">
       <nav id="bot-list"></nav>
       <div class="sidebar-footer">
+        <button class="footer-btn" id="reset-btn" onclick="resetConversation()" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+          </svg>
+          清空对话重来
+        </button>
+        <div class="footer-divider"></div>
         <button class="footer-btn" onclick="showAudit()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/>
           </svg>
           使用统计
         </button>
+        <a class="footer-btn" href="/surf.html" target="_blank">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 20l.5-1.5C4 14 6 10 12 10s8 4 9.5 8.5L22 20"/>
+            <path d="M12 10V4"/><circle cx="12" cy="4" r="1"/>
+          </svg>
+          Surf Monitor
+        </a>
+        <a class="footer-btn" href="/review.html" target="_blank">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
+          </svg>
+          Review Monitor
+        </a>
       </div>
     </aside>
 
@@ -34,7 +56,6 @@
 
       <div id="chat-view" style="display:none">
         <span id="chat-bot-name" style="display:none"></span>
-        <span id="chat-status" class="status-dot" style="position:fixed;top:8px;right:12px;z-index:10"></span>
         <div class="messages-scroll">
           <div id="messages"></div>
         </div>
