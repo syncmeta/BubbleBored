@@ -86,7 +86,7 @@ async function loadHistory(botId) {
     const messages = await msgRes.json();
 
     for (const msg of messages) {
-      appendMessage(msg.sender_type === 'user' ? 'user' : 'bot', msg.content);
+      appendMessage(msg.sender_type === 'user' ? 'user' : 'bot', msg.content, msg.id);
     }
     scrollToBottom();
   } catch (e) {
@@ -112,7 +112,7 @@ function connectWs() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'message' && msg.content) {
         clearSurfLog();
-        appendMessage('bot', msg.content);
+        appendMessage('bot', msg.content, msg.messageId);
         scrollToBottom();
       } else if (msg.type === 'error' && msg.content) {
         appendMessage('bot', msg.content);
@@ -137,13 +137,35 @@ function connectWs() {
 
 // ── Messages ──
 
-function appendMessage(type, content) {
+function appendMessage(type, content, msgId) {
   const msgs = document.getElementById('messages');
-  const el = document.createElement('div');
-  el.className = `msg ${type}`;
-  el.textContent = content;
-  msgs.appendChild(el);
-  return el;
+  const wrap = document.createElement('div');
+  wrap.className = `msg-wrap ${type}`;
+  if (msgId) wrap.dataset.msgId = msgId;
+
+  const bubble = document.createElement('div');
+  bubble.className = `msg ${type}`;
+  bubble.textContent = content;
+
+  const del = document.createElement('button');
+  del.className = 'msg-del';
+  del.innerHTML = '&times;';
+  del.onclick = () => deleteMsg(wrap);
+
+  wrap.appendChild(bubble);
+  wrap.appendChild(del);
+  msgs.appendChild(wrap);
+  return wrap;
+}
+
+async function deleteMsg(el) {
+  const msgId = el.dataset.msgId;
+  if (msgId) {
+    try {
+      await fetch(`/api/messages/${msgId}`, { method: 'DELETE' });
+    } catch {}
+  }
+  el.remove();
 }
 
 function appendSurfLog(content) {

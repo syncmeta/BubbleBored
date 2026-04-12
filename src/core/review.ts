@@ -17,14 +17,18 @@ export async function checkAndTriggerReview(
   conversationId: string,
   botId: string,
   replyFn: (msg: OutboundMessage) => void,
+  manual = false,
 ): Promise<void> {
   const conv = findConversationById(conversationId);
   if (!conv) return;
 
   const botConfig = configManager.getBotConfig(botId);
   if (!botConfig.review.enabled) return;
-  if (conv.round_count === 0) return;
-  if (conv.round_count % botConfig.review.roundInterval !== 0) return;
+
+  if (!manual) {
+    if (conv.round_count === 0) return;
+    if (conv.round_count % botConfig.review.roundInterval !== 0) return;
+  }
 
   console.log(`[review] triggered for conv ${conversationId} at round ${conv.round_count}`);
   emitLog(botId, conversationId, `Review triggered (round ${conv.round_count})`);
@@ -51,13 +55,14 @@ export async function checkAndTriggerReview(
 
   emitLog(botId, conversationId, `Calling LLM (${model})...`);
   console.log(`[review] calling LLM (model: ${model})...`);
-  const { result, latencyMs } = await chatCompletion({ model, messages });
+  const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
   logAudit({
     conversationId, taskType: 'review', model,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,
     totalTokens: result.usage?.total_tokens ?? 0,
+    costUsd,
     generationId: result.id,
     latencyMs,
   });

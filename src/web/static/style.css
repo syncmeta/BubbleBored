@@ -233,15 +233,45 @@ main {
   min-height: 100%;
 }
 
-.msg {
+.msg-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   max-width: min(72%, 540px);
+  animation: msgIn 280ms var(--ease) both;
+}
+
+.msg-wrap.user { align-self: flex-end; flex-direction: row-reverse; }
+.msg-wrap.bot { align-self: flex-start; }
+
+.msg-del {
+  display: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.msg-wrap:hover .msg-del { display: flex; }
+.msg-del:hover { background: #E5534B; color: white; }
+
+.msg {
   padding: 10px 16px;
   font-size: 14px;
   line-height: 1.65;
   word-break: break-word;
   white-space: pre-wrap;
   letter-spacing: -0.008em;
-  animation: msgIn 280ms var(--ease) both;
+  min-width: 0;
 }
 
 @keyframes msgIn {
@@ -250,14 +280,12 @@ main {
 }
 
 .msg.user {
-  align-self: flex-end;
   background: var(--msg-user);
   color: var(--text-1);
   border-radius: var(--r-xl) var(--r-xl) 6px var(--r-xl);
 }
 
 .msg.bot {
-  align-self: flex-start;
   background: var(--msg-bot);
   color: var(--text-1);
   border-radius: var(--r-xl) var(--r-xl) var(--r-xl) 6px;

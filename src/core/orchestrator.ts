@@ -156,6 +156,7 @@ export async function handleUserMessage(params: {
         inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
         outputTokens: streamMeta.usage?.completion_tokens ?? 0,
         totalTokens: streamMeta.usage?.total_tokens ?? 0,
+        costUsd: streamMeta.usage?.cost,
         generationId: streamMeta.generationId,
         latencyMs,
       });
@@ -189,8 +190,8 @@ export async function handleUserMessage(params: {
 
     // Update conversation sender only if we actually sent something
     if (sentSegments.size > 0) {
-      const currentRound = conv?.round_count ?? 0;
-      updateConversationRound(conversationId, currentRound, 'bot');
+      const freshConv = findConversationById(conversationId);
+      updateConversationRound(conversationId, freshConv?.round_count ?? 0, 'bot');
     }
 
     logAudit({

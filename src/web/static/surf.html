@@ -271,14 +271,28 @@
 
   <script>
     let eventSource = null;
-    let logs = [];
+    let logs = JSON.parse(localStorage.getItem('surf_logs') || '[]');
     let botMap = {};
 
     init();
 
     async function init() {
       await loadBots();
+      restoreLogs();
       connectSSE();
+    }
+
+    function saveLogs() {
+      localStorage.setItem('surf_logs', JSON.stringify(logs));
+    }
+
+    function restoreLogs() {
+      if (logs.length === 0) return;
+      const area = document.getElementById('log-area');
+      area.innerHTML = '';
+      const filter = document.getElementById('filter-bot').value;
+      const filtered = filter ? logs.filter(l => l.botId === filter) : logs;
+      for (const entry of filtered) renderLogEntry(entry);
     }
 
     async function loadBots() {
@@ -349,6 +363,7 @@
 
     function addLog(entry) {
       logs.push(entry);
+      saveLogs();
 
       const filter = document.getElementById('filter-bot').value;
       if (filter && entry.botId !== filter) return;
@@ -385,6 +400,7 @@
 
     function clearLog() {
       logs = [];
+      saveLogs();
       const area = document.getElementById('log-area');
       area.innerHTML = '<div class="empty-log">Waiting for surf events...</div>';
     }

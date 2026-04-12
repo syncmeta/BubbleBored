@@ -3,8 +3,8 @@ import { randomUUID } from 'crypto';
 import { configManager } from '../config/loader';
 import {
   listBots, findConversation, createConversation,
-  findUserByChannel, createUser, findConversationById,
-  getMessages, updateConversationRound,
+  findUserByChannel, createUser,
+  getMessages,
 } from '../db/queries';
 import { reviewEvents, checkAndTriggerReview, getPendingReviews } from '../core/review';
 import type { OutboundMessage } from '../bus/types';
@@ -75,8 +75,8 @@ reviewRoutes.post('/trigger/:botId', async (c) => {
     reviewEvents.emit('log', { botId, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
   };
 
-  // Run review in background
-  checkAndTriggerReview(conv.id, botId, replyFn).catch(e => {
+  // Run review in background (manual = skip round check)
+  checkAndTriggerReview(conv.id, botId, replyFn, true).catch(e => {
     console.error(`[review-api] error:`, e);
     reviewEvents.emit('log', { botId, conversationId: conv.id, content: `Error: ${e.message}`, timestamp: Date.now() });
   });
@@ -84,7 +84,7 @@ reviewRoutes.post('/trigger/:botId', async (c) => {
   return c.json({ ok: true, conversationId: conv.id });
 });
 
-// Force-trigger review: temporarily set round_count to match roundInterval
+// Force-trigger review (manual, skips round check)
 reviewRoutes.post('/force/:botId', async (c) => {
   const botId = c.req.param('botId');
   const userId = ensureMonitorUser();
@@ -102,21 +102,16 @@ reviewRoutes.post('/force/:botId', async (c) => {
     return c.json({ error: 'not enough messages to review (need at least 2)' }, 400);
   }
 
-  const botConfig = configManager.getBotConfig(botId);
-  // Set round_count to trigger review
-  const targetRound = botConfig.review.roundInterval;
-  updateConversationRound(conv.id, targetRound, 'bot');
-
   const replyFn = (msg: OutboundMessage) => {
     reviewEvents.emit('log', { botId, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
   };
 
-  checkAndTriggerReview(conv.id, botId, replyFn).catch(e => {
+  checkAndTriggerReview(conv.id, botId, replyFn, true).catch(e => {
     console.error(`[review-api] error:`, e);
     reviewEvents.emit('log', { botId, conversationId: conv.id, content: `Error: ${e.message}`, timestamp: Date.now() });
   });
 
-  return c.json({ ok: true, conversationId: conv.id, forcedRound: targetRound });
+  return c.json({ ok: true, conversationId: conv.id });
 });
 
 // Get conversation messages (for preview)

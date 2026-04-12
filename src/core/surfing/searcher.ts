@@ -93,7 +93,7 @@ export async function runSurf(
 
   // Step 1: Assessment — the core
   const surfPrompt = await configManager.readPrompt('surfing.md');
-  const { result: planResult, latencyMs: planLatency } = await chatCompletion({
+  const { result: planResult, latencyMs: planLatency, costUsd: planCost } = await chatCompletion({
     model,
     messages: [
       { role: 'system', content: surfPrompt },
@@ -112,6 +112,7 @@ export async function runSurf(
     inputTokens: planResult.usage?.prompt_tokens ?? 0,
     outputTokens: planResult.usage?.completion_tokens ?? 0,
     totalTokens: planResult.usage?.total_tokens ?? 0,
+    costUsd: planCost,
     generationId: planResult.id,
     latencyMs: planLatency,
   });
@@ -184,7 +185,7 @@ export async function runSurf(
         continue;
       }
 
-      const { result: evalResult, latencyMs: evalLatency } = await chatCompletion({
+      const { result: evalResult, latencyMs: evalLatency, costUsd: evalCost } = await chatCompletion({
         model,
         messages: [
           { role: 'system', content: evalPrompt },
@@ -202,6 +203,7 @@ export async function runSurf(
         inputTokens: evalResult.usage?.prompt_tokens ?? 0,
         outputTokens: evalResult.usage?.completion_tokens ?? 0,
         totalTokens: evalResult.usage?.total_tokens ?? 0,
+        costUsd: evalCost,
         generationId: evalResult.id,
         latencyMs: evalLatency,
       });
@@ -227,7 +229,7 @@ export async function runSurf(
 
           try {
             const pageContent = await mcpManager.readUrl(evalData.url);
-            const { result: readEval, latencyMs: readLatency } = await chatCompletion({
+            const { result: readEval, latencyMs: readLatency, costUsd: readCost } = await chatCompletion({
               model,
               messages: [
                 { role: 'system', content: evalPrompt },
@@ -240,6 +242,7 @@ export async function runSurf(
               inputTokens: readEval.usage?.prompt_tokens ?? 0,
               outputTokens: readEval.usage?.completion_tokens ?? 0,
               totalTokens: readEval.usage?.total_tokens ?? 0,
+              costUsd: readCost,
               generationId: readEval.id,
               latencyMs: readLatency,
             });

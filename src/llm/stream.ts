@@ -9,7 +9,7 @@ export interface StreamSegment {
 
 export interface StreamMeta {
   generationId?: string;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost?: number };
 }
 
 export async function* streamWithSplit(

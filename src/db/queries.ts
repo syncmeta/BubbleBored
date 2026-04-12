@@ -114,12 +114,6 @@ export function insertAudit(entry: {
   );
 }
 
-export function updateAuditCost(generationId: string, costUsd: number, upstreamCostUsd: number, generationTimeMs: number) {
-  getDb().query(
-    'UPDATE audit_log SET cost_usd = ?, upstream_cost_usd = ?, generation_time_ms = ? WHERE generation_id = ?'
-  ).run(costUsd, upstreamCostUsd, generationTimeMs, generationId);
-}
-
 export function getAuditSummary(from: number, to: number, groupBy: string = 'task_type') {
   const col = groupBy === 'model' ? 'model' : 'task_type';
   return getDb().query<any, [number, number]>(
@@ -151,6 +145,10 @@ export function getDebounceBuffer(conversationId: string) {
 
 export function clearDebounceBuffer(conversationId: string) {
   getDb().query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(conversationId);
+}
+
+export function deleteMessage(messageId: string) {
+  getDb().query('DELETE FROM messages WHERE id = ?').run(messageId);
 }
 
 export function resetConversation(conversationId: string) {

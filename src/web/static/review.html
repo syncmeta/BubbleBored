@@ -279,7 +279,7 @@
 
   <script>
     let eventSource = null;
-    let logs = [];
+    let logs = JSON.parse(localStorage.getItem('review_logs') || '[]');
     let botMap = {};
     let selectedBotId = null;
 
@@ -287,7 +287,19 @@
 
     async function init() {
       await loadBots();
+      restoreLogs();
       connectSSE();
+    }
+
+    function saveLogs() {
+      localStorage.setItem('review_logs', JSON.stringify(logs));
+    }
+
+    function restoreLogs() {
+      if (logs.length === 0) return;
+      const area = document.getElementById('log-area');
+      area.innerHTML = '';
+      for (const entry of logs) renderLogEntry(entry);
     }
 
     async function loadBots() {
@@ -401,6 +413,7 @@
 
     function addLog(entry) {
       logs.push(entry);
+      saveLogs();
       renderLogEntry(entry);
     }
 

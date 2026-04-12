@@ -71,7 +71,7 @@ async function judge(
     const messagesText = state.pendingMessages.map((m, i) => `消息${i + 1}: ${m}`).join('\n');
 
     console.log(`[debounce] judging (${state.pendingMessages.length} msgs)...`);
-    const { result, latencyMs } = await chatCompletion({
+    const { result, latencyMs, costUsd } = await chatCompletion({
       model: configManager.get().openrouter.debounceModel,
       messages: [
         { role: 'system', content: judgePrompt },
@@ -88,6 +88,7 @@ async function judge(
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,
+      costUsd,
       generationId: result.id,
       latencyMs,
     });

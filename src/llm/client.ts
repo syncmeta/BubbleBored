@@ -30,7 +30,12 @@ export async function chatCompletion(
   const start = Date.now();
   const res = await getLlm().chat.completions.create({ ...params, stream: false });
   const latencyMs = Date.now() - start;
-  return { result: res, latencyMs, generationId: res.id };
+  return {
+    result: res,
+    latencyMs,
+    generationId: res.id,
+    costUsd: (res.usage as any)?.cost as number | undefined,
+  };
 }
 
 export async function chatCompletionStream(
@@ -43,27 +48,4 @@ export async function chatCompletionStream(
     stream_options: { include_usage: true },
   });
   return { stream, startTime: start };
-}
-
-export async function fetchGenerationStats(generationId: string): Promise<{
-  totalCost?: number;
-  upstreamCost?: number;
-  generationTimeMs?: number;
-} | null> {
-  try {
-    await Bun.sleep(2000);
-    const res = await fetch(`https://openrouter.ai/api/v1/generation?id=${generationId}`, {
-      headers: { 'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}` },
-      proxy: proxyUrl,
-    } as any);
-    if (!res.ok) return null;
-    const data = await res.json() as any;
-    return {
-      totalCost: data.data?.total_cost,
-      upstreamCost: data.data?.upstream_inference_cost,
-      generationTimeMs: data.data?.generation_time,
-    };
-  } catch {
-    return null;
-  }
 }

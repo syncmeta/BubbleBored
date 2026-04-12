@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { listConversationsByUser, getMessages, findUserByChannel, findConversation, resetConversation } from '../db/queries';
+import { listConversationsByUser, getMessages, findUserByChannel, findConversation, resetConversation, deleteMessage } from '../db/queries';
 
 export const chatApiRoutes = new Hono();
 
@@ -30,5 +30,12 @@ chatApiRoutes.post('/conversations/reset', async (c) => {
   const conv = findConversation(botId, user.id);
   if (!conv) return c.json({ error: 'conversation not found' }, 404);
   resetConversation(conv.id);
+  return c.json({ ok: true });
+});
+
+// Delete a single message
+chatApiRoutes.delete('/messages/:id', (c) => {
+  const id = c.req.param('id');
+  deleteMessage(id);
   return c.json({ ok: true });
 });
