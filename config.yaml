@@ -1,0 +1,32 @@
+server:
+  port: 3456
+  host: "0.0.0.0"
+
+openrouter:
+  defaultModel: "anthropic/claude-sonnet-4.6"
+  debounceModel: "openrouter/free"
+  reviewModel: "anthropic/claude-sonnet-4.6"
+  surfingModel: "x-ai/grok-4.20"
+
+defaults:
+  accessMode: "open"
+  review:
+    enabled: true
+    roundInterval: 8
+    timerMs: 10000
+  surfing:
+    enabled: true
+    initialIntervalSec: 1800
+    multiplier: 1.5
+    maxIntervalSec: 86400
+    idleStopSec: 172800
+    maxRequests: 10
+  debounce:
+    enabled: true
+    windowMs: 2000
+    maxWaitMs: 15000
+
+bots:
+  default:
+    displayName: "AAA"
+    promptFile: "default.md"

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# SQLite database files
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
+
+# Bun
+bun.lock
+
+# Claude Code
+.claude/
