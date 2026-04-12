@@ -109,10 +109,14 @@ function connectWs() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'message' && msg.content) {
+        clearSurfLog();
         appendMessage('bot', msg.content);
         scrollToBottom();
       } else if (msg.type === 'error' && msg.content) {
         appendMessage('bot', msg.content);
+        scrollToBottom();
+      } else if (msg.type === 'surf_status' && msg.content) {
+        appendSurfLog(msg.content);
         scrollToBottom();
       }
     } catch {}
@@ -138,6 +142,26 @@ function appendMessage(type, content) {
   el.textContent = content;
   msgs.appendChild(el);
   return el;
+}
+
+function appendSurfLog(content) {
+  const msgs = document.getElementById('messages');
+  let container = msgs.querySelector('.surf-log');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'surf-log';
+    msgs.appendChild(container);
+  }
+  const entry = document.createElement('div');
+  entry.className = 'surf-log-entry';
+  entry.textContent = content;
+  container.appendChild(entry);
+}
+
+function clearSurfLog() {
+  const msgs = document.getElementById('messages');
+  const log = msgs.querySelector('.surf-log');
+  if (log) log.remove();
 }
 
 function scrollToBottom() {

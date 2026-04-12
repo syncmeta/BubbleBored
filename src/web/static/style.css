@@ -87,7 +87,7 @@ aside {
 #bot-list {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 8px;
+  padding: 20px 8px 2px;
 }
 
 .bot-item {
@@ -404,6 +404,42 @@ th {
 td { color: var(--text-2); }
 
 tr:hover td { background: rgba(0,0,0,0.012); }
+
+/* ── Surf Log ── */
+
+.surf-log {
+  align-self: flex-start;
+  max-width: min(72%, 540px);
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-3);
+  animation: msgIn 280ms var(--ease) both;
+}
+
+.surf-log-entry {
+  padding: 3px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: logIn 200ms var(--ease) both;
+}
+
+.surf-log-entry::before {
+  content: '› ';
+  color: var(--accent-muted);
+}
+
+.surf-log-entry:last-child {
+  color: var(--text-2);
+}
+
+@keyframes logIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 
 /* ── Scrollbar ── */
 

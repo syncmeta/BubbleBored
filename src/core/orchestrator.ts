@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { configManager } from '../config/loader';
 import { chatCompletionStream } from '../llm/client';
-import { streamWithSplit } from '../llm/stream';
+import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
 import { buildPrompt } from './prompt-builder';
 import { checkSilent } from './silent';
@@ -53,6 +53,7 @@ export async function handleUserMessage(params: {
 
   const messageId = randomUUID();
   const startTime = Date.now();
+  const streamMeta: StreamMeta = {};
 
   try {
     console.log(`[chat] calling LLM...`);
@@ -89,7 +90,7 @@ export async function handleUserMessage(params: {
       }
     };
 
-    for await (const seg of streamWithSplit(stream, onSegmentReady)) {
+    for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta)) {
       fullOutput += seg.delta;
 
       // Early [SILENT] detection
@@ -128,7 +129,11 @@ export async function handleUserMessage(params: {
       updateConversationActivity(conversationId);
       logAudit({
         conversationId, taskType: 'chat', model: botConfig.model,
-        inputTokens: 0, outputTokens: 0, totalTokens: 0, latencyMs,
+        inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
+        outputTokens: streamMeta.usage?.completion_tokens ?? 0,
+        totalTokens: streamMeta.usage?.total_tokens ?? 0,
+        generationId: streamMeta.generationId,
+        latencyMs,
       });
       return;
     }
@@ -157,7 +162,11 @@ export async function handleUserMessage(params: {
 
     logAudit({
       conversationId, taskType: 'chat', model: botConfig.model,
-      inputTokens: 0, outputTokens: 0, totalTokens: 0, latencyMs,
+      inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
+      outputTokens: streamMeta.usage?.completion_tokens ?? 0,
+      totalTokens: streamMeta.usage?.total_tokens ?? 0,
+      generationId: streamMeta.generationId,
+      latencyMs,
     });
 
     // Check review
@@ -178,7 +187,11 @@ export async function handleUserMessage(params: {
     console.error(`[chat] ✗ LLM error (${latencyMs}ms):`, err.message ?? err);
     logAudit({
       conversationId, taskType: 'chat', model: botConfig.model,
-      inputTokens: 0, outputTokens: 0, totalTokens: 0, latencyMs,
+      inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
+      outputTokens: streamMeta.usage?.completion_tokens ?? 0,
+      totalTokens: streamMeta.usage?.total_tokens ?? 0,
+      generationId: streamMeta.generationId,
+      latencyMs,
     });
     throw err;
   }

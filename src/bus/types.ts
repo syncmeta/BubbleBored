@@ -9,7 +9,7 @@ export interface InboundMessage {
 }
 
 export interface OutboundMessage {
-  type: 'stream_start' | 'stream_delta' | 'segment_complete' | 'stream_end' | 'message' | 'error';
+  type: 'stream_start' | 'stream_delta' | 'segment_complete' | 'stream_end' | 'message' | 'error' | 'surf_status';
   conversationId: string;
   messageId?: string;
   segmentIndex?: number;

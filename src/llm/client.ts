@@ -30,14 +30,18 @@ export async function chatCompletion(
   const start = Date.now();
   const res = await getLlm().chat.completions.create({ ...params, stream: false });
   const latencyMs = Date.now() - start;
-  return { result: res, latencyMs };
+  return { result: res, latencyMs, generationId: res.id };
 }
 
 export async function chatCompletionStream(
   params: Omit<ChatCompletionCreateParamsStreaming, 'stream'>
 ) {
   const start = Date.now();
-  const stream = await getLlm().chat.completions.create({ ...params, stream: true });
+  const stream = await getLlm().chat.completions.create({
+    ...params,
+    stream: true,
+    stream_options: { include_usage: true },
+  });
   return { stream, startTime: start };
 }
 

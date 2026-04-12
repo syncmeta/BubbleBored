@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surf Monitor</title>
+  <style>
+    :root {
+      --bg: #F8F7F4;
+      --surface: #FFFFFF;
+      --border: #E2E1DC;
+      --border-light: #EBEAE5;
+      --text-1: #1A1A18;
+      --text-2: #5A5955;
+      --text-3: #88878A;
+      --text-4: #B0AFB3;
+      --accent: #6E5DE7;
+      --accent-hover: #5D4CD6;
+      --red: #E5534B;
+      --red-hover: #D4443C;
+      --green: #34D399;
+      --r-md: 12px;
+      --r-sm: 8px;
+      --fast: 120ms;
+      --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text-1);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    .conn-status {
+      font-size: 11px;
+      color: var(--text-4);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .conn-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-4);
+    }
+
+    .conn-dot.ok { background: var(--green); }
+
+    .content {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    .bot-panel {
+      width: 240px;
+      border-right: 1px solid var(--border);
+      padding: 16px 12px;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .bot-card {
+      padding: 12px;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border-light);
+      margin-bottom: 8px;
+      background: var(--surface);
+    }
+
+    .bot-card-name {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      letter-spacing: -0.01em;
+    }
+
+    .bot-card-info {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-bottom: 10px;
+    }
+
+    .bot-card-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background var(--fast) var(--ease), opacity var(--fast) var(--ease);
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .btn-start {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-start:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-stop {
+      background: var(--red);
+      color: white;
+    }
+
+    .btn-stop:hover:not(:disabled) { background: var(--red-hover); }
+
+    .btn-clear {
+      background: var(--border);
+      color: var(--text-2);
+    }
+
+    .btn-clear:hover { background: var(--border-light); }
+
+    .log-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .log-toolbar {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border-light);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .log-toolbar label {
+      font-size: 12px;
+      color: var(--text-3);
+    }
+
+    .log-toolbar select {
+      font-size: 12px;
+      font-family: inherit;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-1);
+    }
+
+    .log-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      font-size: 12.5px;
+      line-height: 1.8;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    }
+
+    .log-entry {
+      padding: 3px 0;
+      animation: fadeIn 200ms var(--ease) both;
+      display: flex;
+      gap: 10px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .log-time {
+      color: var(--text-4);
+      flex-shrink: 0;
+      font-size: 11px;
+      min-width: 70px;
+    }
+
+    .log-bot {
+      color: var(--accent);
+      flex-shrink: 0;
+      font-weight: 500;
+      font-size: 11px;
+      min-width: 80px;
+    }
+
+    .log-text {
+      color: var(--text-2);
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .log-entry.done .log-text {
+      color: var(--green);
+      font-weight: 500;
+    }
+
+    .log-entry.error .log-text {
+      color: var(--red);
+    }
+
+    .empty-log {
+      color: var(--text-4);
+      font-size: 13px;
+      text-align: center;
+      margin-top: 80px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Surf Monitor</h1>
+    <div class="conn-status">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-text">connecting...</span>
+    </div>
+  </header>
+
+  <div class="content">
+    <div class="bot-panel" id="bot-panel"></div>
+    <div class="log-panel">
+      <div class="log-toolbar">
+        <label>Filter:</label>
+        <select id="filter-bot">
+          <option value="">All Bots</option>
+        </select>
+        <button class="btn btn-clear" onclick="clearLog()">Clear</button>
+        <label style="margin-left:auto">
+          <input type="checkbox" id="auto-scroll" checked> Auto-scroll
+        </label>
+      </div>
+      <div class="log-area" id="log-area">
+        <div class="empty-log">Waiting for surf events...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let eventSource = null;
+    let logs = [];
+    let botMap = {};
+
+    init();
+
+    async function init() {
+      await loadBots();
+      connectSSE();
+    }
+
+    async function loadBots() {
+      try {
+        const res = await fetch('/api/surf/bots');
+        const bots = await res.json();
+        const panel = document.getElementById('bot-panel');
+        const filter = document.getElementById('filter-bot');
+
+        panel.innerHTML = '';
+        // Keep first "All" option
+        filter.innerHTML = '<option value="">All Bots</option>';
+
+        for (const bot of bots) {
+          botMap[bot.id] = bot;
+
+          filter.innerHTML += `<option value="${esc(bot.id)}">${esc(bot.display_name)}</option>`;
+
+          const card = document.createElement('div');
+          card.className = 'bot-card';
+          card.id = `bot-${bot.id}`;
+          card.innerHTML = `
+            <div class="bot-card-name">${esc(bot.display_name)}</div>
+            <div class="bot-card-info">${bot.surfing?.enabled ? 'Surf enabled' : 'Surf disabled'}</div>
+            <div class="bot-card-actions">
+              <button class="btn btn-start" onclick="startSurf('${esc(bot.id)}')" ${bot.active ? 'disabled' : ''}>Start</button>
+              <button class="btn btn-stop" onclick="stopSurf('${esc(bot.id)}')" ${bot.active ? '' : 'disabled'}>Stop</button>
+            </div>
+          `;
+          panel.appendChild(card);
+        }
+      } catch (e) {
+        console.error('load bots error:', e);
+      }
+    }
+
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+
+      eventSource = new EventSource('/api/surf/events');
+
+      eventSource.onopen = () => {
+        document.getElementById('conn-dot').classList.add('ok');
+        document.getElementById('conn-text').textContent = 'connected';
+      };
+
+      eventSource.onerror = () => {
+        document.getElementById('conn-dot').classList.remove('ok');
+        document.getElementById('conn-text').textContent = 'reconnecting...';
+      };
+
+      eventSource.addEventListener('init', (e) => {
+        const data = JSON.parse(e.data);
+        updateBotStates(data.active);
+      });
+
+      eventSource.addEventListener('log', (e) => {
+        const data = JSON.parse(e.data);
+        addLog(data);
+      });
+
+      eventSource.addEventListener('done', (e) => {
+        const data = JSON.parse(e.data);
+        addLog({ ...data, type: 'surf_done', content: 'Surf completed' });
+        updateBotState(data.botId, false);
+      });
+    }
+
+    function addLog(entry) {
+      logs.push(entry);
+
+      const filter = document.getElementById('filter-bot').value;
+      if (filter && entry.botId !== filter) return;
+
+      renderLogEntry(entry);
+    }
+
+    function renderLogEntry(entry) {
+      const area = document.getElementById('log-area');
+      // Remove empty state
+      const empty = area.querySelector('.empty-log');
+      if (empty) empty.remove();
+
+      const el = document.createElement('div');
+      el.className = 'log-entry';
+      if (entry.type === 'surf_done') el.classList.add('done');
+      if (entry.type === 'error') el.classList.add('error');
+
+      const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
+      const botName = botMap[entry.botId]?.display_name || entry.botId;
+
+      el.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-bot">${esc(botName)}</span>
+        <span class="log-text">${esc(entry.content || '')}</span>
+      `;
+
+      area.appendChild(el);
+
+      if (document.getElementById('auto-scroll').checked) {
+        area.scrollTop = area.scrollHeight;
+      }
+    }
+
+    function clearLog() {
+      logs = [];
+      const area = document.getElementById('log-area');
+      area.innerHTML = '<div class="empty-log">Waiting for surf events...</div>';
+    }
+
+    document.getElementById('filter-bot').addEventListener('change', () => {
+      const area = document.getElementById('log-area');
+      area.innerHTML = '';
+      const filter = document.getElementById('filter-bot').value;
+      const filtered = filter ? logs.filter(l => l.botId === filter) : logs;
+      if (filtered.length === 0) {
+        area.innerHTML = '<div class="empty-log">Waiting for surf events...</div>';
+      } else {
+        for (const entry of filtered) renderLogEntry(entry);
+      }
+    });
+
+    async function startSurf(botId) {
+      try {
+        updateBotState(botId, true);
+        const res = await fetch(`/api/surf/start/${botId}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.error) {
+          updateBotState(botId, false);
+          addLog({ botId, type: 'error', content: `Start failed: ${data.error}`, timestamp: Date.now() });
+        }
+      } catch (e) {
+        updateBotState(botId, false);
+        addLog({ botId, type: 'error', content: `Start failed: ${e.message}`, timestamp: Date.now() });
+      }
+    }
+
+    async function stopSurf(botId) {
+      try {
+        await fetch(`/api/surf/stop/${botId}`, { method: 'POST' });
+        updateBotState(botId, false);
+      } catch (e) {
+        addLog({ botId, type: 'error', content: `Stop failed: ${e.message}`, timestamp: Date.now() });
+      }
+    }
+
+    function updateBotStates(activeIds) {
+      for (const id of Object.keys(botMap)) {
+        updateBotState(id, activeIds.includes(id));
+      }
+    }
+
+    function updateBotState(botId, active) {
+      const card = document.getElementById(`bot-${botId}`);
+      if (!card) return;
+      const startBtn = card.querySelector('.btn-start');
+      const stopBtn = card.querySelector('.btn-stop');
+      if (startBtn) startBtn.disabled = active;
+      if (stopBtn) stopBtn.disabled = !active;
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>

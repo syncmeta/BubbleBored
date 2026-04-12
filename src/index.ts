@@ -9,6 +9,7 @@ import type { WebSocketData } from './bus/channels/web';
 import { apiRoutes } from './api/routes';
 import { auditRoutes } from './api/audit';
 import { chatApiRoutes } from './api/bots';
+import { surfRoutes } from './api/surf';
 import { addMessage as debounceAdd, cancelPending } from './core/debounce';
 import { handleUserMessage } from './core/orchestrator';
 import { cancelPendingReview } from './core/review';
@@ -66,6 +67,7 @@ const app = new Hono();
 app.route('/api', apiRoutes);
 app.route('/api/audit', auditRoutes);
 app.route('/api', chatApiRoutes);
+app.route('/api/surf', surfRoutes);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok' }));

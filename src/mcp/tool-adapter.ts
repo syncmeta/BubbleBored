@@ -1,3 +1,3 @@
-// MCP tool adapter placeholder
-// Converts MCP tool schemas to OpenRouter function calling format
+// MCP tool adapter
+// Currently unused — Jina MCP tools are called directly via mcpManager
 export {};

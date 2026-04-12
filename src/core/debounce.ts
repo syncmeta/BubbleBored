@@ -88,6 +88,7 @@ async function judge(
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,
+      generationId: result.id,
       latencyMs,
     });
 

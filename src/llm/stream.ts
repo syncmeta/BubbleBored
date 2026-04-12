@@ -7,15 +7,27 @@ export interface StreamSegment {
   isNewSegment: boolean;
 }
 
+export interface StreamMeta {
+  generationId?: string;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
+
 export async function* streamWithSplit(
   stream: Stream<ChatCompletionChunk>,
-  onSegmentReady: (segmentIndex: number, fullText: string) => void
+  onSegmentReady: (segmentIndex: number, fullText: string) => void,
+  meta?: StreamMeta,
 ): AsyncGenerator<StreamSegment> {
   let currentSegment = 0;
   let buffer = '';
   let pipeCount = 0;
 
   for await (const chunk of stream) {
+    // Capture generation ID and usage from chunks
+    if (meta) {
+      if (!meta.generationId && chunk.id) meta.generationId = chunk.id;
+      if (chunk.usage) meta.usage = chunk.usage as any;
+    }
+
     const content = chunk.choices[0]?.delta?.content;
     if (!content) continue;
 
