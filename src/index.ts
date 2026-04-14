@@ -64,6 +64,35 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, replyFn 
 // Start surfing scheduler
 startSurfingScheduler();
 
+// --- Platform channels ---
+const telegramCfg = configManager.get().telegram;
+let telegramChannel: import('./bus/channels/telegram').TelegramChannel | undefined;
+if (telegramCfg.enabled && (process.env.TELEGRAM_BOT_TOKEN || telegramCfg.token)) {
+  const { TelegramChannel } = await import('./bus/channels/telegram');
+  telegramChannel = new TelegramChannel({
+    token: process.env.TELEGRAM_BOT_TOKEN || telegramCfg.token,
+    defaultBot: telegramCfg.defaultBot,
+    webhookUrl: telegramCfg.webhookUrl,
+  });
+  messageBus.register(telegramChannel);
+  console.log('[init] telegram channel registered');
+}
+
+const feishuCfg = configManager.get().feishu;
+let feishuChannel: import('./bus/channels/feishu').FeishuChannel | undefined;
+if (feishuCfg.enabled && (process.env.FEISHU_APP_ID || feishuCfg.appId)) {
+  const { FeishuChannel } = await import('./bus/channels/feishu');
+  feishuChannel = new FeishuChannel({
+    appId: process.env.FEISHU_APP_ID || feishuCfg.appId,
+    appSecret: process.env.FEISHU_APP_SECRET || feishuCfg.appSecret,
+    defaultBot: feishuCfg.defaultBot,
+    verificationToken: feishuCfg.verificationToken,
+  });
+  messageBus.register(feishuChannel);
+  await feishuChannel.start();
+  console.log('[init] feishu channel ready');
+}
+
 // Hono app
 const app = new Hono();
 
@@ -76,6 +105,22 @@ app.route('/api/review', reviewRoutes);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok' }));
+
+// Platform webhooks
+if (telegramChannel && telegramCfg.webhookUrl) {
+  const tg = telegramChannel;
+  app.post('/webhook/telegram', async (c) => {
+    tg.handleUpdate(await c.req.json());
+    return c.json({ ok: true });
+  });
+}
+if (feishuChannel) {
+  const fs = feishuChannel;
+  app.post('/webhook/feishu', async (c) => {
+    const result = await fs.handleEvent(await c.req.json());
+    return c.json(result);
+  });
+}
 
 // Static files
 app.use('/*', serveStatic({ root: './src/web/static' }));
@@ -123,3 +168,8 @@ const server = Bun.serve({
 });
 
 console.log(`[server] BubbleBored running at http://localhost:${port}`);
+
+// Start Telegram after server is up (polling needs no server, webhook route already mounted)
+if (telegramChannel) {
+  telegramChannel.start().catch(e => console.error('[telegram] start error:', e));
+}

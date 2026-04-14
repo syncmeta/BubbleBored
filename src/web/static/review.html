@@ -445,6 +445,7 @@
 
     function clearLog() {
       logs = [];
+      saveLogs();
       document.getElementById('log-area').innerHTML = '<div class="empty-log">Waiting for review events...</div>';
     }
 

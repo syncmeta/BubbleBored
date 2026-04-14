@@ -34,6 +34,21 @@ export const BotConfigSchema = z.object({
   skills: z.array(z.string()).optional(),
 });
 
+export const TelegramConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  token: z.string().default(''),
+  defaultBot: z.string().default('default'),
+  webhookUrl: z.string().optional(),
+});
+
+export const FeishuConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  appId: z.string().default(''),
+  appSecret: z.string().default(''),
+  defaultBot: z.string().default('default'),
+  verificationToken: z.string().default(''),
+});
+
 export const GlobalConfigSchema = z.object({
   server: z.object({
     port: z.number().int().default(3000),
@@ -52,12 +67,16 @@ export const GlobalConfigSchema = z.object({
     debounce: DebounceConfigSchema.default({}),
   }).default({}),
   bots: z.record(z.string(), BotConfigSchema).default({}),
+  telegram: TelegramConfigSchema.default({}),
+  feishu: FeishuConfigSchema.default({}),
 });
 
 export type ReviewConfig = z.infer<typeof ReviewConfigSchema>;
 export type SurfingConfig = z.infer<typeof SurfingConfigSchema>;
 export type DebounceConfig = z.infer<typeof DebounceConfigSchema>;
 export type BotConfig = z.infer<typeof BotConfigSchema>;
+export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
+export type FeishuConfig = z.infer<typeof FeishuConfigSchema>;
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
 export interface ResolvedBotConfig {

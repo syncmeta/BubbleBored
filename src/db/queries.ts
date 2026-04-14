@@ -165,3 +165,10 @@ export function listConversationsByUser(userId: string) {
      JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? ORDER BY c.last_activity_at DESC`
   ).all(userId);
 }
+
+export function findLatestConversationByBot(botId: string) {
+  return getDb().query<any, [string]>(
+    `SELECT * FROM conversations WHERE bot_id = ?
+     ORDER BY last_activity_at DESC LIMIT 1`
+  ).get(botId);
+}

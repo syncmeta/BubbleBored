@@ -27,6 +27,23 @@ defaults:
     windowMs: 2000
     maxWaitMs: 15000
 
+# Telegram: 设置 token 或环境变量 TELEGRAM_BOT_TOKEN
+# 不设 webhookUrl 则自动使用 polling 模式
+telegram:
+  enabled: false
+  token: ""
+  defaultBot: "default"
+  # webhookUrl: "https://your-domain.com/webhook/telegram"
+
+# 飞书: 设置 appId/appSecret 或环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET
+# 需要在飞书开放平台配置事件订阅地址: https://your-domain.com/webhook/feishu
+feishu:
+  enabled: false
+  appId: ""
+  appSecret: ""
+  defaultBot: "default"
+  verificationToken: ""
+
 bots:
   default:
     displayName: "AAA"

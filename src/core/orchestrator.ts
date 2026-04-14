@@ -145,7 +145,7 @@ export async function handleUserMessage(params: {
     const latencyMs = Date.now() - startTime;
 
     // Log raw output with escape sequences visible
-    const rawModelOutput = rawSegments.join('|||');
+    const rawModelOutput = rawSegments.join('\n\n');
     console.log(`[chat] → raw (${latencyMs}ms): ${JSON.stringify(rawModelOutput)}`);
 
     if (silentDetected) {

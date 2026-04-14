@@ -1,9 +1,7 @@
 import { Hono } from 'hono';
-import { randomUUID } from 'crypto';
 import { configManager } from '../config/loader';
 import {
-  listBots, findConversation, createConversation,
-  findUserByChannel, createUser,
+  listBots, findLatestConversationByBot,
   getMessages,
 } from '../db/queries';
 import { reviewEvents, checkAndTriggerReview, getPendingReviews } from '../core/review';
@@ -11,25 +9,14 @@ import type { OutboundMessage } from '../bus/types';
 
 export const reviewRoutes = new Hono();
 
-function ensureMonitorUser(): string {
-  let user = findUserByChannel('web', 'review-monitor');
-  if (!user) {
-    const id = randomUUID();
-    createUser(id, 'web', 'review-monitor', 'Review Monitor');
-    user = findUserByChannel('web', 'review-monitor');
-  }
-  return user!.id;
-}
-
 // List bots with review config and conversation state
 reviewRoutes.get('/bots', (c) => {
   const bots = listBots();
-  const userId = ensureMonitorUser();
 
   const result = bots.map(b => {
     try {
       const config = configManager.getBotConfig(b.id);
-      const conv = findConversation(b.id, userId);
+      const conv = findLatestConversationByBot(b.id);
       let msgCount = 0;
       let roundCount = 0;
       if (conv) {
@@ -52,18 +39,12 @@ reviewRoutes.get('/bots', (c) => {
   return c.json(result);
 });
 
-// Manually trigger review for a bot
+// Manually trigger review for a bot (targets latest active conversation)
 reviewRoutes.post('/trigger/:botId', async (c) => {
   const botId = c.req.param('botId');
-  const userId = ensureMonitorUser();
 
-  let conv = findConversation(botId, userId);
-  if (!conv) {
-    const convId = randomUUID();
-    createConversation(convId, botId, userId);
-    conv = findConversation(botId, userId);
-  }
-  if (!conv) return c.json({ error: 'cannot create conversation' }, 500);
+  const conv = findLatestConversationByBot(botId);
+  if (!conv) return c.json({ error: 'no conversation found for this bot' }, 404);
 
   const msgs = getMessages(conv.id, 999);
   if (msgs.length < 2) {
@@ -84,18 +65,12 @@ reviewRoutes.post('/trigger/:botId', async (c) => {
   return c.json({ ok: true, conversationId: conv.id });
 });
 
-// Force-trigger review (manual, skips round check)
+// Force-trigger review (manual, skips round check) — same behavior as /trigger now
 reviewRoutes.post('/force/:botId', async (c) => {
   const botId = c.req.param('botId');
-  const userId = ensureMonitorUser();
 
-  let conv = findConversation(botId, userId);
-  if (!conv) {
-    const convId = randomUUID();
-    createConversation(convId, botId, userId);
-    conv = findConversation(botId, userId);
-  }
-  if (!conv) return c.json({ error: 'cannot create conversation' }, 500);
+  const conv = findLatestConversationByBot(botId);
+  if (!conv) return c.json({ error: 'no conversation found for this bot' }, 404);
 
   const msgs = getMessages(conv.id, 999);
   if (msgs.length < 2) {
@@ -117,8 +92,7 @@ reviewRoutes.post('/force/:botId', async (c) => {
 // Get conversation messages (for preview)
 reviewRoutes.get('/messages/:botId', (c) => {
   const botId = c.req.param('botId');
-  const userId = ensureMonitorUser();
-  const conv = findConversation(botId, userId);
+  const conv = findLatestConversationByBot(botId);
   if (!conv) return c.json([]);
   const msgs = getMessages(conv.id, 50);
   return c.json(msgs);

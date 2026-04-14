@@ -12,6 +12,9 @@ export interface StreamMeta {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost?: number };
 }
 
+// Splits streamed output into segments on \n\n (blank line).
+// Triple-backtick fenced blocks are preserved as a single segment —
+// any \n\n inside ```...``` does NOT split, so quoted/long content is safe.
 export async function* streamWithSplit(
   stream: Stream<ChatCompletionChunk>,
   onSegmentReady: (segmentIndex: number, fullText: string) => void,
@@ -19,7 +22,27 @@ export async function* streamWithSplit(
 ): AsyncGenerator<StreamSegment> {
   let currentSegment = 0;
   let buffer = '';
-  let pipeCount = 0;
+  let pendingNewlines = 0;
+  let pendingBackticks = 0;
+  let inCodeFence = false;
+
+  function* flushNewlines(): Generator<StreamSegment> {
+    if (pendingNewlines > 0) {
+      const nl = '\n'.repeat(pendingNewlines);
+      buffer += nl;
+      yield { segmentIndex: currentSegment, delta: nl, isNewSegment: false };
+      pendingNewlines = 0;
+    }
+  }
+
+  function* flushBackticks(): Generator<StreamSegment> {
+    if (pendingBackticks > 0) {
+      const bt = '`'.repeat(pendingBackticks);
+      buffer += bt;
+      yield { segmentIndex: currentSegment, delta: bt, isNewSegment: false };
+      pendingBackticks = 0;
+    }
+  }
 
   for await (const chunk of stream) {
     // Capture generation ID and usage from chunks
@@ -32,40 +55,47 @@ export async function* streamWithSplit(
     if (!content) continue;
 
     for (const char of content) {
-      if (char === '|') {
-        pipeCount++;
-        if (pipeCount === 3) {
-          // Found |||, complete current segment
+      if (char === '`') {
+        // A newline followed by a backtick is regular content
+        yield* flushNewlines();
+        pendingBackticks++;
+        if (pendingBackticks === 3) {
+          inCodeFence = !inCodeFence;
+          buffer += '```';
+          yield { segmentIndex: currentSegment, delta: '```', isNewSegment: false };
+          pendingBackticks = 0;
+        }
+        continue;
+      }
+
+      // Non-backtick: flush accumulated backticks as content
+      yield* flushBackticks();
+
+      if (char === '\n' && !inCodeFence) {
+        pendingNewlines++;
+        if (pendingNewlines === 2) {
+          // Segment boundary — \n\n consumed as delimiter, not emitted
           onSegmentReady(currentSegment, buffer);
           currentSegment++;
           buffer = '';
-          pipeCount = 0;
+          pendingNewlines = 0;
           yield { segmentIndex: currentSegment, delta: '', isNewSegment: true };
         }
         continue;
       }
 
-      // Not a pipe - flush any accumulated pipes as regular content
-      if (pipeCount > 0) {
-        const pipes = '|'.repeat(pipeCount);
-        buffer += pipes;
-        yield { segmentIndex: currentSegment, delta: pipes, isNewSegment: false };
-        pipeCount = 0;
-      }
+      // Single \n, or \n inside a code fence — treat as regular content
+      yield* flushNewlines();
 
       buffer += char;
       yield { segmentIndex: currentSegment, delta: char, isNewSegment: false };
     }
   }
 
-  // Flush remaining pipes
-  if (pipeCount > 0) {
-    const pipes = '|'.repeat(pipeCount);
-    buffer += pipes;
-    yield { segmentIndex: currentSegment, delta: pipes, isNewSegment: false };
-  }
+  // End of stream — flush any remaining pending state
+  yield* flushBackticks();
+  yield* flushNewlines();
 
-  // Final segment
   if (buffer) {
     onSegmentReady(currentSegment, buffer);
   }

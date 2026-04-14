@@ -39,8 +39,12 @@ export async function buildPrompt(params: {
 
   for (const msg of history) {
     const role = msg.sender_type === 'user' ? 'user' as const : 'assistant' as const;
-    const annotated = annotateMessage(msg.content, msg.created_at, now);
-    messages.push({ role, content: annotated });
+    // Only annotate user messages — annotating assistant messages causes the
+    // model to mimic the pattern and emit time annotations in its own output.
+    const content = role === 'user'
+      ? annotateMessage(msg.content, msg.created_at, now)
+      : msg.content;
+    messages.push({ role, content });
   }
 
   // Add current user message

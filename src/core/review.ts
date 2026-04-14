@@ -51,6 +51,10 @@ export async function checkAndTriggerReview(
       role: (m.sender_type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: m.content,
     })),
+    // Anthropic requires the conversation to end with a user turn.
+    // Review history typically ends with the bot's last reply, so append a
+    // trailing user prompt that asks the model to produce the review output.
+    { role: 'user' as const, content: '请按系统指令对你上面的发言进行自我审视与回顾，按要求输出。' },
   ];
 
   emitLog(botId, conversationId, `Calling LLM (${model})...`);
