@@ -1,85 +1,74 @@
 import { Hono } from 'hono';
-import { randomUUID } from 'crypto';
 import { configManager } from '../config/loader';
-import { listBots, findConversation, createConversation, findUserByChannel, createUser } from '../db/queries';
+import { listBots, listConversationsByBot, findConversationById } from '../db/queries';
 import { surfEvents, activeSurfs, stopSurf, runSurf } from '../core/surfing/searcher';
 import type { OutboundMessage } from '../bus/types';
 
 export const surfRoutes = new Hono();
 
-// Ensure a "monitor" user exists for test surfing
-function ensureMonitorUser(): string {
-  let user = findUserByChannel('web', 'surf-monitor');
-  if (!user) {
-    const id = randomUUID();
-    createUser(id, 'web', 'surf-monitor', 'Surf Monitor');
-    user = findUserByChannel('web', 'surf-monitor');
-  }
-  return user!.id;
-}
-
-// List bots with surf config
+// List bots with their conversations (each conv independently surfable)
 surfRoutes.get('/bots', (c) => {
   const bots = listBots();
   const result = bots.map(b => {
+    let surfing: any = null;
     try {
-      const config = configManager.getBotConfig(b.id);
-      return {
-        id: b.id,
-        display_name: b.display_name,
-        surfing: config.surfing,
-        active: activeSurfs.has(b.id),
-      };
-    } catch {
-      return { id: b.id, display_name: b.display_name, surfing: null, active: false };
-    }
+      surfing = configManager.getBotConfig(b.id).surfing;
+    } catch {}
+
+    const conversations = listConversationsByBot(b.id).map(conv => ({
+      id: conv.id,
+      title: conv.title,
+      user_name: conv.user_name,
+      last_activity_at: conv.last_activity_at,
+      round_count: conv.round_count ?? 0,
+      active: activeSurfs.has(conv.id),
+    }));
+
+    return {
+      id: b.id,
+      display_name: b.display_name,
+      surfing,
+      conversations,
+    };
   });
   return c.json(result);
 });
 
-// Start surf for a bot
-surfRoutes.post('/start/:botId', async (c) => {
-  const botId = c.req.param('botId');
+// Start surf for a specific conversation
+surfRoutes.post('/start/:conversationId', async (c) => {
+  const conversationId = c.req.param('conversationId');
 
-  if (activeSurfs.has(botId)) {
+  if (activeSurfs.has(conversationId)) {
     return c.json({ error: 'already running' }, 409);
   }
 
-  const userId = ensureMonitorUser();
-
-  let conv = findConversation(botId, userId);
-  if (!conv) {
-    const convId = randomUUID();
-    createConversation(convId, botId, userId);
-    conv = findConversation(botId, userId);
-  }
-  if (!conv) return c.json({ error: 'cannot create conversation' }, 500);
+  const conv = findConversationById(conversationId);
+  if (!conv) return c.json({ error: 'conversation not found' }, 404);
 
   const controller = new AbortController();
-  activeSurfs.set(botId, controller);
+  activeSurfs.set(conversationId, controller);
 
   // No-op replyFn — surf monitor page uses SSE events instead
   const replyFn = (_msg: OutboundMessage) => {};
 
-  // Run in background
-  runSurf(conv.id, botId, userId, replyFn, controller.signal).catch(e => {
+  runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, controller.signal).catch(e => {
     console.error(`[surf-api] error:`, e);
-    activeSurfs.delete(botId);
-    surfEvents.emit('log', { botId, conversationId: conv.id, type: 'surf_status', content: `冲浪出错: ${e.message}`, timestamp: Date.now() });
-    surfEvents.emit('done', { botId, conversationId: conv.id, timestamp: Date.now() });
+    activeSurfs.delete(conversationId);
+    surfEvents.emit('log', { botId: conv.bot_id, conversationId: conv.id, type: 'surf_status', content: `冲浪出错: ${e.message}`, timestamp: Date.now() });
+    surfEvents.emit('done', { botId: conv.bot_id, conversationId: conv.id, timestamp: Date.now() });
   });
 
-  return c.json({ ok: true, conversationId: conv.id });
+  return c.json({ ok: true, conversationId: conv.id, botId: conv.bot_id });
 });
 
-// Stop surf for a bot
-surfRoutes.post('/stop/:botId', (c) => {
-  const botId = c.req.param('botId');
-  const stopped = stopSurf(botId);
+// Stop surf for a conversation
+surfRoutes.post('/stop/:conversationId', (c) => {
+  const conversationId = c.req.param('conversationId');
+  const stopped = stopSurf(conversationId);
   return c.json({ ok: stopped });
 });
 
-// Active surfs
+// Active surfs (list of conversationIds)
 surfRoutes.get('/active', (c) => {
   const active = Array.from(activeSurfs.keys());
   return c.json(active);
@@ -103,10 +92,9 @@ surfRoutes.get('/events', (c) => {
       surfEvents.on('log', onLog);
       surfEvents.on('done', onDone);
 
-      // Send initial active state
+      // Send initial active state (conversationIds)
       send('init', { active: Array.from(activeSurfs.keys()) });
 
-      // Cleanup when client disconnects
       c.req.raw.signal.addEventListener('abort', () => {
         surfEvents.off('log', onLog);
         surfEvents.off('done', onDone);

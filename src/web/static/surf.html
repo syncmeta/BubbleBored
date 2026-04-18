@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Surf Monitor</title>
+  <title>Surf Monitor · BubbleBored</title>
   <style>
     :root {
       --bg: #F8F7F4;
-      --surface: #FFFFFF;
+      --bg-panel: #FFFFFF;
+      --bg-soft: #F3F2EE;
+      --bg-hover: #ECEBE7;
       --border: #E2E1DC;
       --border-light: #EBEAE5;
       --text-1: #1A1A18;
@@ -16,13 +18,20 @@
       --text-4: #B0AFB3;
       --accent: #6E5DE7;
       --accent-hover: #5D4CD6;
+      --accent-bg: rgba(110, 93, 231, 0.06);
+      --accent-muted: #AEA4F0;
+      --green: #34D399;
+      --green-soft: #dcfce7;
+      --green-text: #166534;
       --red: #E5534B;
       --red-hover: #D4443C;
-      --green: #34D399;
+      --orange: #F59E0B;
       --r-md: 12px;
       --r-sm: 8px;
+      --r-full: 9999px;
       --fast: 120ms;
       --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+      --shadow-xs: 0 1px 2px rgba(0,0,0,0.03);
     }
 
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -35,24 +44,39 @@
       display: flex;
       flex-direction: column;
       -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.01em;
     }
 
     header {
-      padding: 20px 28px;
+      padding: 16px 28px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 14px;
       flex-shrink: 0;
+      background: var(--bg-panel);
     }
 
     header h1 {
-      font-size: 14px;
+      font-size: 13.5px;
       font-weight: 600;
       letter-spacing: -0.02em;
     }
 
+    .crumb {
+      font-size: 12px;
+      color: var(--text-4);
+    }
+
+    .crumb a {
+      color: var(--text-3);
+      text-decoration: none;
+      transition: color var(--fast) var(--ease);
+    }
+    .crumb a:hover { color: var(--accent); }
+
     .conn-status {
+      margin-left: auto;
       font-size: 11px;
       color: var(--text-4);
       display: flex;
@@ -65,168 +89,289 @@
       height: 6px;
       border-radius: 50%;
       background: var(--text-4);
+      transition: background 200ms var(--ease);
     }
-
     .conn-dot.ok { background: var(--green); }
 
-    .content {
-      flex: 1;
-      display: flex;
-      min-height: 0;
-    }
+    .content { flex: 1; display: flex; min-height: 0; }
 
-    .bot-panel {
-      width: 240px;
+    /* ── Left: bot + conversation tree ── */
+    .tree-panel {
+      width: 320px;
       border-right: 1px solid var(--border);
-      padding: 16px 12px;
+      display: flex;
+      flex-direction: column;
       flex-shrink: 0;
-      overflow-y: auto;
+      background: var(--bg-panel);
     }
 
-    .bot-card {
-      padding: 12px;
-      border-radius: var(--r-sm);
-      border: 1px solid var(--border-light);
-      margin-bottom: 8px;
-      background: var(--surface);
-    }
-
-    .bot-card-name {
-      font-size: 13px;
+    .tree-header {
+      padding: 14px 18px 8px;
+      font-size: 10.5px;
       font-weight: 600;
-      margin-bottom: 4px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      flex-shrink: 0;
+    }
+
+    .tree-list { flex: 1; overflow-y: auto; padding: 0 10px 12px; }
+
+    .bot-group { margin-bottom: 4px; }
+
+    .bot-group-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: var(--r-sm);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-1);
       letter-spacing: -0.01em;
     }
 
-    .bot-card-info {
-      font-size: 11px;
-      color: var(--text-3);
-      margin-bottom: 10px;
-    }
-
-    .bot-card-actions {
-      display: flex;
-      gap: 6px;
-    }
-
-    .btn {
-      padding: 6px 14px;
-      border: none;
+    .bot-avatar {
+      width: 22px;
+      height: 22px;
       border-radius: 6px;
-      font-size: 12px;
-      font-family: inherit;
-      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .bot-group-meta {
+      font-size: 10.5px;
+      color: var(--text-4);
+      font-weight: 400;
+      margin-left: auto;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .bot-group-meta.on { color: var(--green-text); }
+
+    .conv-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px 8px 34px;
+      border-radius: var(--r-sm);
       cursor: pointer;
-      transition: background var(--fast) var(--ease), opacity var(--fast) var(--ease);
+      transition: background var(--fast) var(--ease);
+      min-width: 0;
     }
 
-    .btn:disabled {
-      opacity: 0.4;
-      cursor: default;
+    .conv-item:hover { background: var(--bg-hover); }
+
+    .conv-item.active {
+      background: var(--accent-bg);
     }
 
-    .btn-start {
-      background: var(--accent);
-      color: white;
+    .conv-item.active .conv-title { color: var(--accent); font-weight: 500; }
+
+    .conv-title {
+      flex: 1;
+      font-size: 12.5px;
+      color: var(--text-1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
 
-    .btn-start:hover:not(:disabled) { background: var(--accent-hover); }
+    .conv-title.untitled { color: var(--text-4); font-style: italic; }
 
-    .btn-stop {
-      background: var(--red);
-      color: white;
+    .conv-status {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: transparent;
+      flex-shrink: 0;
+      transition: background 200ms var(--ease);
     }
 
-    .btn-stop:hover:not(:disabled) { background: var(--red-hover); }
-
-    .btn-clear {
-      background: var(--border);
-      color: var(--text-2);
+    .conv-status.active {
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
+      animation: pulse 1.6s var(--ease) infinite;
     }
 
-    .btn-clear:hover { background: var(--border-light); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
 
-    .log-panel {
+    .empty-tree {
+      color: var(--text-4);
+      font-size: 12px;
+      padding: 20px 14px;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    /* ── Right: detail + log ── */
+    .detail-panel {
       flex: 1;
       display: flex;
       flex-direction: column;
       min-width: 0;
     }
 
+    .detail-head {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-light);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 64px;
+    }
+
+    .detail-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-1);
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .detail-title .title-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+
+    .detail-sub {
+      font-size: 11.5px;
+      color: var(--text-4);
+      margin-top: 2px;
+    }
+
+    .detail-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border: none;
+      border-radius: var(--r-sm);
+      font-size: 12px;
+      font-family: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      letter-spacing: -0.005em;
+      transition: background var(--fast) var(--ease), opacity var(--fast) var(--ease);
+    }
+
+    .btn:disabled { opacity: 0.35; cursor: default; }
+
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-danger { background: var(--red); color: white; }
+    .btn-danger:hover:not(:disabled) { background: var(--red-hover); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--bg-soft); color: var(--text-1); }
+
+    /* ── Log ── */
     .log-toolbar {
-      padding: 10px 20px;
+      padding: 10px 24px;
       border-bottom: 1px solid var(--border-light);
       display: flex;
       align-items: center;
       gap: 12px;
       flex-shrink: 0;
+      background: var(--bg-panel);
     }
 
     .log-toolbar label {
-      font-size: 12px;
+      font-size: 11.5px;
       color: var(--text-3);
     }
 
     .log-toolbar select {
       font-size: 12px;
       font-family: inherit;
-      padding: 4px 8px;
+      padding: 5px 10px;
       border: 1px solid var(--border);
       border-radius: 6px;
-      background: var(--surface);
+      background: var(--bg-panel);
       color: var(--text-1);
+      cursor: pointer;
     }
+
+    .log-toolbar .spacer { flex: 1; }
 
     .log-area {
       flex: 1;
       overflow-y: auto;
-      padding: 16px 20px;
+      padding: 14px 24px 20px;
       font-size: 12.5px;
-      line-height: 1.8;
-      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      line-height: 1.75;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
     }
 
     .log-entry {
       padding: 3px 0;
       animation: fadeIn 200ms var(--ease) both;
       display: flex;
-      gap: 10px;
+      gap: 12px;
     }
 
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(2px); }
-      to { opacity: 1; transform: translateY(0); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     .log-time {
       color: var(--text-4);
       flex-shrink: 0;
-      font-size: 11px;
-      min-width: 70px;
+      font-size: 10.5px;
+      min-width: 66px;
+      padding-top: 2px;
     }
 
     .log-bot {
-      color: var(--accent);
       flex-shrink: 0;
       font-weight: 500;
-      font-size: 11px;
-      min-width: 80px;
+      font-size: 10.5px;
+      min-width: 90px;
+      color: var(--accent);
+      padding-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .log-text {
       color: var(--text-2);
       word-break: break-word;
       white-space: pre-wrap;
+      flex: 1;
     }
 
-    .log-entry.done .log-text {
-      color: var(--green);
-      font-weight: 500;
-    }
-
-    .log-entry.error .log-text {
-      color: var(--red);
-    }
+    .log-entry.done .log-text { color: var(--green-text); font-weight: 500; }
+    .log-entry.error .log-text { color: var(--red); }
 
     .empty-log {
       color: var(--text-4);
@@ -236,144 +381,283 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     }
 
-    ::-webkit-scrollbar { width: 4px; }
+    .empty-detail {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-4);
+      font-size: 13px;
+    }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
   </style>
 </head>
 <body>
   <header>
     <h1>Surf Monitor</h1>
+    <span class="crumb"><a href="/">← 返回主页</a></span>
     <div class="conn-status">
       <span class="conn-dot" id="conn-dot"></span>
-      <span id="conn-text">connecting...</span>
+      <span id="conn-text">connecting…</span>
     </div>
   </header>
 
   <div class="content">
-    <div class="bot-panel" id="bot-panel"></div>
-    <div class="log-panel">
-      <div class="log-toolbar">
-        <label>Filter:</label>
-        <select id="filter-bot">
-          <option value="">All Bots</option>
-        </select>
-        <button class="btn btn-clear" onclick="clearLog()">Clear</button>
-        <label style="margin-left:auto">
-          <input type="checkbox" id="auto-scroll" checked> Auto-scroll
-        </label>
+    <div class="tree-panel">
+      <div class="tree-header">Bots · Conversations</div>
+      <div class="tree-list" id="tree-list">
+        <div class="empty-tree">Loading…</div>
       </div>
+    </div>
+
+    <div class="detail-panel">
+      <div class="detail-head" id="detail-head">
+        <div>
+          <div class="detail-title"><span class="title-text" id="detail-title">Select a conversation</span></div>
+          <div class="detail-sub" id="detail-sub">选择左侧任意对话以开始监看</div>
+        </div>
+        <div class="detail-actions" id="detail-actions"></div>
+      </div>
+
+      <div class="log-toolbar">
+        <label>Filter</label>
+        <select id="filter-scope">
+          <option value="all">All events</option>
+          <option value="selected">This conversation only</option>
+        </select>
+        <div class="spacer"></div>
+        <label><input type="checkbox" id="auto-scroll" checked style="vertical-align:middle"> Auto-scroll</label>
+        <button class="btn btn-ghost" onclick="clearLog()">Clear</button>
+      </div>
+
       <div class="log-area" id="log-area">
-        <div class="empty-log">Waiting for surf events...</div>
+        <div class="empty-log">Waiting for surf events…</div>
       </div>
     </div>
   </div>
 
   <script>
-    let eventSource = null;
-    let logs = JSON.parse(localStorage.getItem('surf_logs') || '[]');
-    let botMap = {};
+    const state = {
+      bots: [],
+      bot: new Map(),      // botId -> bot row
+      conv: new Map(),     // convId -> { ...conv, botId, botName }
+      selected: null,
+      logs: JSON.parse(localStorage.getItem('surf_logs') || '[]'),
+      es: null,
+    };
 
     init();
 
     async function init() {
-      await loadBots();
-      restoreLogs();
+      await loadTree();
+      render();
+      renderLogs();
       connectSSE();
     }
 
-    function saveLogs() {
-      localStorage.setItem('surf_logs', JSON.stringify(logs));
-    }
+    // ── Data ──
 
-    function restoreLogs() {
-      if (logs.length === 0) return;
-      const area = document.getElementById('log-area');
-      area.innerHTML = '';
-      const filter = document.getElementById('filter-bot').value;
-      const filtered = filter ? logs.filter(l => l.botId === filter) : logs;
-      for (const entry of filtered) renderLogEntry(entry);
-    }
-
-    async function loadBots() {
+    async function loadTree() {
       try {
         const res = await fetch('/api/surf/bots');
-        const bots = await res.json();
-        const panel = document.getElementById('bot-panel');
-        const filter = document.getElementById('filter-bot');
-
-        panel.innerHTML = '';
-        // Keep first "All" option
-        filter.innerHTML = '<option value="">All Bots</option>';
-
-        for (const bot of bots) {
-          botMap[bot.id] = bot;
-
-          filter.innerHTML += `<option value="${esc(bot.id)}">${esc(bot.display_name)}</option>`;
-
-          const card = document.createElement('div');
-          card.className = 'bot-card';
-          card.id = `bot-${bot.id}`;
-          card.innerHTML = `
-            <div class="bot-card-name">${esc(bot.display_name)}</div>
-            <div class="bot-card-info">${bot.surfing?.enabled ? 'Surf enabled' : 'Surf disabled'}</div>
-            <div class="bot-card-actions">
-              <button class="btn btn-start" onclick="startSurf('${esc(bot.id)}')" ${bot.active ? 'disabled' : ''}>Start</button>
-              <button class="btn btn-stop" onclick="stopSurf('${esc(bot.id)}')" ${bot.active ? '' : 'disabled'}>Stop</button>
-            </div>
-          `;
-          panel.appendChild(card);
+        state.bots = await res.json();
+        state.bot.clear();
+        state.conv.clear();
+        for (const b of state.bots) {
+          state.bot.set(b.id, b);
+          for (const c of b.conversations || []) {
+            state.conv.set(c.id, { ...c, botId: b.id, botName: b.display_name });
+          }
         }
       } catch (e) {
-        console.error('load bots error:', e);
+        console.error('loadTree error:', e);
       }
     }
 
+    // ── Tree render ──
+
+    function botColor(id) {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+      return `hsl(${Math.abs(h) % 360}, 55%, 58%)`;
+    }
+
+    function botInitial(bot) {
+      const name = bot?.display_name || bot?.id || '?';
+      return name.trim().charAt(0).toUpperCase();
+    }
+
+    function render() {
+      const root = document.getElementById('tree-list');
+      if (state.bots.length === 0) {
+        root.innerHTML = '<div class="empty-tree">还没有 Bot</div>';
+        return;
+      }
+
+      const html = [];
+      for (const bot of state.bots) {
+        const convs = bot.conversations || [];
+        const active = convs.some(c => c.active);
+        html.push(`
+          <div class="bot-group">
+            <div class="bot-group-head">
+              <span class="bot-avatar" style="background:${botColor(bot.id)}">${esc(botInitial(bot))}</span>
+              <span>${esc(bot.display_name || bot.id)}</span>
+              <span class="bot-group-meta ${active ? 'on' : ''}">${bot.surfing?.enabled ? (active ? 'surfing' : 'enabled') : 'disabled'}</span>
+            </div>
+            ${convs.length === 0
+              ? '<div class="empty-tree" style="margin:4px 0 4px 34px;padding:6px 0;text-align:left;">无对话</div>'
+              : convs.map(c => renderConvRow(c, bot.id)).join('')}
+          </div>
+        `);
+      }
+      root.innerHTML = html.join('');
+
+      for (const row of root.querySelectorAll('.conv-item')) {
+        row.addEventListener('click', () => selectConv(row.dataset.convId));
+      }
+    }
+
+    function renderConvRow(conv, botId) {
+      const active = !!conv.active;
+      const selected = state.selected === conv.id ? 'active' : '';
+      const title = conv.title || '新对话';
+      const untitled = conv.title ? '' : 'untitled';
+      return `
+        <div class="conv-item ${selected}" data-conv-id="${esc(conv.id)}">
+          <span class="conv-status ${active ? 'active' : ''}"></span>
+          <span class="conv-title ${untitled}">${esc(title)}</span>
+        </div>
+      `;
+    }
+
+    // ── Detail render ──
+
+    function selectConv(id) {
+      state.selected = id;
+      render();
+      renderDetail();
+      if (document.getElementById('filter-scope').value === 'selected') {
+        renderLogs();
+      }
+    }
+
+    function renderDetail() {
+      const head = document.getElementById('detail-head');
+      const titleEl = document.getElementById('detail-title');
+      const subEl = document.getElementById('detail-sub');
+      const actions = document.getElementById('detail-actions');
+
+      const conv = state.selected ? state.conv.get(state.selected) : null;
+
+      if (!conv) {
+        titleEl.textContent = 'Select a conversation';
+        subEl.textContent = '选择左侧任意对话以开始监看';
+        actions.innerHTML = '';
+        return;
+      }
+
+      const bot = state.bot.get(conv.botId);
+      const surfEnabled = bot?.surfing?.enabled;
+      const running = !!conv.active;
+      const titleText = conv.title || '新对话';
+
+      titleEl.textContent = titleText;
+      subEl.innerHTML = `
+        <span style="color:var(--text-3);font-weight:500">${esc(conv.botName)}</span>
+        &middot; ${conv.user_name ? esc(conv.user_name) : '?'}
+        &middot; ${conv.round_count ?? 0} rounds
+        ${running ? '&middot; <span style="color:var(--green-text);font-weight:500">surfing…</span>' : ''}
+      `;
+
+      if (!surfEnabled) {
+        actions.innerHTML = `<span style="color:var(--text-4);font-size:11.5px;">该 Bot 未启用 surfing</span>`;
+        return;
+      }
+
+      actions.innerHTML = `
+        <button class="btn btn-primary" id="btn-start" ${running ? 'disabled' : ''}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Start
+        </button>
+        <button class="btn btn-danger" id="btn-stop" ${running ? '' : 'disabled'}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+          Stop
+        </button>
+      `;
+      document.getElementById('btn-start').onclick = () => startSurf(conv.id);
+      document.getElementById('btn-stop').onclick = () => stopSurf(conv.id);
+    }
+
+    // ── SSE ──
+
     function connectSSE() {
-      if (eventSource) eventSource.close();
+      if (state.es) state.es.close();
+      state.es = new EventSource('/api/surf/events');
 
-      eventSource = new EventSource('/api/surf/events');
-
-      eventSource.onopen = () => {
+      state.es.onopen = () => {
         document.getElementById('conn-dot').classList.add('ok');
         document.getElementById('conn-text').textContent = 'connected';
       };
 
-      eventSource.onerror = () => {
+      state.es.onerror = () => {
         document.getElementById('conn-dot').classList.remove('ok');
-        document.getElementById('conn-text').textContent = 'reconnecting...';
+        document.getElementById('conn-text').textContent = 'reconnecting…';
       };
 
-      eventSource.addEventListener('init', (e) => {
-        const data = JSON.parse(e.data);
-        updateBotStates(data.active);
+      state.es.addEventListener('init', (e) => {
+        const { active } = JSON.parse(e.data);
+        setActiveConvs(new Set(active));
       });
 
-      eventSource.addEventListener('log', (e) => {
+      state.es.addEventListener('log', (e) => {
         const data = JSON.parse(e.data);
         addLog(data);
       });
 
-      eventSource.addEventListener('done', (e) => {
+      state.es.addEventListener('done', (e) => {
         const data = JSON.parse(e.data);
         addLog({ ...data, type: 'surf_done', content: 'Surf completed' });
-        updateBotState(data.botId, false);
+        setConvActive(data.conversationId, false);
       });
     }
 
+    // ── Log ──
+
+    function saveLogs() { localStorage.setItem('surf_logs', JSON.stringify(state.logs)); }
+
     function addLog(entry) {
-      logs.push(entry);
+      state.logs.push(entry);
+      if (state.logs.length > 2000) state.logs.splice(0, state.logs.length - 2000);
       saveLogs();
 
-      const filter = document.getElementById('filter-bot').value;
-      if (filter && entry.botId !== filter) return;
+      const scope = document.getElementById('filter-scope').value;
+      if (scope === 'selected' && entry.conversationId !== state.selected) return;
 
-      renderLogEntry(entry);
+      appendLogRow(entry);
     }
 
-    function renderLogEntry(entry) {
+    function renderLogs() {
       const area = document.getElementById('log-area');
-      // Remove empty state
+      area.innerHTML = '';
+      const scope = document.getElementById('filter-scope').value;
+      const rows = scope === 'selected'
+        ? state.logs.filter(l => l.conversationId === state.selected)
+        : state.logs;
+      if (rows.length === 0) {
+        area.innerHTML = '<div class="empty-log">Waiting for surf events…</div>';
+        return;
+      }
+      for (const r of rows) appendLogRow(r, false);
+      scrollLogToBottom();
+    }
+
+    function appendLogRow(entry, autoscroll = true) {
+      const area = document.getElementById('log-area');
       const empty = area.querySelector('.empty-log');
       if (empty) empty.remove();
 
@@ -383,82 +667,83 @@
       if (entry.type === 'error') el.classList.add('error');
 
       const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
-      const botName = botMap[entry.botId]?.display_name || entry.botId;
+      const botName = state.bot.get(entry.botId)?.display_name || entry.botId || '';
 
       el.innerHTML = `
         <span class="log-time">${time}</span>
-        <span class="log-bot">${esc(botName)}</span>
+        <span class="log-bot" title="${esc(botName)}">${esc(botName)}</span>
         <span class="log-text">${esc(entry.content || '')}</span>
       `;
-
       area.appendChild(el);
 
-      if (document.getElementById('auto-scroll').checked) {
-        area.scrollTop = area.scrollHeight;
-      }
+      if (autoscroll && document.getElementById('auto-scroll').checked) scrollLogToBottom();
+    }
+
+    function scrollLogToBottom() {
+      const area = document.getElementById('log-area');
+      area.scrollTop = area.scrollHeight;
     }
 
     function clearLog() {
-      logs = [];
+      state.logs = [];
       saveLogs();
-      const area = document.getElementById('log-area');
-      area.innerHTML = '<div class="empty-log">Waiting for surf events...</div>';
+      renderLogs();
     }
 
-    document.getElementById('filter-bot').addEventListener('change', () => {
-      const area = document.getElementById('log-area');
-      area.innerHTML = '';
-      const filter = document.getElementById('filter-bot').value;
-      const filtered = filter ? logs.filter(l => l.botId === filter) : logs;
-      if (filtered.length === 0) {
-        area.innerHTML = '<div class="empty-log">Waiting for surf events...</div>';
-      } else {
-        for (const entry of filtered) renderLogEntry(entry);
-      }
-    });
+    document.getElementById('filter-scope').addEventListener('change', renderLogs);
 
-    async function startSurf(botId) {
+    // ── Actions ──
+
+    async function startSurf(convId) {
+      setConvActive(convId, true);
       try {
-        updateBotState(botId, true);
-        const res = await fetch(`/api/surf/start/${botId}`, { method: 'POST' });
+        const res = await fetch(`/api/surf/start/${convId}`, { method: 'POST' });
         const data = await res.json();
         if (data.error) {
-          updateBotState(botId, false);
-          addLog({ botId, type: 'error', content: `Start failed: ${data.error}`, timestamp: Date.now() });
+          setConvActive(convId, false);
+          addLog({ conversationId: convId, botId: state.conv.get(convId)?.botId, type: 'error', content: `Start failed: ${data.error}`, timestamp: Date.now() });
         }
       } catch (e) {
-        updateBotState(botId, false);
-        addLog({ botId, type: 'error', content: `Start failed: ${e.message}`, timestamp: Date.now() });
+        setConvActive(convId, false);
+        addLog({ conversationId: convId, botId: state.conv.get(convId)?.botId, type: 'error', content: `Start failed: ${e.message}`, timestamp: Date.now() });
       }
     }
 
-    async function stopSurf(botId) {
+    async function stopSurf(convId) {
       try {
-        await fetch(`/api/surf/stop/${botId}`, { method: 'POST' });
-        updateBotState(botId, false);
+        await fetch(`/api/surf/stop/${convId}`, { method: 'POST' });
       } catch (e) {
-        addLog({ botId, type: 'error', content: `Stop failed: ${e.message}`, timestamp: Date.now() });
+        addLog({ conversationId: convId, botId: state.conv.get(convId)?.botId, type: 'error', content: `Stop failed: ${e.message}`, timestamp: Date.now() });
       }
     }
 
-    function updateBotStates(activeIds) {
-      for (const id of Object.keys(botMap)) {
-        updateBotState(id, activeIds.includes(id));
+    function setConvActive(convId, active) {
+      const conv = state.conv.get(convId);
+      if (!conv) return;
+      conv.active = active;
+      const bot = state.bot.get(conv.botId);
+      if (bot) {
+        const row = bot.conversations?.find(c => c.id === convId);
+        if (row) row.active = active;
       }
+      render();
+      if (state.selected === convId) renderDetail();
     }
 
-    function updateBotState(botId, active) {
-      const card = document.getElementById(`bot-${botId}`);
-      if (!card) return;
-      const startBtn = card.querySelector('.btn-start');
-      const stopBtn = card.querySelector('.btn-stop');
-      if (startBtn) startBtn.disabled = active;
-      if (stopBtn) stopBtn.disabled = !active;
+    function setActiveConvs(activeSet) {
+      for (const [id, conv] of state.conv) {
+        conv.active = activeSet.has(id);
+      }
+      for (const bot of state.bots) {
+        for (const c of bot.conversations || []) c.active = activeSet.has(c.id);
+      }
+      render();
+      if (state.selected) renderDetail();
     }
 
     function esc(s) {
       const d = document.createElement('div');
-      d.textContent = s;
+      d.textContent = s ?? '';
       return d.innerHTML;
     }
   </script>

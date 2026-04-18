@@ -120,6 +120,108 @@ curl -X POST http://localhost:3456/api/conversations/reset \
 
 Click "Usage Stats" in the bottom-left corner to see token consumption and costs by model and task type.
 
+## Telegram / Feishu Integration
+
+Besides the web UI, every bot can have its own Telegram bot account and Feishu app — as many bots as you configure, as many external accounts. Debounce, surfing and self-review all work the same across platforms.
+
+Platform config lives under each bot:
+
+```yaml
+bots:
+  alice:
+    displayName: "Alice"
+    promptFile: "alice.md"
+    telegram:
+      enabled: true
+      token: ""                # or env var TELEGRAM_TOKEN_ALICE
+      # webhookUrl: "https://host/webhook/telegram/alice"   # omit → polling
+    feishu:
+      enabled: true
+      appId: ""                # or env var FEISHU_APP_ID_ALICE
+      appSecret: ""            # or env var FEISHU_APP_SECRET_ALICE
+  bob:
+    displayName: "Bob"
+    promptFile: "bob.md"
+    telegram:
+      enabled: true
+      token: ""                # or env var TELEGRAM_TOKEN_BOB
+```
+
+Each bot is independent on each platform — Alice has her own Telegram account and avatar, her own Feishu app. Searching `@alice_bot` in Telegram talks to Alice; `@bob_bot` talks to Bob. They don't share state.
+
+**Env var naming:** `TELEGRAM_TOKEN_{BOT_ID}` / `FEISHU_APP_ID_{BOT_ID}` / `FEISHU_APP_SECRET_{BOT_ID}`. Bot id is upper-cased, non-alphanumeric characters become `_`. So bot id `alice` → `TELEGRAM_TOKEN_ALICE`.
+
+All platforms only receive messages sent **after** connection — they don't backfill history.
+
+### Telegram
+
+For each bot you want on Telegram:
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, create a separate account per bot, grab the `token` (looks like `1234:ABC...`).
+
+2. Put tokens in `.env` (recommended):
+
+   ```
+   TELEGRAM_TOKEN_ALICE=1234:ABC...
+   TELEGRAM_TOKEN_BOB=5678:DEF...
+   ```
+
+   Or fill `telegram.token` under the bot in `config.yaml` (not recommended for secrets).
+
+3. Enable telegram under that bot:
+
+   ```yaml
+   bots:
+     alice:
+       # ...
+       telegram:
+         enabled: true
+   ```
+
+4. Start the server. Default is **polling mode** (long-polls Telegram), which works locally without a public URL. Each bot runs its own polling loop.
+
+   When deployed with a public host, set `webhookUrl` per bot to switch to webhook mode — `setWebhook` is called automatically on startup. The URL pattern is `https://host/webhook/telegram/{botId}`, e.g. Alice's is `https://your-domain.com/webhook/telegram/alice`. Must be HTTPS.
+
+5. Find each bot by username in Telegram and start messaging. Send `/surf` to manually trigger surfing.
+
+### Feishu (Lark)
+
+For each bot you want on Feishu:
+
+1. Create a "Custom App" on the [Feishu Open Platform](https://open.feishu.cn/app), one per bot. Grab the **App ID** and **App Secret**.
+
+2. Under "Permissions", enable:
+   - `im:message` (send messages)
+   - `im:message.p2p_msg` (receive DMs)
+   - `im:message.group_at_msg` (receive @-mentions in groups, optional)
+
+3. Under "Events & Callbacks" → "Event Config":
+   - Request URL: `https://your-domain.com/webhook/feishu/{botId}` (must be HTTPS on a public host). E.g. Alice's is `https://your-domain.com/webhook/feishu/alice`.
+   - Subscribe to: `Receive Message v2.0` (`im.message.receive_v1`)
+
+4. Put credentials in `.env`:
+
+   ```
+   FEISHU_APP_ID_ALICE=cli_xxx
+   FEISHU_APP_SECRET_ALICE=xxx
+   FEISHU_APP_ID_BOB=cli_yyy
+   FEISHU_APP_SECRET_BOB=yyy
+   ```
+
+5. Enable feishu under that bot:
+
+   ```yaml
+   bots:
+     alice:
+       # ...
+       feishu:
+         enabled: true
+   ```
+
+6. Start the server. Publish each app under "Version Management & Release", then DM the corresponding bot in Feishu. Group chats need an @-mention.
+
+Feishu event callbacks require a public URL. For local dev, use [ngrok](https://ngrok.com/), [frp](https://github.com/fatedier/frp), or similar for tunneling.
+
 ## Stack
 
 Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket

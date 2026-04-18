@@ -3,10 +3,12 @@ server:
   host: "0.0.0.0"
 
 openrouter:
-  defaultModel: "anthropic/claude-sonnet-4.6"
+  defaultModel: "anthropic/claude-opus-4.7"
   debounceModel: "openrouter/free"
   reviewModel: "anthropic/claude-sonnet-4.6"
   surfingModel: "x-ai/grok-4.20"
+  # 不填则用 debounceModel
+  # titleModel: "openrouter/free"
 
 defaults:
   accessMode: "open"
@@ -14,6 +16,7 @@ defaults:
     enabled: true
     roundInterval: 8
     timerMs: 10000
+    maxSearchRequests: 10
   surfing:
     enabled: true
     autoTrigger: false
@@ -27,24 +30,20 @@ defaults:
     windowMs: 2000
     maxWaitMs: 15000
 
-# Telegram: 设置 token 或环境变量 TELEGRAM_BOT_TOKEN
-# 不设 webhookUrl 则自动使用 polling 模式
-telegram:
-  enabled: false
-  token: ""
-  defaultBot: "default"
-  # webhookUrl: "https://your-domain.com/webhook/telegram"
-
-# 飞书: 设置 appId/appSecret 或环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET
-# 需要在飞书开放平台配置事件订阅地址: https://your-domain.com/webhook/feishu
-feishu:
-  enabled: false
-  appId: ""
-  appSecret: ""
-  defaultBot: "default"
-  verificationToken: ""
-
 bots:
   default:
     displayName: "AAA"
     promptFile: "default.md"
+    # 每个 bot 可以绑定自己的 Telegram / 飞书账号
+    # 不填写则仅在网页可用
+    #
+    # telegram:
+    #   enabled: true
+    #   token: ""                  # 或环境变量 TELEGRAM_TOKEN_DEFAULT
+    #   # webhookUrl: "https://host/webhook/telegram/default"   # 不填则用 polling
+    #
+    # feishu:
+    #   enabled: true
+    #   appId: ""                  # 或环境变量 FEISHU_APP_ID_DEFAULT
+    #   appSecret: ""              # 或环境变量 FEISHU_APP_SECRET_DEFAULT
+    #   # 事件回调地址: https://host/webhook/feishu/default

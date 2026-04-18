@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { configManager } from '../config/loader';
 import {
-  listBots, findLatestConversationByBot,
+  listBots, listConversationsByBot, findConversationById,
   getMessages,
 } from '../db/queries';
 import { reviewEvents, checkAndTriggerReview, getPendingReviews } from '../core/review';
@@ -9,90 +9,70 @@ import type { OutboundMessage } from '../bus/types';
 
 export const reviewRoutes = new Hono();
 
-// List bots with review config and conversation state
+// List bots with review config + all their conversations (each independently reviewable)
 reviewRoutes.get('/bots', (c) => {
   const bots = listBots();
+  const pending = new Set(getPendingReviews());
 
   const result = bots.map(b => {
+    let review: any = null;
     try {
-      const config = configManager.getBotConfig(b.id);
-      const conv = findLatestConversationByBot(b.id);
-      let msgCount = 0;
-      let roundCount = 0;
-      if (conv) {
-        const msgs = getMessages(conv.id, 999);
-        msgCount = msgs.length;
-        roundCount = conv.round_count ?? 0;
-      }
+      review = configManager.getBotConfig(b.id).review;
+    } catch {}
+
+    const conversations = listConversationsByBot(b.id).map(conv => {
+      const msgs = getMessages(conv.id, 999);
       return {
-        id: b.id,
-        display_name: b.display_name,
-        review: config.review,
-        roundCount,
-        msgCount,
-        hasPending: conv ? getPendingReviews().includes(conv.id) : false,
+        id: conv.id,
+        title: conv.title,
+        user_name: conv.user_name,
+        last_activity_at: conv.last_activity_at,
+        round_count: conv.round_count ?? 0,
+        msg_count: msgs.length,
+        has_pending: pending.has(conv.id),
       };
-    } catch {
-      return { id: b.id, display_name: b.display_name, review: null, roundCount: 0, msgCount: 0, hasPending: false };
-    }
+    });
+
+    return {
+      id: b.id,
+      display_name: b.display_name,
+      review,
+      conversations,
+    };
   });
   return c.json(result);
 });
 
-// Manually trigger review for a bot (targets latest active conversation)
-reviewRoutes.post('/trigger/:botId', async (c) => {
-  const botId = c.req.param('botId');
+// Manually trigger review for a specific conversation (manual = skip round check)
+reviewRoutes.post('/trigger/:conversationId', async (c) => {
+  const conversationId = c.req.param('conversationId');
 
-  const conv = findLatestConversationByBot(botId);
-  if (!conv) return c.json({ error: 'no conversation found for this bot' }, 404);
-
-  const msgs = getMessages(conv.id, 999);
-  if (msgs.length < 2) {
-    return c.json({ error: 'not enough messages to review (need at least 2)' }, 400);
-  }
-
-  // No-op replyFn — review monitor page uses SSE
-  const replyFn = (msg: OutboundMessage) => {
-    reviewEvents.emit('log', { botId, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
-  };
-
-  // Run review in background (manual = skip round check)
-  checkAndTriggerReview(conv.id, botId, replyFn, true).catch(e => {
-    console.error(`[review-api] error:`, e);
-    reviewEvents.emit('log', { botId, conversationId: conv.id, content: `Error: ${e.message}`, timestamp: Date.now() });
-  });
-
-  return c.json({ ok: true, conversationId: conv.id });
-});
-
-// Force-trigger review (manual, skips round check) — same behavior as /trigger now
-reviewRoutes.post('/force/:botId', async (c) => {
-  const botId = c.req.param('botId');
-
-  const conv = findLatestConversationByBot(botId);
-  if (!conv) return c.json({ error: 'no conversation found for this bot' }, 404);
+  const conv = findConversationById(conversationId);
+  if (!conv) return c.json({ error: 'conversation not found' }, 404);
 
   const msgs = getMessages(conv.id, 999);
   if (msgs.length < 2) {
     return c.json({ error: 'not enough messages to review (need at least 2)' }, 400);
   }
 
+  // Reply goes to the SSE log stream only — review monitor page doesn't
+  // send user-facing messages; it's a diagnostic tool.
   const replyFn = (msg: OutboundMessage) => {
-    reviewEvents.emit('log', { botId, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
+    reviewEvents.emit('log', { botId: conv.bot_id, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
   };
 
-  checkAndTriggerReview(conv.id, botId, replyFn, true).catch(e => {
+  checkAndTriggerReview(conv.id, conv.bot_id, replyFn, true).catch(e => {
     console.error(`[review-api] error:`, e);
-    reviewEvents.emit('log', { botId, conversationId: conv.id, content: `Error: ${e.message}`, timestamp: Date.now() });
+    reviewEvents.emit('log', { botId: conv.bot_id, conversationId: conv.id, content: `Error: ${e.message}`, timestamp: Date.now() });
   });
 
-  return c.json({ ok: true, conversationId: conv.id });
+  return c.json({ ok: true, conversationId: conv.id, botId: conv.bot_id });
 });
 
-// Get conversation messages (for preview)
-reviewRoutes.get('/messages/:botId', (c) => {
-  const botId = c.req.param('botId');
-  const conv = findLatestConversationByBot(botId);
+// Get messages for a specific conversation (preview)
+reviewRoutes.get('/messages/:conversationId', (c) => {
+  const conversationId = c.req.param('conversationId');
+  const conv = findConversationById(conversationId);
   if (!conv) return c.json([]);
   const msgs = getMessages(conv.id, 50);
   return c.json(msgs);

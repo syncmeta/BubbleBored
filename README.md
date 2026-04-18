@@ -122,6 +122,108 @@ curl -X POST http://localhost:3456/api/conversations/reset \
 
 点左下角「使用统计」查看各模型、各任务类型的 token 消耗和费用。
 
+## 接入 Telegram / 飞书
+
+除了网页聊天，每一个 Bot 都可以拥有自己的 Telegram 机器人账号和飞书应用——配置里有多少个 Bot，就对应多少个外部账号。防抖、冲浪、自我反思等能力在所有平台上一致工作。
+
+平台配置写在对应 Bot 的条目下，形如：
+
+```yaml
+bots:
+  alice:
+    displayName: "Alice"
+    promptFile: "alice.md"
+    telegram:
+      enabled: true
+      token: ""                # 或环境变量 TELEGRAM_TOKEN_ALICE
+      # webhookUrl: "https://host/webhook/telegram/alice"   # 不填则用 polling
+    feishu:
+      enabled: true
+      appId: ""                # 或环境变量 FEISHU_APP_ID_ALICE
+      appSecret: ""            # 或环境变量 FEISHU_APP_SECRET_ALICE
+  bob:
+    displayName: "Bob"
+    promptFile: "bob.md"
+    telegram:
+      enabled: true
+      token: ""                # 或环境变量 TELEGRAM_TOKEN_BOB
+```
+
+每个 Bot 在不同平台独立——Alice 在 Telegram 有自己的账号和头像，在飞书也有自己的应用。用户在 Telegram 里搜 `@alice_bot` 就是和 Alice 聊，搜 `@bob_bot` 就是和 Bob 聊，两边完全独立。
+
+**环境变量命名规则：** `TELEGRAM_TOKEN_{BOT_ID}` / `FEISHU_APP_ID_{BOT_ID}` / `FEISHU_APP_SECRET_{BOT_ID}`，把 bot id 大写、非字母数字字符替换成 `_`。比如 bot id `alice` 对应 `TELEGRAM_TOKEN_ALICE`。
+
+所有平台只接收**接入之后**的新消息，不会回溯历史。
+
+### Telegram
+
+每个想接入 Telegram 的 Bot 按以下步骤操作：
+
+1. 在 Telegram 里找 [@BotFather](https://t.me/BotFather)，发 `/newbot` 创建一个机器人账号，拿到 `token`（形如 `1234:ABC...`）。给每个 Bot 都建一个独立账号。
+
+2. 把 token 写进 `.env`（推荐）：
+
+   ```
+   TELEGRAM_TOKEN_ALICE=1234:ABC...
+   TELEGRAM_TOKEN_BOB=5678:DEF...
+   ```
+
+   或者直接填进 `config.yaml` 对应 Bot 的 `telegram.token`（不推荐）。
+
+3. 在该 Bot 的配置下打开 telegram：
+
+   ```yaml
+   bots:
+     alice:
+       # ...
+       telegram:
+         enabled: true
+   ```
+
+4. 启动服务。默认使用 **polling 模式**（长轮询 Telegram 拉消息），本地开发直接能用，不需要公网。每个 Bot 独立跑一个 polling 循环。
+
+   部署到有公网的机器上时，可以给单个 Bot 设 `webhookUrl`，启动时自动调用 Telegram 的 `setWebhook`。URL 规则是 `https://host/webhook/telegram/{botId}`，比如 Alice 是 `https://your-domain.com/webhook/telegram/alice`。URL 必须是 HTTPS。
+
+5. 在 Telegram 里搜对应的 Bot 用户名，发消息即可。发 `/surf` 可以手动触发冲浪。
+
+### 飞书
+
+每个想接入飞书的 Bot 按以下步骤操作：
+
+1. 在[飞书开放平台](https://open.feishu.cn/app)创建一个「自建应用」，拿到 **App ID** 和 **App Secret**。每个 Bot 建独立的应用。
+
+2. 在应用的「权限管理」里开启：
+   - `im:message`（发送消息）
+   - `im:message.p2p_msg`（接收单聊消息）
+   - `im:message.group_at_msg`（接收群聊 @ 消息，可选）
+
+3. 在「事件与回调」→「事件配置」里：
+   - 请求地址设为 `https://your-domain.com/webhook/feishu/{botId}`（必须是公网 HTTPS）。比如 Alice 是 `https://your-domain.com/webhook/feishu/alice`。
+   - 订阅事件：`接收消息 v2.0`（`im.message.receive_v1`）
+
+4. 把凭证写进 `.env`：
+
+   ```
+   FEISHU_APP_ID_ALICE=cli_xxx
+   FEISHU_APP_SECRET_ALICE=xxx
+   FEISHU_APP_ID_BOB=cli_yyy
+   FEISHU_APP_SECRET_BOB=yyy
+   ```
+
+5. 在该 Bot 的配置下打开 feishu：
+
+   ```yaml
+   bots:
+     alice:
+       # ...
+       feishu:
+         enabled: true
+   ```
+
+6. 启动服务。在每个飞书应用的「版本管理与发布」里发布应用，然后在飞书里与对应 Bot 单聊即可。群聊需要 @ 机器人。
+
+飞书事件回调必须是公网地址。本地开发可以用 [ngrok](https://ngrok.com/)、[frp](https://github.com/fatedier/frp) 之类做一层内网穿透。
+
 ## 技术栈
 
 Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket

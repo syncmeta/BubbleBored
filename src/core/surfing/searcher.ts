@@ -1,48 +1,43 @@
 import { EventEmitter } from 'events';
 import { configManager } from '../../config/loader';
-import { chatCompletion } from '../../llm/client';
-import { logAudit } from '../../llm/audit';
-import { getMessages } from '../../db/queries';
-import { mcpManager } from '../../mcp/manager';
-import { getUserProfile } from '../../honcho/memory';
-import { handleUserMessage } from '../orchestrator';
+import { findConversationById } from '../../db/queries';
+import { runPlanner } from './planner';
+import { runWanderer } from './wanderer';
+import { runCurator } from './curator';
 import type { OutboundMessage } from '../../bus/types';
 
-interface SurfFinding {
-  content: string;
-  source?: string;
-}
-
-interface SurfPlan {
-  needs: string;
-  stuck_pattern: string;
-  strengths: string;
-  blind_spots: string;
-  insights: string[];
-  need_search: boolean;
-  search_reason: string;
-  queries: string[];
-}
-
-// Surf monitoring infrastructure
+// Keyed by conversationId — multiple conversations under the same bot can
+// surf concurrently, and each one is cancellable independently.
 export const surfEvents = new EventEmitter();
 export const activeSurfs = new Map<string, AbortController>();
 
-export function stopSurf(botId: string): boolean {
-  const controller = activeSurfs.get(botId);
+export type SurfTrigger = 'auto' | 'user';
+
+export function stopSurf(conversationId: string): boolean {
+  const controller = activeSurfs.get(conversationId);
   if (controller) {
     controller.abort();
-    activeSurfs.delete(botId);
+    activeSurfs.delete(conversationId);
     return true;
   }
   return false;
 }
 
-function checkAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new Error('SURF_ABORTED');
+function makeEmitter(botId: string, conversationId: string) {
+  return (content: string, type: string = 'surf_status') => {
+    surfEvents.emit('log', {
+      botId, conversationId, type, content, timestamp: Date.now(),
+    });
+  };
 }
 
-export type SurfTrigger = 'auto' | 'user';
+function checkAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const err = new Error('Aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+}
 
 export async function runSurf(
   conversationId: string,
@@ -52,296 +47,129 @@ export async function runSurf(
   signal?: AbortSignal,
   trigger: SurfTrigger = 'auto',
 ): Promise<void> {
-  const botConfig = configManager.getBotConfig(botId);
-  const model = configManager.get().openrouter.surfingModel ?? botConfig.model;
-  const maxRequests = botConfig.surfing.maxRequests;
-
-  console.log(`[surf] starting for conv ${conversationId}, trigger: ${trigger}, budget: ${maxRequests}`);
-
-  // Wrap replyFn to also emit to surf monitor
-  const originalReplyFn = replyFn;
-  replyFn = (msg: OutboundMessage) => {
-    originalReplyFn(msg);
-    surfEvents.emit('log', { ...msg, botId, conversationId, timestamp: Date.now() });
-  };
-
-  if (signal?.aborted) {
-    surfEvents.emit('log', { botId, conversationId, type: 'surf_status', content: '冲浪已取消', timestamp: Date.now() });
-    return;
-  }
+  const emit = makeEmitter(botId, conversationId);
 
   try {
+    emit(`Surfing triggered (${trigger})`);
 
-  replyFn({
-    type: 'surf_status',
-    conversationId,
-    content: '正在评估…',
-  });
+    const conv = findConversationById(conversationId);
+    if (!conv) {
+      emit('会话不存在，退出');
+      return;
+    }
 
-  // Get user context from recent messages
-  const history = getMessages(conversationId, 20);
-  const userContext = history
-    .filter(m => m.sender_type === 'user')
-    .map(m => m.content)
-    .join('\n');
+    const botConfig = configManager.getBotConfig(botId);
+    if (!botConfig.surfing.enabled) {
+      emit('该 bot 未启用 surfing，退出');
+      return;
+    }
 
-  // Get user profile
-  const profile = await getUserProfile(userId);
-  const profileText = profile.card.length > 0
-    ? `用户画像：\n${profile.card.join('\n')}\n${profile.representation}`
-    : '';
+    const model = configManager.get().openrouter.surfingModel ?? botConfig.model;
+    const totalBudget = botConfig.surfing.maxRequests;
 
-  // Step 1: Assessment — the core
-  const surfPrompt = await configManager.readPrompt('surfing.md');
-  const { result: planResult, latencyMs: planLatency, costUsd: planCost } = await chatCompletion({
-    model,
-    messages: [
-      { role: 'system', content: surfPrompt },
-      {
-        role: 'user',
-        content: [
-          profileText,
-          `用户近期谈论内容：\n${userContext || '(暂无足够信息)'}`,
-        ].filter(Boolean).join('\n\n'),
-      },
-    ],
-  });
+    // Reserve budget for curator: at least 2, or up to 25% of total, whichever is larger.
+    // Wanderer gets the remainder; curator gets whatever wanderer doesn't spend + its reserve.
+    const curatorReserve = Math.max(2, Math.floor(totalBudget * 0.25));
+    const wandererBudget = Math.max(1, totalBudget - curatorReserve);
 
-  logAudit({
-    conversationId, taskType: 'surfing', model,
-    inputTokens: planResult.usage?.prompt_tokens ?? 0,
-    outputTokens: planResult.usage?.completion_tokens ?? 0,
-    totalTokens: planResult.usage?.total_tokens ?? 0,
-    costUsd: planCost,
-    generationId: planResult.id,
-    latencyMs: planLatency,
-  });
+    emit(`预算：总 ${totalBudget}，wanderer 上限 ${wandererBudget}，curator 保底 ≥${curatorReserve}`);
 
-  let remaining = maxRequests - 1;
+    // Phase 1+2: planner and wanderer run in parallel.
+    //   - planner reads user's long history to extract known_profile / blind_spots
+    //   - wanderer roams the internet with NO user context (aimless serendipity)
+    checkAborted(signal);
+    emit('启动 planner 和 wanderer（并行）');
 
-  const planText = planResult.choices[0]?.message?.content ?? '';
-  const planJson = planText.match(/\{[\s\S]*\}/);
-  if (!planJson) {
-    console.log('[surf] failed to parse plan');
-    replyFn({ type: 'surf_status', conversationId, content: '评估失败：无法解析' });
-    return;
-  }
+    const [plan, wanderResult] = await Promise.all([
+      runPlanner({
+        conversationId, botId, userId, model,
+        emitLog: (c) => emit(`[planner] ${c}`),
+        signal,
+      }),
+      runWanderer({
+        conversationId, model,
+        budget: wandererBudget,
+        emitLog: (c) => emit(c),  // wanderer already prefixes its logs
+        signal,
+      }),
+    ]);
 
-  let plan: SurfPlan;
-  try {
-    plan = JSON.parse(planJson[0]);
-  } catch {
-    console.log('[surf] invalid plan JSON');
-    replyFn({ type: 'surf_status', conversationId, content: '评估失败：格式异常' });
-    return;
-  }
+    // Planner summary
+    if (plan.blind_spots) emit(`[planner] 盲区：${plan.blind_spots}`);
+    if (plan.needs) emit(`[planner] 需要：${plan.needs}`);
+    const kp = plan.known_profile;
+    if (kp.topics_covered.length > 0) emit(`[planner] 已聊主题：${kp.topics_covered.join('、')}`);
+    if (kp.open_questions.length > 0) emit(`[planner] 未解问题：${kp.open_questions.join('、')}`);
+    if (kp.interests.length > 0) emit(`[planner] 长期兴趣：${kp.interests.join('、')}`);
 
-  // Show assessment
-  replyFn({
-    type: 'surf_status',
-    conversationId,
-    content: [
-      '评估报告：',
-      `• 需求：${plan.needs}`,
-      `• 怪圈：${plan.stuck_pattern}`,
-      `• 优势：${plan.strengths}`,
-      `• 盲区：${plan.blind_spots}`,
-      `• 洞察：${(plan.insights || []).map(i => i).join('；')}`,
-    ].join('\n'),
-  });
+    // Wanderer summary
+    emit(`[wanderer] 完成：${wanderResult.findings.length} 条发现，${wanderResult.toolCallsUsed}/${wandererBudget} 次工具（${wanderResult.turns} 轮）`);
+    if (wanderResult.findings.length > 0) {
+      const list = wanderResult.findings.map((f, i) => `  ${i + 1}. ${f.title}`).join('\n');
+      emit(`[wanderer] raw_findings:\n${list}`);
+    }
 
-  // Step 2: Optional search — only if assessment says so
-  const findings: SurfFinding[] = [];
+    if (!plan.blind_spots && kp.topics_covered.length === 0) {
+      emit('⚠️ planner 输出不足，放弃本次冲浪');
+      return;
+    }
 
-  if (plan.need_search && plan.queries && plan.queries.length > 0) {
-    const queries = plan.queries.filter(q => q.trim().length > 0);
+    // Phase 3: curator — has user context, filters wanderer's haul, synthesizes message
+    checkAborted(signal);
+    const curatorBudget = Math.max(curatorReserve, totalBudget - wanderResult.toolCallsUsed);
+    emit(`启动 curator，预算 ${curatorBudget} 次`);
 
-    replyFn({
-      type: 'surf_status',
-      conversationId,
-      content: `需要搜索补充（${plan.search_reason}）：\n${queries.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+    const curatorResult = await runCurator({
+      conversationId, model,
+      plan, rawFindings: wanderResult.findings,
+      budget: curatorBudget,
+      emitLog: (c) => emit(c),  // curator prefixes its logs
+      signal,
     });
 
-    const evalPrompt = await configManager.readPrompt('surfing-eval.md');
+    emit(`[curator] 完成：${curatorResult.turns} 轮，${curatorResult.toolCallsUsed}/${curatorBudget} 次工具`);
 
-    for (let qi = 0; qi < queries.length; qi++) {
-      const query = queries[qi];
-      if (remaining <= 1) break;
-
-      checkAborted(signal);
-
-      replyFn({
-        type: 'surf_status',
-        conversationId,
-        content: `正在搜索 (${qi + 1}/${queries.length})：${query}`,
-      });
-
-      let searchResults: string;
-      try {
-        searchResults = await mcpManager.searchWeb(query);
-      } catch (e) {
-        console.error(`[surf] search failed for "${query}":`, e);
-        replyFn({ type: 'surf_status', conversationId, content: `搜索「${query}」失败，跳过` });
-        continue;
-      }
-
-      const { result: evalResult, latencyMs: evalLatency, costUsd: evalCost } = await chatCompletion({
-        model,
-        messages: [
-          { role: 'system', content: evalPrompt },
-          {
-            role: 'user',
-            content: `搜索查询: ${query}\n剩余请求次数: ${remaining}\n\n搜索结果：\n${searchResults}`,
-          },
-        ],
-      });
-
-      remaining--;
-
-      logAudit({
-        conversationId, taskType: 'surfing_eval', model,
-        inputTokens: evalResult.usage?.prompt_tokens ?? 0,
-        outputTokens: evalResult.usage?.completion_tokens ?? 0,
-        totalTokens: evalResult.usage?.total_tokens ?? 0,
-        costUsd: evalCost,
-        generationId: evalResult.id,
-        latencyMs: evalLatency,
-      });
-
-      try {
-        const evalText = evalResult.choices[0]?.message?.content ?? '';
-        const jsonMatch = evalText.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) continue;
-
-        const evalData = JSON.parse(jsonMatch[0]);
-
-        if (evalData.findings && Array.isArray(evalData.findings)) {
-          for (const f of evalData.findings) {
-            if (typeof f === 'string' && f.trim()) {
-              findings.push({ content: f });
-            }
-          }
-        }
-
-        checkAborted(signal);
-        if (evalData.action === 'read' && evalData.url && remaining > 1) {
-          replyFn({ type: 'surf_status', conversationId, content: `正在阅读：${evalData.url}` });
-
-          try {
-            const pageContent = await mcpManager.readUrl(evalData.url);
-            const { result: readEval, latencyMs: readLatency, costUsd: readCost } = await chatCompletion({
-              model,
-              messages: [
-                { role: 'system', content: evalPrompt },
-                { role: 'user', content: `阅读页面: ${evalData.url}\n剩余请求次数: ${remaining}\n\n页面内容：\n${pageContent}` },
-              ],
-            });
-            remaining--;
-            logAudit({
-              conversationId, taskType: 'surfing_eval', model,
-              inputTokens: readEval.usage?.prompt_tokens ?? 0,
-              outputTokens: readEval.usage?.completion_tokens ?? 0,
-              totalTokens: readEval.usage?.total_tokens ?? 0,
-              costUsd: readCost,
-              generationId: readEval.id,
-              latencyMs: readLatency,
-            });
-            const readText = readEval.choices[0]?.message?.content ?? '';
-            const readJson = readText.match(/\{[\s\S]*\}/);
-            if (readJson) {
-              const readData = JSON.parse(readJson[0]);
-              if (readData.findings && Array.isArray(readData.findings)) {
-                for (const f of readData.findings) {
-                  if (typeof f === 'string' && f.trim()) {
-                    findings.push({ content: f, source: evalData.url });
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            console.error(`[surf] read_url failed for "${evalData.url}":`, e);
-          }
-        }
-
-        if (evalData.action === 'done') break;
-      } catch (e: any) {
-        if (e?.message === 'SURF_ABORTED') throw e;
-      }
+    // Bridges — the headline deliverable
+    if (curatorResult.bridges.length > 0) {
+      const bridgesText = curatorResult.bridges.map((b, i) =>
+        `  ${i + 1}. "${b.finding}" ↔ "${b.user_interest}"\n     → ${b.connection}`,
+      ).join('\n');
+      emit(`🌉 bridges (${curatorResult.bridges.length}):\n${bridgesText}`, 'surf_bridges');
+    } else {
+      emit('🌉 bridges: (无——wanderer 捡回来的东西都太直白或太偏离)');
     }
 
-    if (findings.length > 0) {
-      replyFn({
-        type: 'surf_status',
-        conversationId,
-        content: `搜索补充了 ${findings.length} 条内容`,
-      });
+    if (curatorResult.novelFindings.length > 0) {
+      emit(`✨ novel:\n${curatorResult.novelFindings.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
     }
-  }
+    if (curatorResult.discardedAsKnown.length > 0) {
+      emit(`♻️  已知淘汰:\n${curatorResult.discardedAsKnown.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
+    }
+    if (curatorResult.discardedIrrelevant.length > 0) {
+      emit(`🗑️  无关淘汰:\n${curatorResult.discardedIrrelevant.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
+    }
 
-  checkAborted(signal);
+    // Delivery
+    const finalMsg = curatorResult.finalMessage;
+    if (!finalMsg) {
+      emit('⚠️ curator 未产出最终消息，放弃交付');
+      return;
+    }
 
-  // Step 3: Send message through normal flow
-  // Insights from the model's own knowledge are the core;
-  // search findings are supplementary
-  const insightsText = (plan.insights || []).map(i => `- ${i}`).join('\n');
-  const findingsText = findings.map(f => {
-    const src = f.source ? ` (来源: ${f.source})` : '';
-    return `- ${f.content}${src}`;
-  }).join('\n');
-
-  const triggerDesc = trigger === 'user'
-    ? '用户刚才让你去冲浪，你冲完了。'
-    : '你自己想去思考和观察，刚想完。';
-
-  const parts = [
-    `[内部上下文 - 不要原样输出]`,
-    triggerDesc,
-    ``,
-    `你的洞察：`,
-    insightsText,
-  ];
-
-  if (findingsText) {
-    parts.push(``, `你还在网上找到了一些补充信息：`, findingsText);
-  }
-
-  parts.push(
-    ``,
-    `自然地融入对话。不要用"报告""总结""发现""洞察"这类词。`,
-    `像朋友聊天一样说出来。`,
-    `如果确实没什么值得说的，输出 [SILENT]。`,
-  );
-
-  replyFn({
-    type: 'surf_status',
-    conversationId,
-    content: '正在组织语言…',
-  });
-
-  await handleUserMessage({
-    conversationId,
-    botId,
-    userId,
-    mergedContent: parts.join('\n'),
-    replyFn: originalReplyFn,
-    extraContext: [
-      triggerDesc,
-      `评估报告：`,
-      `• 对方需求：${plan.needs}`,
-      `• 怪圈：${plan.stuck_pattern}`,
-      `• 优势：${plan.strengths}`,
-      `• 盲区：${plan.blind_spots}`,
-    ].join('\n'),
-  });
-
+    replyFn({
+      type: 'surf_result',
+      conversationId,
+      content: finalMsg,
+    });
+    emit(finalMsg, 'surf_result');
   } catch (e: any) {
-    if (e?.message === 'SURF_ABORTED') {
-      replyFn({ type: 'surf_status', conversationId, content: '冲浪已被手动停止' });
+    if (e?.name === 'AbortError') {
+      emit('已中断');
       return;
     }
     throw e;
   } finally {
-    activeSurfs.delete(botId);
+    activeSurfs.delete(conversationId);
     surfEvents.emit('done', { botId, conversationId, timestamp: Date.now() });
   }
 }

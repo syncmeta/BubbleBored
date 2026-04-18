@@ -20,6 +20,7 @@ export function getDb(): Database {
 }
 
 function runMigrations(db: Database): void {
+  // Base schema (idempotent — only creates tables/indexes that don't already exist)
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -46,6 +47,7 @@ function runMigrations(db: Database): void {
       id TEXT PRIMARY KEY,
       bot_id TEXT NOT NULL REFERENCES bots(id),
       user_id TEXT NOT NULL REFERENCES users(id),
+      title TEXT,
       honcho_session_id TEXT,
       round_count INTEGER NOT NULL DEFAULT 0,
       last_sender TEXT,
@@ -54,8 +56,6 @@ function runMigrations(db: Database): void {
       surf_interval INTEGER DEFAULT 1800,
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_bot_user ON conversations(bot_id, user_id);
 
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
@@ -98,4 +98,70 @@ function runMigrations(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_debounce_conv ON debounce_buffer(conversation_id);
   `);
+
+  // Versioned migrations (PRAGMA user_version is per-DB)
+  const userVersion = (db.query('PRAGMA user_version').get() as any).user_version as number;
+
+  // v1: add title column to existing conversations tables (if pre-existing without it)
+  if (userVersion < 1) {
+    const cols = db.query(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'title')) {
+      db.exec(`ALTER TABLE conversations ADD COLUMN title TEXT`);
+    }
+    db.exec('PRAGMA user_version = 1');
+  }
+
+  // v2: drop UNIQUE constraint on (bot_id, user_id), replace with non-unique index;
+  // add index on (user_id, last_activity_at DESC) for sidebar listing
+  if (userVersion < 2) {
+    db.exec(`DROP INDEX IF EXISTS idx_conv_bot_user`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_bot_user ON conversations(bot_id, user_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_user_activity ON conversations(user_id, last_activity_at DESC)`);
+    db.exec('PRAGMA user_version = 2');
+  }
+
+  // v3: device_tokens table for APNs (Phase 2 — schema lands now so the iOS
+  // client can register tokens and the server can start collecting them even
+  // before push sending is wired up).
+  if (userVersion < 3) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS device_tokens (
+        device_token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        bundle_id TEXT,
+        environment TEXT NOT NULL DEFAULT 'sandbox',
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
+    `);
+    db.exec('PRAGMA user_version = 3');
+  }
+
+  // v4: attachments table for image messages.
+  // message_id is nullable: the client uploads first, then binds the returned
+  // attachment ids to the message when sending. Orphans are swept periodically.
+  if (userVersion < 4) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        message_id TEXT REFERENCES messages(id),
+        conversation_id TEXT REFERENCES conversations(id),
+        kind TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        width INTEGER,
+        height INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_attach_msg ON attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_attach_conv ON attachments(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_attach_orphan ON attachments(message_id, created_at) WHERE message_id IS NULL;
+    `);
+    // Content can be empty when a message is only an image.
+    // SQLite doesn't let us DROP NOT NULL, so the application layer will pass ''
+    // (empty string) — which satisfies the existing NOT NULL constraint.
+    db.exec('PRAGMA user_version = 4');
+  }
 }

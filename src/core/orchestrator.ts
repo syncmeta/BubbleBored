@@ -7,7 +7,8 @@ import { buildPrompt } from './prompt-builder';
 import { checkSilent } from './silent';
 import {
   insertMessage, updateConversationRound, updateConversationActivity,
-  resetSurfInterval, findConversationById,
+  resetSurfInterval, findConversationById, bindAttachmentsToMessage,
+  getAttachmentsForMessage,
 } from '../db/queries';
 import type { OutboundMessage } from '../bus/types';
 
@@ -30,31 +31,65 @@ export async function handleUserMessage(params: {
   botId: string;
   userId: string;
   mergedContent: string;
+  attachmentIds?: string[];
   replyFn: (msg: OutboundMessage) => void;
   extraContext?: string;
+  // Re-run the LLM for an existing user message without inserting a new row,
+  // binding attachments, or bumping the round counter. The caller is
+  // responsible for having already deleted the stale bot reply(ies) from DB.
+  regenerate?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, mergedContent, replyFn, extraContext } = params;
+  const { conversationId, botId, userId, mergedContent, attachmentIds, replyFn, extraContext, regenerate } = params;
   interruptSignals.delete(conversationId); // clear stale interrupt from triggering message
   const botConfig = configManager.getBotConfig(botId);
 
-  console.log(`\n[chat] ← user(${userId.slice(0, 8)}) → bot(${botId}): ${mergedContent}`);
+  const attCount = attachmentIds?.length ?? 0;
+  console.log(`\n[chat] ${regenerate ? '↻ regen' : '←'} user(${userId.slice(0, 8)}) → bot(${botId}): ${mergedContent}${attCount ? ` [+${attCount} attachment(s)]` : ''}`);
 
-  // Store user message
-  const userMsgId = randomUUID();
-  insertMessage(userMsgId, conversationId, 'user', userId, mergedContent);
+  if (!regenerate) {
+    // Store user message. Messages.content is NOT NULL so we always persist a
+    // string — for image-only messages that's just ''.
+    const userMsgId = randomUUID();
+    insertMessage(userMsgId, conversationId, 'user', userId, mergedContent);
 
-  // Update round counter
-  const conv = findConversationById(conversationId);
-  if (conv) {
-    let newRound = conv.round_count;
-    if (conv.last_sender === 'bot') {
-      newRound++;
+    // Bind any orphan attachments to this message. bindAttachmentsToMessage
+    // rejects ids whose conversation doesn't match — so an attacker passing
+    // someone else's upload id silently fails rather than leaking pixels.
+    let boundAttachmentsCount = 0;
+    if (attachmentIds && attachmentIds.length > 0) {
+      boundAttachmentsCount = bindAttachmentsToMessage(attachmentIds, userMsgId, conversationId);
+      if (boundAttachmentsCount !== attachmentIds.length) {
+        console.warn(`[chat] attachments: requested ${attachmentIds.length}, bound ${boundAttachmentsCount} (others rejected — stale/foreign id?)`);
+      }
+      // Echo a dedicated user_message_ack so the client can reconcile its
+      // optimistic local render (blob URL previews) with the server-assigned
+      // message id + canonical /uploads/<id> URLs.
+      const atts = getAttachmentsForMessage(userMsgId).map(a => ({
+        id: a.id, kind: a.kind, mime: a.mime, size: a.size,
+        width: a.width, height: a.height, url: `/uploads/${a.id}`,
+      }));
+      replyFn({
+        type: 'user_message_ack',
+        conversationId,
+        messageId: userMsgId,
+        content: mergedContent,
+        metadata: { attachments: atts, attachmentIds: attachmentIds },
+      });
     }
-    updateConversationRound(conversationId, newRound, 'user');
-    console.log(`[chat] round: ${newRound}`);
 
-    if (botConfig.surfing.enabled) {
-      resetSurfInterval(conversationId, botConfig.surfing.initialIntervalSec);
+    // Update round counter
+    const conv = findConversationById(conversationId);
+    if (conv) {
+      let newRound = conv.round_count;
+      if (conv.last_sender === 'bot') {
+        newRound++;
+      }
+      updateConversationRound(conversationId, newRound, 'user');
+      console.log(`[chat] round: ${newRound}`);
+
+      if (botConfig.surfing.enabled) {
+        resetSurfInterval(conversationId, botConfig.surfing.initialIntervalSec);
+      }
     }
   }
 
@@ -214,6 +249,17 @@ export async function handleUserMessage(params: {
           console.error('[review] error:', e)
         );
       }
+    }
+
+    // Auto-title: after the very first bot reply in a fresh conversation,
+    // ask a cheap model to summarize the topic. Fire-and-forget; the title
+    // arrives via a `title_update` message on the websocket.
+    const finalConv = findConversationById(conversationId);
+    if (finalConv && finalConv.round_count === 1 && (!finalConv.title || finalConv.title.trim() === '') && sentSegments.size > 0) {
+      const { generateTitle } = await import('./title');
+      generateTitle(conversationId, replyFn).catch(e =>
+        console.error('[title] error:', e)
+      );
     }
 
   } catch (err: any) {

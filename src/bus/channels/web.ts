@@ -1,5 +1,6 @@
 import type { ServerWebSocket } from 'bun';
 import type { Channel, InboundMessage, OutboundMessage } from '../types';
+import { noteTypingTick } from '../../core/typing';
 
 export interface WebSocketData {
   userId: string;
@@ -31,12 +32,18 @@ export class WebChannel implements Channel {
   handleMessage(userId: string, raw: string): void {
     try {
       const data = JSON.parse(raw);
-      if (data.type === 'chat' && data.botId && data.content) {
+      // Allow image-only messages: content may be empty if attachmentIds
+      // carries at least one id.
+      const hasContent = typeof data.content === 'string' && data.content.length > 0;
+      const hasAttachments = Array.isArray(data.attachmentIds) && data.attachmentIds.length > 0;
+      if (data.type === 'chat' && data.botId && (hasContent || hasAttachments)) {
         this.onMessage?.({
           channel: 'web',
           channelUserId: userId,
           botId: data.botId,
-          content: data.content,
+          conversationId: data.conversationId,
+          content: typeof data.content === 'string' ? data.content : '',
+          attachmentIds: hasAttachments ? data.attachmentIds.filter((x: any) => typeof x === 'string') : undefined,
           timestamp: Date.now(),
           metadata: data.metadata,
         });
@@ -45,9 +52,13 @@ export class WebChannel implements Channel {
           channel: 'web',
           channelUserId: userId,
           botId: data.botId,
+          conversationId: data.conversationId,
           content: '/surf',
           timestamp: Date.now(),
         });
+      } else if (data.type === 'typing_tick' && typeof data.conversationId === 'string') {
+        // Cheap side-channel — does not go through the message bus/handler.
+        noteTypingTick(data.conversationId);
       }
     } catch (e) {
       console.error('[web] invalid message:', e);

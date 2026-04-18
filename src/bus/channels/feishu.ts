@@ -1,31 +1,35 @@
 import type { Channel, InboundMessage, OutboundMessage } from '../types';
 
 interface FeishuChannelConfig {
+  botId: string;
   appId: string;
   appSecret: string;
-  defaultBot: string;
   verificationToken?: string;
 }
 
 const API = 'https://open.feishu.cn/open-apis';
 
 export class FeishuChannel implements Channel {
-  name = 'feishu';
+  readonly name: string;
+  readonly botId: string;
   onMessage?: (message: InboundMessage) => void;
 
-  private config: FeishuChannelConfig;
+  private appId: string;
+  private appSecret: string;
   private tenantToken = '';
   private tokenExpiresAt = 0;
-  private userBotMap = new Map<string, string>();
   private processedEvents = new Set<string>();
 
   constructor(config: FeishuChannelConfig) {
-    this.config = config;
+    this.botId = config.botId;
+    this.name = `feishu:${config.botId}`;
+    this.appId = config.appId;
+    this.appSecret = config.appSecret;
   }
 
   async start(): Promise<void> {
     await this.refreshToken();
-    console.log('[feishu] channel ready');
+    console.log(`[${this.name}] channel ready`);
   }
 
   // --- Webhook handler (called from Hono route) ---
@@ -82,40 +86,31 @@ export class FeishuChannel implements Channel {
 
     if (!content) return;
 
-    // Commands
     if (content === '/start') {
-      this.sendText(senderId, `BubbleBored 已连接\n当前 bot: ${this.getBotId(senderId)}`);
-      return;
-    }
-
-    if (content.startsWith('/bot ')) {
-      const botId = content.slice(5).trim();
-      if (botId) {
-        this.userBotMap.set(senderId, botId);
-        this.sendText(senderId, `已切换到: ${botId}`);
-      }
+      this.sendText(senderId, 'BubbleBored 已连接，直接发消息开始聊天。');
       return;
     }
 
     if (content === '/surf') {
       this.onMessage?.({
-        channel: 'feishu',
+        channel: this.name,
         channelUserId: senderId,
-        botId: this.getBotId(senderId),
+        botId: this.botId,
         content: '/surf',
         timestamp: parseInt(msg.create_time) || Date.now(),
       });
       return;
     }
 
-    // Regular message
+    if (content.startsWith('/')) return;
+
     const displayName = event.sender?.sender_id?.user_id || undefined;
 
     this.onMessage?.({
-      channel: 'feishu',
+      channel: this.name,
       channelUserId: senderId,
       channelMessageId: msg.message_id,
-      botId: this.getBotId(senderId),
+      botId: this.botId,
       content,
       timestamp: parseInt(msg.create_time) || Date.now(),
       metadata: { displayName, chatId: msg.chat_id, chatType: msg.chat_type },
@@ -134,10 +129,6 @@ export class FeishuChannel implements Channel {
 
   // --- Helpers ---
 
-  private getBotId(userId: string): string {
-    return this.userBotMap.get(userId) ?? this.config.defaultBot;
-  }
-
   private async sendText(openId: string, text: string): Promise<void> {
     await this.ensureToken();
     try {
@@ -155,10 +146,10 @@ export class FeishuChannel implements Channel {
       });
       const data = (await res.json()) as any;
       if (data.code !== 0) {
-        console.error('[feishu] send error:', data.code, data.msg);
+        console.error(`[${this.name}] send error:`, data.code, data.msg);
       }
     } catch (e) {
-      console.error('[feishu] send error:', e);
+      console.error(`[${this.name}] send error:`, e);
     }
   }
 
@@ -175,20 +166,20 @@ export class FeishuChannel implements Channel {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          app_id: this.config.appId,
-          app_secret: this.config.appSecret,
+          app_id: this.appId,
+          app_secret: this.appSecret,
         }),
       });
       const data = (await res.json()) as any;
       if (data.code === 0) {
         this.tenantToken = data.tenant_access_token;
         this.tokenExpiresAt = Date.now() + data.expire * 1000;
-        console.log('[feishu] token refreshed');
+        console.log(`[${this.name}] token refreshed`);
       } else {
-        console.error('[feishu] token refresh failed:', data.code, data.msg);
+        console.error(`[${this.name}] token refresh failed:`, data.code, data.msg);
       }
     } catch (e) {
-      console.error('[feishu] token refresh error:', e);
+      console.error(`[${this.name}] token refresh error:`, e);
     }
   }
 }

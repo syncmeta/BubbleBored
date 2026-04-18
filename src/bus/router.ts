@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 import type { Channel, InboundMessage, OutboundMessage } from './types';
 import { configManager } from '../config/loader';
 import {
-  findUserByChannel, createUser, findConversation, createConversation,
-  findUserById,
+  findUserByChannel, createUser, findConversation, findConversationById,
+  createConversation, findUserById,
 } from '../db/queries';
 
 export class MessageBus {
@@ -14,6 +14,7 @@ export class MessageBus {
     botId: string;
     userId: string;
     content: string;
+    attachmentIds?: string[];
     replyFn: (msg: OutboundMessage) => void;
   }) => void;
 
@@ -55,12 +56,24 @@ export class MessageBus {
       return;
     }
 
-    // Resolve or create conversation
-    let conv = findConversation(msg.botId, user.id);
-    if (!conv) {
+    // Resolve conversation:
+    // - If channel passed an explicit conversationId (web with multi-conversation), use it directly.
+    // - Otherwise fall back to the most recent (botId, user.id) conversation, creating one
+    //   if none exists. This is the natural behavior for external channels (Telegram/Feishu),
+    //   where one chat thread = one conversation.
+    let conv = msg.conversationId
+      ? findConversationById(msg.conversationId)
+      : findConversation(msg.botId, user.id);
+
+    // Safety: if explicit conversationId was given but doesn't match this user/bot, ignore it
+    if (msg.conversationId && conv && (conv.user_id !== user.id || conv.bot_id !== msg.botId)) {
+      conv = null;
+    }
+
+    if (!conv && !msg.conversationId) {
       const convId = randomUUID();
       createConversation(convId, msg.botId, user.id);
-      conv = findConversation(msg.botId, user.id);
+      conv = findConversationById(convId);
     }
 
     if (!conv) return;
@@ -83,6 +96,7 @@ export class MessageBus {
         botId: msg.botId,
         userId: user.id,
         content: msg.content,
+        attachmentIds: msg.attachmentIds,
         replyFn,
       });
     }
