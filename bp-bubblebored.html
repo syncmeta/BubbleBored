@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BubbleBored - BP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700;900&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+/* =========================================================================
+ * Design tokens — mirrors styles/globals.css of the pendingname/ziza site
+ * ========================================================================= */
+:root {
+  --color-jade-50:  oklch(96.5% 0.018 175);
+  --color-jade-100: oklch(92.5% 0.034 175);
+  --color-jade-200: oklch(86.0% 0.056 175);
+  --color-jade-300: oklch(78.0% 0.080 175);
+  --color-jade-400: oklch(67.0% 0.105 175);
+  --color-jade-500: oklch(55.0% 0.115 175);
+  --color-jade-600: oklch(46.5% 0.105 175);
+  --color-jade-700: oklch(38.5% 0.090 175);
+  --color-jade-800: oklch(31.0% 0.072 175);
+
+  --color-ink-0:   oklch(99.2% 0.004 90);
+  --color-ink-50:  oklch(97.5% 0.005 90);
+  --color-ink-100: oklch(94.5% 0.006 90);
+  --color-ink-200: oklch(89.0% 0.007 90);
+  --color-ink-300: oklch(80.0% 0.008 90);
+  --color-ink-400: oklch(66.0% 0.009 90);
+  --color-ink-500: oklch(52.0% 0.010 90);
+  --color-ink-600: oklch(42.0% 0.010 90);
+  --color-ink-700: oklch(32.5% 0.010 90);
+  --color-ink-800: oklch(23.0% 0.009 90);
+  --color-ink-900: oklch(15.0% 0.008 90);
+  --color-ink-950: oklch(10.0% 0.007 90);
+
+  --font-sans: "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --ease-out-cubic: cubic-bezier(0.16, 1, 0.3, 1);
+
+  color-scheme: light;
+  --bg:           var(--color-ink-0);
+  --bg-elevated:  oklch(100% 0 0);
+  --bg-subtle:    var(--color-ink-50);
+  --bg-muted:     var(--color-ink-100);
+  --fg:           var(--color-ink-900);
+  --fg-muted:     var(--color-ink-600);
+  --fg-subtle:    var(--color-ink-500);
+  --line:         var(--color-ink-200);
+  --line-strong:  var(--color-ink-300);
+  --accent:       var(--color-jade-600);
+  --accent-fg:    oklch(99% 0.005 175);
+  --accent-bg:    var(--color-jade-50);
+  --ring:         var(--color-jade-500);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:           var(--color-ink-950);
+  --bg-elevated:  oklch(14% 0.008 90);
+  --bg-subtle:    oklch(12.5% 0.008 90);
+  --bg-muted:     oklch(18% 0.009 90);
+  --fg:           oklch(96% 0.005 90);
+  --fg-muted:     oklch(72% 0.008 90);
+  --fg-subtle:    oklch(58% 0.009 90);
+  --line:         oklch(22% 0.008 90);
+  --line-strong:  oklch(28% 0.009 90);
+  --accent:       var(--color-jade-400);
+  --accent-fg:    var(--color-ink-950);
+  --accent-bg:    oklch(22% 0.030 175);
+  --ring:         var(--color-jade-400);
+}
+
+/* =========================================================================
+ * Reset & base
+ * ========================================================================= */
+*, *::before, *::after { box-sizing: border-box; border-color: var(--line); }
+html { -webkit-text-size-adjust: 100%; }
+html[lang^="zh"] { word-break: break-word; line-break: strict; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 16px;
+  line-height: 1.75;
+  transition: background 200ms var(--ease-out-cubic), color 200ms var(--ease-out-cubic);
+}
+::selection { background: var(--accent-bg); color: var(--accent); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+strong { color: var(--fg); font-weight: 600; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 4rem 0; }
+
+/* =========================================================================
+ * Layout
+ * ========================================================================= */
+.page { max-width: 64rem; margin: 0 auto; padding: 4rem 1.5rem 8rem; }
+@media (min-width: 768px) { .page { padding: 6rem 3rem 10rem; } }
+
+/* Top bar — TOC + scroll progress */
+html { scroll-behavior: smooth; scroll-padding-top: 4rem; }
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in oklch, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-inner {
+  max-width: 64rem; margin: 0 auto;
+  padding: 0.875rem 1.5rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.topbar-inner::-webkit-scrollbar { display: none; }
+.toc {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; gap: 1.5rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.toc a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  transition: color 160ms var(--ease-out-cubic);
+  padding-bottom: 2px;
+}
+.toc a:hover { color: var(--fg); text-decoration: none; }
+.toc li.active a {
+  color: var(--fg);
+  font-weight: 600;
+}
+.progress-rail {
+  height: 2px;
+  background: transparent;
+  position: relative;
+}
+.progress-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--accent);
+  width: 0%;
+  transition: width 80ms linear;
+}
+
+/* =========================================================================
+ * Hero
+ * ========================================================================= */
+.hero {
+  padding: 2rem 0 5rem;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3rem;
+  align-items: start;
+}
+@media (min-width: 900px) {
+  .hero {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 3rem;
+    align-items: center;
+  }
+}
+.hero-main { min-width: 0; }
+.hero h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2.25rem, 5vw, 4.25rem);
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 1.5rem;
+  color: var(--fg);
+}
+.hero-sub {
+  font-size: clamp(1.125rem, 1.6vw, 1.4rem);
+  line-height: 1.55;
+  color: var(--fg-muted);
+  max-width: 48rem;
+  margin: 0;
+}
+.hero-meta {
+  display: flex; gap: 1.5rem; flex-wrap: wrap;
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  color: var(--fg-subtle);
+}
+.hero-meta span strong { color: var(--fg); margin-right: 0.4rem; }
+
+/* =========================================================================
+ * Chat bubble mockup (hero-side)
+ * ========================================================================= */
+.chat-mock {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--bg-subtle);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 10px 28px rgb(0 0 0 / 0.06);
+  min-width: 0;
+  max-width: 22rem;
+  width: 100%;
+  margin: 0 auto;
+}
+[data-theme="dark"] .chat-mock {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 28px rgb(0 0 0 / 0.4);
+}
+.chat-chrome {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elevated);
+  font-size: 0.625rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.chat-chrome .title { font-weight: 500; color: var(--fg); font-size: 0.6875rem; }
+.chat-chrome .dots { display: inline-flex; gap: 0.25rem; align-items: center; }
+.chat-chrome .dots i { width: 4px; height: 4px; border-radius: 999px; background: var(--fg-muted); display: inline-block; }
+.chat-chrome .dots .batt { margin-left: 0.25rem; width: 14px; height: 8px; border: 1px solid var(--fg-muted); border-radius: 2px; background: transparent; }
+
+.chat-list {
+  list-style: none; padding: 0.875rem 0.75rem; margin: 0;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.chat-row { display: flex; gap: 0.375rem; }
+.chat-row.you { justify-content: flex-end; }
+.chat-row.bot { justify-content: flex-start; }
+.chat-avatar {
+  margin-top: 0.1875rem;
+  width: 1.25rem; height: 1.25rem;
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 0.5625rem;
+  font-weight: 600;
+}
+.chat-col { display: flex; flex-direction: column; gap: 0.125rem; max-width: 82%; min-width: 0; }
+.chat-who { font-size: 0.5625rem; color: var(--fg-subtle); }
+.chat-bubble {
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  border-radius: 0.625rem;
+  word-break: break-word;
+}
+.chat-row.bot .chat-bubble {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-bottom-left-radius: 0.25rem;
+}
+.chat-row.you .chat-bubble {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-bottom-right-radius: 0.25rem;
+}
+.chat-bubble.typing { font-style: italic; opacity: 0.92; }
+.chat-time {
+  font-size: 0.625rem;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.chat-row.you .chat-time { text-align: right; }
+.chat-row.bot .chat-time { text-align: left; }
+
+.typing-dots {
+  display: inline-flex; gap: 2px; vertical-align: middle; margin-left: 6px;
+}
+.typing-dots i {
+  width: 4px; height: 4px; border-radius: 999px;
+  background: currentColor; opacity: 0.7;
+  animation: chat-blink 800ms infinite alternate;
+  display: inline-block;
+}
+.typing-dots i:nth-child(2) { animation-delay: 160ms; }
+.typing-dots i:nth-child(3) { animation-delay: 320ms; }
+@keyframes chat-blink { from { opacity: 0.2; } to { opacity: 0.95; } }
+
+.chat-composer {
+  display: flex; align-items: center; gap: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  border-top: 1px solid var(--line);
+  background: var(--bg-elevated);
+}
+.chat-composer .ico {
+  width: 1.5rem; height: 1.5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+.chat-composer .ico.send { background: var(--accent); color: var(--accent-fg); }
+.chat-composer .field {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.6875rem;
+  color: var(--fg-subtle);
+}
+.hero-side { min-width: 0; display: flex; flex-direction: column; gap: 0.625rem; }
+.chat-caption {
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--fg-subtle);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
+/* =========================================================================
+ * Sections
+ * ========================================================================= */
+section { margin-bottom: 5rem; scroll-margin-top: 5rem; }
+.section-head {
+  display: flex; align-items: baseline; gap: 1rem;
+  margin-bottom: 2.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.section-num {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--accent);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.section-head h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+section p {
+  max-width: 52rem;
+  font-size: 1rem;
+  line-height: 1.85;
+  margin: 0 0 1.25rem;
+  color: var(--fg);
+}
+section p.muted { color: var(--fg-muted); }
+
+/* Blockquote as "pull quote" */
+.pull {
+  border-left: 2px solid var(--accent);
+  padding: 0.25rem 0 0.25rem 1.25rem;
+  margin: 1.5rem 0;
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--fg-muted);
+}
+.pull strong { color: var(--fg); }
+
+/* Tables */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0 2rem;
+  font-size: 0.9375rem;
+}
+.tbl th, .tbl td {
+  text-align: left;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.tbl th {
+  font-weight: 500;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  border-bottom: 1px solid var(--line-strong);
+}
+.tbl tr:last-child td { border-bottom: none; }
+
+/* Cards grid */
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+  margin: 2rem 0;
+}
+@media (min-width: 680px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 900px) { .grid.cols-3 { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .grid.cols-4 { grid-template-columns: repeat(4, 1fr); } }
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  transition: border-color 200ms var(--ease-out-cubic), transform 200ms var(--ease-out-cubic);
+}
+.card:hover { border-color: var(--line-strong); }
+.card h3 {
+  font-size: 0.9375rem;
+  margin: 0 0 0.5rem;
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.card p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--fg-muted);
+}
+.card .tag {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.04em;
+}
+.card .cite {
+  display: block;
+  margin-top: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
+}
+.card .cite a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted var(--line-strong);
+  padding-bottom: 1px;
+  transition: color 160ms var(--ease-out-cubic), border-color 160ms var(--ease-out-cubic);
+}
+.card .cite a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.card .cite + .cite { margin-top: 0.25rem; }
+
+/* Pitch line under the solution cards */
+.pitch-line {
+  text-align: left;
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  color: var(--fg-muted);
+  margin: 2rem 0 0;
+  padding: 0;
+  letter-spacing: 0.01em;
+}
+.pitch-line strong { color: var(--fg); font-weight: 600; }
+
+/* Card modifiers for comparison / quadrant use */
+.card.card--dim {
+  opacity: 0.6;
+  background: var(--bg-muted);
+}
+.card.card--accent { border-color: var(--accent); }
+.card.card--accent h3 { color: var(--accent); }
+.card .tag.tag--dim {
+  color: var(--fg-muted);
+  background: var(--bg-muted);
+}
+.card-svg {
+  display: block;
+  width: 100%;
+  max-width: 14rem;
+  height: auto;
+  margin: 0.875rem auto 0;
+  color: var(--fg-muted);
+}
+
+/* Minimalist flow diagram (arrow chain inside cards) */
+.flow-visual {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.875rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.flow-visual .node {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.flow-visual .node.node--accent {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.flow-visual .arrow { color: var(--fg-muted); }
+
+/* Diagram wrapper — centered SVG + caption */
+.diagram {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  color: var(--fg-muted);
+}
+.diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.diagram .caption {
+  font-size: 0.8125rem;
+  text-align: center;
+  margin: 1rem auto 0;
+  max-width: 36rem;
+  color: var(--fg-muted);
+}
+.diagram .node-dot { fill: var(--fg-muted); }
+.diagram .node-bot { fill: var(--accent); }
+.diagram .edge { stroke: var(--accent); stroke-width: 1.4; fill: none; opacity: 0.7; }
+.diagram .edge-dim { stroke: var(--fg-muted); stroke-width: 1; fill: none; opacity: 0.4; }
+.diagram .label { fill: var(--fg-muted); font-size: 10px; font-family: var(--font-mono); }
+
+/* Section caption — muted note with left rule */
+.sec-cap {
+  font-size: 0.8125rem;
+  color: var(--fg-muted);
+  margin: 0.875rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+.sec-cap a { color: inherit; border-bottom: 1px dotted var(--line-strong); padding-bottom: 1px; text-decoration: none; }
+.sec-cap a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Symptoms — grid of faux-screenshot cards */
+.symptom-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  margin: 2rem 0 2.5rem;
+}
+@media (min-width: 680px) { .symptom-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1024px) { .symptom-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.symptom {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.symptom-shot {
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  background: var(--bg-subtle);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 18px rgb(0 0 0 / 0.05);
+  transition: border-color 200ms var(--ease-out-cubic), transform 200ms var(--ease-out-cubic);
+}
+[data-theme="dark"] .symptom-shot {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 18px rgb(0 0 0 / 0.35);
+}
+.symptom:hover .symptom-shot { border-color: var(--line-strong); transform: translateY(-1px); }
+
+.symptom-head {
+  display: flex; align-items: center; gap: 0.3rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elevated);
+}
+.symptom-head i {
+  width: 0.4rem; height: 0.4rem;
+  border-radius: 999px;
+  background: var(--line-strong);
+  display: inline-block;
+}
+
+.symptom-msg {
+  padding: 0.875rem 0.875rem 1rem;
+  display: flex; gap: 0.5rem;
+  align-items: flex-start;
+}
+.symptom-ava {
+  flex-shrink: 0;
+  width: 1.5rem; height: 1.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center;
+  letter-spacing: 0.02em;
+  margin-top: 0.125rem;
+}
+.symptom-ava--human {
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: 0.5rem;
+  letter-spacing: 0;
+}
+.symptom-bub {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 0.625rem;
+  border-top-left-radius: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--fg);
+  word-break: break-word;
+}
+.symptom-cap {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding-left: 0.25rem;
+}
+
+/* Variant — flat (ChatGPT-style prose card, white) */
+.symptom-shot--flat { background: oklch(100% 0 0); }
+[data-theme="dark"] .symptom-shot--flat { background: oklch(18% 0.006 90); }
+.symptom-flat-body {
+  padding: 0.75rem 0.875rem 0.875rem;
+  font-size: 0.6875rem;
+  line-height: 1.65;
+  color: oklch(18% 0.005 90);
+  word-break: break-word;
+}
+[data-theme="dark"] .symptom-flat-body { color: oklch(94% 0.005 90); }
+.symptom-flat-body strong { font-weight: 600; color: inherit; }
+.symptom-flat-body ul {
+  margin: 0.5rem 0;
+  padding-left: 1.125rem;
+}
+.symptom-flat-body li { margin: 0.2rem 0; }
+.symptom-flat-body p {
+  margin: 0 0 0.5rem;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.symptom-flat-body p:last-child { margin-bottom: 0; }
+
+/* User prompt as small right-aligned gray bubble (used inside flat card) */
+.symptom-userprompt {
+  padding: 0.625rem 0.875rem 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.userprompt-bub {
+  display: inline-block;
+  background: var(--bg-muted);
+  color: var(--fg);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.625rem;
+  border-top-right-radius: 0.25rem;
+  max-width: 80%;
+}
+
+/* Skeleton bubbles — abstract Q&A pattern */
+.symptom-skeleton {
+  padding: 1rem 0.875rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.sk-row { display: flex; }
+.sk-row.right { justify-content: flex-end; }
+.sk-row.left  { justify-content: flex-start; }
+.sk-bub {
+  display: block;
+  height: 1rem;
+  border-radius: 999px;
+}
+.sk-row.right .sk-bub {
+  background: var(--accent);
+  opacity: 0.7;
+  border-top-right-radius: 0.25rem;
+}
+.sk-row.left .sk-bub {
+  background: var(--bg-muted);
+  border-top-left-radius: 0.25rem;
+}
+.sk-bub--sm { width: 2rem; }
+.sk-bub--lg { width: 8rem; }
+.sk-bub--xl { width: 11rem; max-width: 80%; }
+
+/* Variant — dialog (multi-turn) */
+.symptom-dialog {
+  padding: 0.75rem 0.875rem 0.875rem;
+  display: flex; flex-direction: column; gap: 0.45rem;
+}
+.symptom-turn { display: flex; gap: 0.375rem; align-items: flex-start; }
+.symptom-turn.you { justify-content: flex-end; }
+.symptom-turn.bot { justify-content: flex-start; }
+.symptom-turn .symptom-ava { margin-top: 0.125rem; }
+.symptom-turn-bub {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 0.625rem;
+  max-width: 82%;
+  word-break: break-word;
+}
+.symptom-turn.bot .symptom-turn-bub {
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-top-left-radius: 0.25rem;
+}
+.symptom-turn.you .symptom-turn-bub {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-top-right-radius: 0.25rem;
+}
+
+/* Variant — agent (Claude-Code-style thinking/tools trace) */
+.symptom-agent {
+  padding: 0.875rem 1rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  display: flex; flex-direction: column; gap: 0.625rem;
+}
+.agent-step { display: flex; flex-direction: column; gap: 0.2rem; }
+.agent-step-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  color: var(--accent);
+  font-weight: 500;
+}
+.agent-step-head .bullet { font-size: 0.625rem; line-height: 1; }
+.agent-step-detail {
+  padding-left: 1rem;
+  color: var(--fg-muted);
+  word-break: break-word;
+}
+.agent-running {
+  display: flex; align-items: center; gap: 0.5rem;
+  color: var(--fg-subtle);
+  font-style: italic;
+  margin-top: 0.125rem;
+}
+.spinner {
+  display: inline-block;
+  width: 0.75rem; text-align: center;
+  font-style: normal;
+  color: var(--accent);
+}
+.spinner::before {
+  content: "|";
+  animation: spin-bars 640ms infinite;
+}
+@keyframes spin-bars {
+  0%, 24%   { content: "|"; }
+  25%, 49%  { content: "/"; }
+  50%, 74%  { content: "—"; }
+  75%, 100% { content: "\\"; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner::before { animation: none; }
+}
+
+
+
+/* Numbered list items (hero-style) */
+.bullets {
+  list-style: none; padding: 0; margin: 1.5rem 0;
+  max-width: 52rem;
+}
+.bullets li {
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  gap: 1rem;
+  align-items: baseline;
+}
+.bullets li:last-child { border-bottom: 1px solid var(--line); }
+.bullets .idx {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+.bullets .bd h4 {
+  font-size: 1rem; margin: 0 0 0.4rem; font-weight: 600; color: var(--fg);
+}
+.bullets .bd p {
+  margin: 0; font-size: 0.9375rem; line-height: 1.75; color: var(--fg-muted);
+}
+
+/* Milestone table */
+.milestones {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0;
+  margin: 2rem 0;
+}
+.milestones > div {
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--line);
+}
+.milestones > div:last-child,
+.milestones > div:nth-last-child(2) {
+  border-bottom: 1px solid var(--line);
+}
+.milestones .when {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--accent);
+  padding-right: 1.5rem;
+}
+.milestones .what {
+  color: var(--fg);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+/* Closing */
+.closing {
+  margin-top: 6rem;
+  padding: 3rem 2rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  text-align: center;
+}
+.closing p {
+  font-family: var(--font-serif);
+  font-size: clamp(1.125rem, 1.8vw, 1.5rem);
+  line-height: 1.55;
+  margin: 0 auto;
+  max-width: 44rem;
+  color: var(--fg);
+}
+
+/* Footer */
+footer {
+  margin-top: 6rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  color: var(--fg-subtle);
+  display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem;
+}
+
+/* Grain overlay — paper feel */
+.page-wrap { position: relative; }
+.page-wrap::after {
+  content: "";
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>");
+  background-size: 160px 160px;
+  mix-blend-mode: overlay;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 1;
+}
+[data-theme="dark"] .page-wrap::after { opacity: 0.05; mix-blend-mode: soft-light; }
+
+/* Print */
+@media print {
+  .topbar, .theme-toggle { display: none; }
+  .page-wrap::after { display: none; }
+  body { font-size: 11pt; }
+  section { page-break-inside: avoid; }
+  .card { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+<nav class="topbar" aria-label="目录">
+  <div class="topbar-inner">
+    <ol class="toc" id="toc">
+      <li><a href="#s1">问题</a></li>
+      <li><a href="#s2">解决方案</a></li>
+      <li><a href="#s3">受众</a></li>
+      <li><a href="#s4">生态位</a></li>
+      <li><a href="#s5">扩展</a></li>
+      <li><a href="#s6">卖什么</a></li>
+      <li><a href="#s7">展望</a></li>
+      <li><a href="#s8">产品</a></li>
+      <li><a href="#s9">习惯</a></li>
+      <li><a href="#s10">商业</a></li>
+      <li><a href="#s11">时机</a></li>
+    </ol>
+  </div>
+  <div class="progress-rail"><div class="progress-fill" id="progressFill"></div></div>
+</nav>
+
+<main class="page">
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-main">
+      <h1>BubbleBored</h1>
+      <p class="hero-sub">
+        主动、自然、不谄媚<br>
+        帮人脱离信息茧房的AI们
+      </p>
+    </div>
+
+    <div class="hero-side">
+      <aside class="chat-mock" aria-label="产品对话示例">
+        <div class="chat-chrome">
+          <span>9:41</span>
+          <span class="title">AAA · BubbleBored</span>
+          <span class="dots" aria-hidden="true">
+            <i></i><i></i><i></i><span class="batt"></span>
+          </span>
+        </div>
+
+        <ol class="chat-list">
+          <li class="chat-row you">
+            <div class="chat-col">
+              <div class="chat-bubble">我想做个帮人脱离信息茧房的app</div>
+            </div>
+          </li>
+
+          <li class="chat-row bot">
+            <span class="chat-avatar" aria-hidden="true">A</span>
+            <div class="chat-col">
+              <span class="chat-who">AAA</span>
+              <div class="chat-bubble">有意思 但我得先问一句</div>
+            </div>
+          </li>
+
+          <li class="chat-row bot">
+            <span class="chat-avatar" aria-hidden="true">A</span>
+            <div class="chat-col">
+              <div class="chat-bubble">你凭什么觉得人想脱离信息茧房</div>
+            </div>
+          </li>
+
+          <li class="chat-row you">
+            <div class="chat-col">
+              <div class="chat-bubble">好问题</div>
+            </div>
+          </li>
+
+          <li class="chat-row you">
+            <div class="chat-col">
+              <div class="chat-bubble">你想吗</div>
+            </div>
+          </li>
+
+          <li class="chat-row you">
+            <div class="chat-col">
+              <div class="chat-bubble">反正我挺想的 我感觉自己太局限了</div>
+            </div>
+          </li>
+
+          <li class="chat-row bot">
+            <span class="chat-avatar" aria-hidden="true">A</span>
+            <div class="chat-col">
+              <div class="chat-bubble">那这个起点是对的 自己真的想 才做得出真东西</div>
+            </div>
+          </li>
+
+          <li class="chat-row bot">
+            <span class="chat-avatar" aria-hidden="true">A</span>
+            <div class="chat-col">
+              <div class="chat-bubble">具体说说 你哪个瞬间感觉自己局限了</div>
+            </div>
+          </li>
+        </ol>
+
+        <div class="chat-composer" aria-hidden="true">
+          <span class="ico">+</span>
+          <span class="field">说点什么…</span>
+          <span class="ico send">↑</span>
+        </div>
+      </aside>
+      <p class="chat-caption">来源于真实对话 · 由 Claude Opus 4.7 回复</p>
+    </div>
+  </section>
+
+  <!-- 1 -->
+  <section id="s1">
+    <div class="section-head">
+      <span class="section-num">§ 01</span>
+      <h2>问题</h2>
+    </div>
+    <div class="symptom-grid">
+
+      <!-- 套路化 — flat -->
+      <figure class="symptom">
+        <div class="symptom-shot symptom-shot--flat">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-flat-body">
+            我就在这里 ✨ —— <strong>不躲、不藏、不绕</strong>。我会<strong>稳稳地接住你</strong> 🤲
+          </div>
+        </div>
+        <figcaption class="symptom-cap">套路化</figcaption>
+      </figure>
+
+      <!-- 令人盲目自信 — flat -->
+      <figure class="symptom">
+        <div class="symptom-shot symptom-shot--flat">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-flat-body">
+            你已经<strong>超过了绝大多数做 xx 的人</strong> 🚀。你的选择<strong>已经是最优解</strong> ✅。
+          </div>
+        </div>
+        <figcaption class="symptom-cap">令人盲目自信</figcaption>
+      </figure>
+
+      <!-- 像客服 — single bubble -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-msg">
+            <span class="symptom-ava">AI</span>
+            <p class="symptom-bub">如果您 xxxx，建议您 xxxx。</p>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">像客服</figcaption>
+      </figure>
+
+      <!-- 不会开玩笑 — dialog -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-dialog">
+            <div class="symptom-turn you"><div class="symptom-turn-bub">我应该担任 Apple 的 CEO 吗？</div></div>
+            <div class="symptom-turn bot">
+              <span class="symptom-ava">AI</span>
+              <div class="symptom-turn-bub">从现实、能力、岗位要求三个角度简单说下：<br>1. xxxxx<br>2. xxxxx<br>……</div>
+            </div>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">不会开玩笑</figcaption>
+      </figure>
+
+      <!-- 想学人又学不像 — dialog with parallel "人类" bubble -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-dialog">
+            <div class="symptom-turn you"><div class="symptom-turn-bub">你好笨</div></div>
+            <div class="symptom-turn bot">
+              <span class="symptom-ava">AI</span>
+              <div class="symptom-turn-bub">呜呜，对不起对不起～我再努力一点，你有什么问题尽管说，我一定好好答！</div>
+            </div>
+            <div class="symptom-turn bot">
+              <span class="symptom-ava symptom-ava--human">人类</span>
+              <div class="symptom-turn-bub">？</div>
+            </div>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">想学人又学不像</figcaption>
+      </figure>
+
+      <!-- 过于强调 Agent 能力 — Claude-Code-style thinking/tools trace with spinner -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-agent">
+            <div class="agent-step">
+              <div class="agent-step-head"><span class="bullet">●</span> Thinking</div>
+              <div class="agent-step-detail">用户说「你好」，语气很友好，我可以写一个程序来示好。</div>
+            </div>
+            <div class="agent-step">
+              <div class="agent-step-head"><span class="bullet">●</span> Tool use</div>
+              <div class="agent-step-detail">20 tools called</div>
+            </div>
+            <div class="agent-running">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Writing program…</span>
+            </div>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">过于强调 Agent 能力</figcaption>
+      </figure>
+
+      <!-- 尴尬客套 — bubble -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-msg">
+            <span class="symptom-ava">AI</span>
+            <p class="symptom-bub">最近怎么样？有什么新鲜事吗？</p>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">尴尬客套</figcaption>
+      </figure>
+
+      <!-- 跳脱不出用户的思维 — bubble -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-msg">
+            <span class="symptom-ava">AI</span>
+            <p class="symptom-bub">你的思路非常对！顺着这个方向，我再帮你补三条支持论据。</p>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">跳脱不出用户的思维</figcaption>
+      </figure>
+
+      <!-- 问一句答一句 — abstract skeleton bubbles -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-skeleton">
+            <div class="sk-row right"><span class="sk-bub sk-bub--sm"></span></div>
+            <div class="sk-row left"><span class="sk-bub sk-bub--lg"></span></div>
+            <div class="sk-row right"><span class="sk-bub sk-bub--sm"></span></div>
+            <div class="sk-row left"><span class="sk-bub sk-bub--xl"></span></div>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">问一句答一句,不主动</figcaption>
+      </figure>
+
+      <!-- 不自我反思 — Thinking format -->
+      <figure class="symptom">
+        <div class="symptom-shot">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-agent">
+            <div class="agent-step">
+              <div class="agent-step-head"><span class="bullet">●</span> Thinking</div>
+              <div class="agent-step-detail">我已经很好地回复了，不需要查证。</div>
+            </div>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">不自我反思</figcaption>
+      </figure>
+
+      <!-- 啰嗦 — flat with right-aligned user bubble at top -->
+      <figure class="symptom">
+        <div class="symptom-shot symptom-shot--flat">
+          <div class="symptom-head"><i></i><i></i><i></i></div>
+          <div class="symptom-userprompt">
+            <span class="userprompt-bub">北京的柳絮好讨厌</span>
+          </div>
+          <div class="symptom-flat-body">
+            <p>确实，北京每年 xxxx</p>
+            <p><strong>一、为什么这么烦？</strong> <strong>二、</strong>xxx <strong>三、</strong>xxx</p>
+            <p>要不要我帮你整理 xxxxx？</p>
+          </div>
+        </div>
+        <figcaption class="symptom-cap">啰嗦</figcaption>
+      </figure>
+
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="s2">
+    <div class="section-head">
+      <span class="section-num">§ 02</span>
+      <h2>解决方案</h2>
+    </div>
+    <div class="grid cols-3">
+      <div class="card">
+        <h3>主动性</h3>
+        <p>多场景触发主动性</p>
+        <span class="cite">理论支撑：<a href="https://www.ijcai.org/proceedings/2023/0738.pdf" target="_blank" rel="noopener">Deng et al. (2023, IJCAI)</a></span>
+        <span class="cite">需求侧：<a href="https://academic.oup.com/abm/article/52/6/446/4733473" target="_blank" rel="noopener">Nahum-Shani et al. (2018, Michigan)</a></span>
+      </div>
+      <div class="card">
+        <h3>自主冲浪</h3>
+        <p>冲破信息茧房的关键一步</p>
+        <span class="cite">理论支撑：<a href="https://www.science.org/doi/10.1126/science.aaa1160" target="_blank" rel="noopener">Bakshy et al. (2015, Science)</a></span>
+      </div>
+      <div class="card">
+        <h3>回顾与反思</h3>
+        <p>引入批评模型，自我纠正</p>
+        <span class="cite">理论支撑：<a href="https://arxiv.org/abs/2212.08073" target="_blank" rel="noopener">Bai et al. (2022, Anthropic)</a></span>
+      </div>
+      <div class="card">
+        <h3>自然对话</h3>
+        <p>多问多答，微信聊天形态</p>
+        <span class="cite">理论支撑：<a href="https://en.wikipedia.org/wiki/Cooperative_principle" target="_blank" rel="noopener">Grice (1975, Harvard)</a></span>
+        <span class="cite">轮替机制：<a href="https://www.jstor.org/stable/412243" target="_blank" rel="noopener">Sacks et al. (1974, UCLA)</a></span>
+      </div>
+      <div class="card">
+        <h3>建立弱关系</h3>
+        <p>提供创新与洞见传播的桥梁</p>
+        <span class="cite">理论支撑：<a href="https://sociology.stanford.edu/publications/strength-weak-ties" target="_blank" rel="noopener">Granovetter (1973, Harvard/Stanford)</a></span>
+      </div>
+      <div class="card">
+        <h3>多个 AI 对多个人类</h3>
+        <p>AI 自然融入人类社交网络</p>
+        <span class="cite">技术原型：<a href="https://arxiv.org/abs/2304.03442" target="_blank" rel="noopener">Park et al. (2023, Stanford)</a></span>
+        <span class="cite">社交价值：<a href="https://www.hks.harvard.edu/faculty-research/policy-topics/social-policy/social-capital-predicting-epidemic-loneliness-and" target="_blank" rel="noopener">Putnam (2000, Harvard Kennedy)</a></span>
+      </div>
+    </div>
+    <p class="pitch-line">
+      <strong>Stanford · UCLA · 港中大</strong>…… 他们的科研成果，我来转化。
+    </p>
+  </section>
+
+  <!-- 3 · 核心初始受众 -->
+  <section id="s3">
+    <div class="section-head">
+      <span class="section-num">§ 03</span>
+      <h2>核心初始受众</h2>
+    </div>
+
+    <p style="font-family: var(--font-serif); font-size: 1.5rem; line-height: 1.5; color: var(--fg); margin: 1.25rem 0 0.75rem;">
+      内驱探索者 · 满足他们<strong>向外扩展</strong>的需求。
+    </p>
+    <p>这类人喜欢没有明确目的地去某地转一转，见不一样的人，聊不一样的思路，碰不一样的机会，这就是他们向外扩展的需求。但传统方法密度很低，我们提供提升密度的<strong>效率工具</strong>。</p>
+    <p>这与 Agentic.ai 等 AI 信息聚合产品的用户画像相似，但这些产品大多在已知的信息池内整理、筛选、聚合。我们希望提升的是向外扩展的密度与效率。</p>
+
+    <div class="grid cols-2">
+      <div class="card card--dim" style="display:flex; flex-direction:column; align-items:center; gap:0.75rem;">
+        <p style="margin:0; font-family: var(--font-serif); font-size: 1.125rem; color: var(--fg);">前者 · 像<strong>做好贷款</strong></p>
+        <svg viewBox="0 0 260 100" class="card-svg" aria-hidden="true" style="max-width: 18rem;">
+          <defs>
+            <marker id="arr-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 0 L10 5 L0 10 Z" fill="currentColor" opacity="0.7"/>
+            </marker>
+          </defs>
+          <circle cx="130" cy="50" r="34" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+          <circle cx="130" cy="50" r="14" fill="currentColor" opacity="0.35"/>
+          <path d="M20 18 Q85 36 110 46" fill="none" stroke="currentColor" stroke-width="1" opacity="0.7" marker-end="url(#arr-in)"/>
+          <path d="M240 18 Q175 36 150 46" fill="none" stroke="currentColor" stroke-width="1" opacity="0.7" marker-end="url(#arr-in)"/>
+          <path d="M20 82 Q85 64 110 54" fill="none" stroke="currentColor" stroke-width="1" opacity="0.7" marker-end="url(#arr-in)"/>
+          <path d="M240 82 Q175 64 150 54" fill="none" stroke="currentColor" stroke-width="1" opacity="0.7" marker-end="url(#arr-in)"/>
+        </svg>
+      </div>
+
+      <div class="card card--accent" style="display:flex; flex-direction:column; align-items:center; gap:0.75rem;">
+        <p style="margin:0; font-family: var(--font-serif); font-size: 1.125rem; color: var(--accent);">后者 · 像<strong>做好 VC</strong></p>
+        <svg viewBox="0 0 260 100" class="card-svg" aria-hidden="true" style="color: var(--accent); max-width: 18rem;">
+          <defs>
+            <marker id="arr-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M0 0 L10 5 L0 10 Z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <circle cx="130" cy="50" r="11" fill="currentColor" opacity="0.9"/>
+          <path d="M130 50 Q85 34 24 18" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+          <path d="M130 50 Q175 34 236 18" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+          <path d="M130 50 Q85 66 24 82" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+          <path d="M130 50 Q175 66 236 82" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+          <path d="M130 50 L130 10" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+          <path d="M130 50 L130 92" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#arr-out)"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 · 生态位 -->
+  <section id="s4">
+    <div class="section-head">
+      <span class="section-num">§ 04</span>
+      <h2>生态位</h2>
+    </div>
+
+    <div class="diagram" style="padding: 1.5rem 1rem;">
+      <svg viewBox="0 0 720 280" role="img" aria-label="生态位">
+        <defs>
+          <filter id="heat-blur" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="42"/>
+          </filter>
+        </defs>
+
+        <!-- Heatmap backdrop: red pools at red-ocean nodes, blue pool at 挚友 -->
+        <g filter="url(#heat-blur)" opacity="0.58">
+          <circle cx="90"  cy="140" r="62" fill="#d04d4d"/>
+          <circle cx="380" cy="140" r="62" fill="#d04d4d"/>
+          <circle cx="525" cy="140" r="62" fill="#d04d4d"/>
+          <circle cx="660" cy="140" r="62" fill="#d04d4d"/>
+          <circle cx="235" cy="140" r="82" fill="var(--accent)"/>
+        </g>
+
+        <!-- Axis line -->
+        <line x1="50" y1="140" x2="670" y2="140" stroke="var(--fg-muted)" stroke-width="1" opacity="0.35"/>
+
+        <!-- Axis endpoint labels -->
+        <text class="label" x="50"  y="266" text-anchor="start" style="font-weight:600; fill: var(--fg); font-size: 12px;">← 感性</text>
+        <text class="label" x="670" y="266" text-anchor="end"   style="font-weight:600; fill: var(--fg); font-size: 12px;">理性 →</text>
+
+        <!-- 1. 恋人 / AI 陪伴 -->
+        <circle cx="90" cy="140" r="5" fill="var(--fg)"/>
+        <text class="label" x="90" y="100" text-anchor="middle" style="font-weight:700; fill: var(--fg); font-size: 13px;">恋人</text>
+        <text class="label" x="90" y="178" text-anchor="middle" style="fill: var(--fg); font-size: 12px;">AI 陪伴</text>
+
+        <!-- 2. 挚友 / ？ -->
+        <circle cx="235" cy="140" r="7" fill="var(--accent)"/>
+        <text class="label" x="235" y="100" text-anchor="middle" style="font-weight:700; fill: var(--accent); font-size: 14px;">挚友</text>
+        <text class="label" x="235" y="184" text-anchor="middle" style="fill: var(--accent); font-weight:700; font-size: 22px; font-family: var(--font-serif);">？</text>
+
+        <!-- 3. 朋友 / ChatGPT -->
+        <circle cx="380" cy="140" r="5" fill="var(--fg)"/>
+        <text class="label" x="380" y="100" text-anchor="middle" style="font-weight:700; fill: var(--fg); font-size: 13px;">朋友</text>
+        <text class="label" x="380" y="178" text-anchor="middle" style="fill: var(--fg); font-size: 12px;">ChatGPT</text>
+
+        <!-- 4. 同事 / OpenClaw -->
+        <circle cx="525" cy="140" r="5" fill="var(--fg)"/>
+        <text class="label" x="525" y="100" text-anchor="middle" style="font-weight:700; fill: var(--fg); font-size: 13px;">同事</text>
+        <text class="label" x="525" y="178" text-anchor="middle" style="fill: var(--fg); font-size: 12px;">OpenClaw</text>
+
+        <!-- 5. 事业伙伴 / Claude Code -->
+        <circle cx="660" cy="140" r="5" fill="var(--fg)"/>
+        <text class="label" x="660" y="100" text-anchor="middle" style="font-weight:700; fill: var(--fg); font-size: 13px;">事业伙伴</text>
+        <text class="label" x="660" y="178" text-anchor="middle" style="fill: var(--fg); font-size: 12px;">Claude Code</text>
+      </svg>
+    </div>
+  </section>
+
+  <!-- 5 · 扩展路径 -->
+  <section id="s5">
+    <div class="section-head">
+      <span class="section-num">§ 05</span>
+      <h2>扩展路径</h2>
+    </div>
+
+    <p style="font-family: var(--font-serif); font-size: 1.5rem; line-height: 1.5; color: var(--fg); margin: 1.25rem 0 1.5rem;">
+      多邻国 / Strava 模式 · 卖<strong>成长感</strong>与<strong>社交货币</strong>。
+    </p>
+
+    <div class="grid cols-2">
+      <div class="diagram" style="margin: 0; padding: 1rem;">
+        <svg viewBox="0 0 400 320" role="img" aria-label="知识足迹图">
+          <defs>
+            <radialGradient id="fp-glow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.12"/>
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <rect x="0" y="0" width="400" height="320" fill="url(#fp-glow)"/>
+
+          <!-- Deep + broad -->
+          <circle cx="150" cy="150" r="58" fill="var(--accent)" opacity="0.78"/>
+          <!-- Deep, medium -->
+          <circle cx="255" cy="190" r="44" fill="var(--accent)" opacity="0.58"/>
+          <!-- Medium -->
+          <circle cx="305" cy="110" r="34" fill="var(--accent)" opacity="0.42"/>
+          <!-- Shallow, medium -->
+          <circle cx="95"  cy="235" r="30" fill="var(--accent)" opacity="0.30"/>
+          <circle cx="205" cy="75"  r="26" fill="var(--accent)" opacity="0.28"/>
+          <!-- Shallow, small -->
+          <circle cx="60"  cy="135" r="20" fill="var(--accent)" opacity="0.22"/>
+          <circle cx="335" cy="240" r="22" fill="var(--accent)" opacity="0.25"/>
+
+          <!-- Divergent footprints -->
+          <circle cx="30"  cy="60"  r="5" fill="var(--accent)" opacity="0.5"/>
+          <circle cx="52"  cy="48"  r="3" fill="var(--accent)" opacity="0.4"/>
+          <circle cx="82"  cy="38"  r="4" fill="var(--accent)" opacity="0.4"/>
+          <circle cx="370" cy="55"  r="4" fill="var(--accent)" opacity="0.4"/>
+          <circle cx="352" cy="70"  r="3" fill="var(--accent)" opacity="0.3"/>
+          <circle cx="385" cy="35"  r="5" fill="var(--accent)" opacity="0.5"/>
+          <circle cx="378" cy="285" r="5" fill="var(--accent)" opacity="0.5"/>
+          <circle cx="358" cy="298" r="3" fill="var(--accent)" opacity="0.4"/>
+          <circle cx="325" cy="305" r="4" fill="var(--accent)" opacity="0.4"/>
+          <circle cx="20"  cy="290" r="5" fill="var(--accent)" opacity="0.5"/>
+          <circle cx="42"  cy="278" r="3" fill="var(--accent)" opacity="0.4"/>
+        </svg>
+        <p class="caption">知识足迹图 · 一张巨大的认知地图</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; justify-content: center; padding: 0.5rem;">
+        <ul style="list-style: none; padding: 0; margin: 0;">
+          <li style="padding: 0.875rem 0; border-bottom: 1px solid var(--line); color: var(--fg);">聊得越深的方向，<strong>颜色越深</strong></li>
+          <li style="padding: 0.875rem 0; border-bottom: 1px solid var(--line); color: var(--fg);">聊得越广的领域，<strong>面积越大</strong></li>
+          <li style="padding: 0.875rem 0; color: var(--fg);">思维越发散，<strong>足迹越广泛</strong></li>
+        </ul>
+        <p style="margin-top: 1.5rem; color: var(--fg);">可视化、可量化，便于社交分享与传播</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 · 卖什么 -->
+  <section id="s6">
+    <div class="section-head">
+      <span class="section-num">§ 06</span>
+      <h2>卖什么</h2>
+    </div>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2rem 0 0.75rem; color:var(--fg);">3.1 个人价值 · 突破信息茧房</h3>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="tag tag--dim">推荐算法</div>
+        <h3>越喂越舒服</h3>
+        <p>刷到的永远是已经同意的。时间久了，以为自己懂世界，其实只是被选择性证实。</p>
+        <div class="flow-visual" aria-hidden="true">
+          <span class="node">你</span>
+          <span class="arrow">→</span>
+          <span class="node">已同意</span>
+          <span class="arrow">→</span>
+          <span class="node">你</span>
+          <span class="arrow">↻</span>
+        </div>
+      </div>
+      <div class="card card--accent">
+        <div class="tag">BubbleBored</div>
+        <h3>一点点不舒服，但有价值</h3>
+        <p>AI 主动去看你认知之外、但与你有关的东西，在合适的时候带回一条不同立场的消息。</p>
+        <div class="flow-visual" aria-hidden="true">
+          <span class="node">认知外</span>
+          <span class="arrow">→</span>
+          <span class="node node--accent">AI</span>
+          <span class="arrow">→</span>
+          <span class="node">你</span>
+        </div>
+      </div>
+    </div>
+    <p class="sec-cap">帮你保留「被不同视角触碰到」的能力 · <a href="https://en.wikipedia.org/wiki/Filter_bubble" target="_blank" rel="noopener">Pariser (2011)</a></p>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">3.2 朋友 · 好朋友不只是情绪价值</h3>
+    <div class="grid cols-2">
+      <div class="card card--dim">
+        <div class="tag tag--dim">情绪 · Emotional</div>
+        <h3>安慰 · 理解 · 共情</h3>
+        <p>市面上的 AI 陪伴产品大多只做这一格。</p>
+      </div>
+      <div class="card card--accent">
+        <div class="tag">工具 · Instrumental</div>
+        <h3>帮你做事 · 借你资源</h3>
+        <p>替你跑腿、替你查、替你张罗。</p>
+      </div>
+      <div class="card card--accent">
+        <div class="tag">信息 · Informational</div>
+        <h3>把它知道的告诉你</h3>
+        <p>LLM 的强项，也是 BubbleBored 的主战场。</p>
+      </div>
+      <div class="card card--accent">
+        <div class="tag">评估 · Appraisal</div>
+        <h3>给反馈 · 帮判断</h3>
+        <p>你做得怎么样、你说的对不对、你漏了什么。</p>
+      </div>
+    </div>
+    <p class="sec-cap">AI 陪伴只做第一格；<strong>好朋友靠的是后三格</strong> · 社会支持四分类：<a href="https://archive.org/details/workstresssocial0000hous" target="_blank" rel="noopener">House (1981)</a></p>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">3.3 明镜</h3>
+    <div class="grid cols-2">
+      <div class="card card--dim">
+        <div class="tag tag--dim">哈哈镜</div>
+        <h3>美颜后的你</h3>
+        <p>大多数 AI 助理 —— 被训得不敢反驳，你取消订阅比它顶撞你更可怕。</p>
+      </div>
+      <div class="card card--accent">
+        <div class="tag">平面镜</div>
+        <h3>真实的你</h3>
+        <p>BubbleBored Review 主动指出盲区、前后矛盾、潜在偏见。不是否定你，是帮你看清你。</p>
+      </div>
+    </div>
+    <p class="sec-cap">「以人为镜，可以明得失」—— 魏征 · 「镜中我」：<a href="https://en.wikipedia.org/wiki/Looking-glass_self" target="_blank" rel="noopener">Cooley (1902)</a></p>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">3.4 弱关系</h3>
+    <div class="diagram">
+      <svg viewBox="0 0 580 180" role="img" aria-label="弱关系消失 vs 多人共养 Bot 做桥">
+        <!-- LEFT: three isolated clusters -->
+        <text class="label" x="120" y="14" text-anchor="middle">弱关系消失 · 圈子内部密，圈子之间断</text>
+        <!-- cluster A -->
+        <circle class="node-dot" cx="40" cy="55" r="4"/>
+        <circle class="node-dot" cx="75" cy="45" r="4"/>
+        <circle class="node-dot" cx="62" cy="80" r="4"/>
+        <line class="edge-dim" x1="40" y1="55" x2="75" y2="45"/>
+        <line class="edge-dim" x1="75" y1="45" x2="62" y2="80"/>
+        <line class="edge-dim" x1="40" y1="55" x2="62" y2="80"/>
+        <!-- cluster B -->
+        <circle class="node-dot" cx="175" cy="55" r="4"/>
+        <circle class="node-dot" cx="210" cy="45" r="4"/>
+        <circle class="node-dot" cx="195" cy="80" r="4"/>
+        <line class="edge-dim" x1="175" y1="55" x2="210" y2="45"/>
+        <line class="edge-dim" x1="210" y1="45" x2="195" y2="80"/>
+        <line class="edge-dim" x1="175" y1="55" x2="195" y2="80"/>
+        <!-- cluster C -->
+        <circle class="node-dot" cx="90" cy="135" r="4"/>
+        <circle class="node-dot" cx="125" cy="125" r="4"/>
+        <circle class="node-dot" cx="115" cy="160" r="4"/>
+        <line class="edge-dim" x1="90" y1="135" x2="125" y2="125"/>
+        <line class="edge-dim" x1="125" y1="125" x2="115" y2="160"/>
+        <line class="edge-dim" x1="90" y1="135" x2="115" y2="160"/>
+
+        <!-- MIDDLE: arrow -->
+        <text class="label" x="275" y="100" text-anchor="middle" font-size="20">→</text>
+
+        <!-- RIGHT: three clusters + Bot hub -->
+        <text class="label" x="450" y="14" text-anchor="middle">多人共养 Bot · Bot 做桥</text>
+        <!-- cluster A' -->
+        <circle class="node-dot" cx="340" cy="55" r="4"/>
+        <circle class="node-dot" cx="375" cy="45" r="4"/>
+        <circle class="node-dot" cx="362" cy="80" r="4"/>
+        <line class="edge-dim" x1="340" y1="55" x2="375" y2="45"/>
+        <line class="edge-dim" x1="375" y1="45" x2="362" y2="80"/>
+        <line class="edge-dim" x1="340" y1="55" x2="362" y2="80"/>
+        <!-- cluster B' -->
+        <circle class="node-dot" cx="525" cy="55" r="4"/>
+        <circle class="node-dot" cx="560" cy="45" r="4"/>
+        <circle class="node-dot" cx="545" cy="80" r="4"/>
+        <line class="edge-dim" x1="525" y1="55" x2="560" y2="45"/>
+        <line class="edge-dim" x1="560" y1="45" x2="545" y2="80"/>
+        <line class="edge-dim" x1="525" y1="55" x2="545" y2="80"/>
+        <!-- cluster C' -->
+        <circle class="node-dot" cx="415" cy="135" r="4"/>
+        <circle class="node-dot" cx="450" cy="125" r="4"/>
+        <circle class="node-dot" cx="440" cy="160" r="4"/>
+        <line class="edge-dim" x1="415" y1="135" x2="450" y2="125"/>
+        <line class="edge-dim" x1="450" y1="125" x2="440" y2="160"/>
+        <line class="edge-dim" x1="415" y1="135" x2="440" y2="160"/>
+        <!-- Bot hub -->
+        <circle class="node-bot" cx="460" cy="100" r="8"/>
+        <text class="label" x="460" y="103" text-anchor="middle" fill="#fff" font-size="8">Bot</text>
+        <!-- Bot connections -->
+        <line class="edge" x1="460" y1="100" x2="362" y2="80"/>
+        <line class="edge" x1="460" y1="100" x2="545" y2="80"/>
+        <line class="edge" x1="460" y1="100" x2="450" y2="125"/>
+      </svg>
+      <p class="caption">Bot 知道三个圈子里各自的事，在合适时把合适的消息带给合适的人。</p>
+    </div>
+    <p class="sec-cap">一生中大部分机会来自弱关系 · <a href="https://www.jstor.org/stable/2776392" target="_blank" rel="noopener">Granovetter (1973)</a></p>
+  </section>
+
+  <!-- 4 -->
+  <section id="s7">
+    <div class="section-head">
+      <span class="section-num">§ 07</span>
+      <h2>远期展望</h2>
+    </div>
+    <p style="font-family:var(--font-serif); font-size:1.375rem; line-height:1.5; color:var(--fg);">
+      今天是一个 Bot 对一个人。真正有意思的形态，是关系从一条线升到一张网。
+    </p>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="tag">4.1 多人共养</div>
+        <h3>几个朋友共养一只 Bot</h3>
+        <p>记得每个人各自的事，也记得他们之间发生过的事。是朋友圈里的共同熟人 —— 边界清楚，该守的秘密守住，该传的话才传。</p>
+        <svg viewBox="0 0 200 70" class="card-svg" aria-hidden="true">
+          <circle cx="25" cy="20" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="25" cy="40" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="25" cy="60" r="5" fill="currentColor" opacity="0.5"/>
+          <line x1="30" y1="20" x2="165" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+          <line x1="30" y1="40" x2="165" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+          <line x1="30" y1="60" x2="165" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+          <circle cx="170" cy="35" r="10" fill="var(--accent)"/>
+          <text x="170" y="38" text-anchor="middle" fill="#fff" font-size="8" font-family="var(--font-mono)">Bot</text>
+        </svg>
+      </div>
+
+      <div class="card">
+        <div class="tag">4.2 Bot 之间</div>
+        <h3>你的 Bot 与朋友的 Bot 先通气</h3>
+        <p>两只 Bot 先聊几句 —— 比你们自己直接开口随意得多，也可以作破冰中介：两个 Bot 先聊聊，背后的两个人要不要认识一下？</p>
+        <svg viewBox="0 0 200 70" class="card-svg" aria-hidden="true">
+          <circle cx="20" cy="35" r="6" fill="currentColor" opacity="0.5"/>
+          <circle cx="70" cy="35" r="10" fill="var(--accent)"/>
+          <text x="70" y="38" text-anchor="middle" fill="#fff" font-size="8" font-family="var(--font-mono)">Bot</text>
+          <circle cx="130" cy="35" r="10" fill="var(--accent)"/>
+          <text x="130" y="38" text-anchor="middle" fill="#fff" font-size="8" font-family="var(--font-mono)">Bot</text>
+          <circle cx="180" cy="35" r="6" fill="currentColor" opacity="0.5"/>
+          <line x1="26" y1="35" x2="60" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+          <line x1="80" y1="35" x2="120" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+          <line x1="140" y1="35" x2="174" y2="35" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+        </svg>
+      </div>
+
+      <div class="card">
+        <div class="tag">4.3 群里的 Bot</div>
+        <h3>微信群里的另一个熟人</h3>
+        <p>不是客服、不是助手，是群里的一个节点。记得谁最近在忙什么，合适时接一句话，替不在场的人捎消息。</p>
+        <svg viewBox="0 0 200 70" class="card-svg" aria-hidden="true">
+          <rect x="15" y="10" width="170" height="50" rx="10" fill="none" stroke="var(--line-strong)" stroke-dasharray="3,3"/>
+          <circle cx="40" cy="28" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="65" cy="42" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="95" cy="28" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="135" cy="42" r="5" fill="currentColor" opacity="0.5"/>
+          <circle cx="165" cy="35" r="8" fill="var(--accent)"/>
+          <text x="165" y="38" text-anchor="middle" fill="#fff" font-size="7" font-family="var(--font-mono)">Bot</text>
+        </svg>
+      </div>
+
+      <div class="card card--accent">
+        <div class="tag">4.4 信息网络</div>
+        <h3>不是陪伴网络，是信息基础设施</h3>
+        <p>比推荐算法懂你，比搜索引擎知道得广，比群聊转发高效。信息不再依附在平台流量上，而依附在一张 Bot + 熟人的网上。</p>
+        <svg viewBox="0 0 200 70" class="card-svg" aria-hidden="true">
+          <circle cx="30" cy="20" r="4" fill="currentColor" opacity="0.5"/>
+          <circle cx="30" cy="50" r="4" fill="currentColor" opacity="0.5"/>
+          <circle cx="170" cy="20" r="4" fill="currentColor" opacity="0.5"/>
+          <circle cx="170" cy="50" r="4" fill="currentColor" opacity="0.5"/>
+          <circle cx="70" cy="35" r="7" fill="var(--accent)"/>
+          <circle cx="130" cy="35" r="7" fill="var(--accent)"/>
+          <circle cx="100" cy="15" r="5" fill="var(--accent)" opacity="0.7"/>
+          <circle cx="100" cy="55" r="5" fill="var(--accent)" opacity="0.7"/>
+          <line x1="33" y1="22" x2="65" y2="33" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="33" y1="48" x2="65" y2="37" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="77" y1="35" x2="123" y2="35" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="70" y1="28" x2="100" y2="18" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="70" y1="42" x2="100" y2="52" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="130" y1="28" x2="100" y2="18" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="130" y1="42" x2="100" y2="52" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="137" y1="33" x2="167" y2="22" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+          <line x1="137" y1="37" x2="167" y2="48" stroke="var(--accent)" stroke-width="1" opacity="0.6"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="pull">
+      主动性、自主冲浪、回顾与反思、自然对话、建立弱关系 —— 加上<strong>多对多对话</strong>这第六件，
+      合起来才是 BubbleBored 的完整愿景。<strong>一张网，不是一条线</strong>。
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section id="s8">
+    <div class="section-head">
+      <span class="section-num">§ 08</span>
+      <h2>产品：已经跑起来的四件事</h2>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="tag">SURFING</div>
+        <h3>主动冲浪 /surf</h3>
+        <p>不等你问，自己去互联网上找你认知外、又确实有用的东西。不是把算法已经喂过你的再喂一次。</p>
+      </div>
+      <div class="card">
+        <div class="tag">REVIEW</div>
+        <h3>自我审视 Review</h3>
+        <p>每几轮回头读自己说过的话，发现说错或漏了会追加纠正。这是和"无脑顺着用户"的产品最本质的区别 —— 朋友之所以靠谱，是因为会认错、会补充。</p>
+      </div>
+      <div class="card">
+        <div class="tag">MEMORY</div>
+        <h3>长期记忆与画像</h3>
+        <p>跨对话、跨平台都记得你;画像反过来喂给冲浪与审视，让它越聊越像在认识你。</p>
+      </div>
+      <div class="card">
+        <div class="tag">DEBOUNCE</div>
+        <h3>防抖 Debounce</h3>
+        <p>该等就等，不抢话，不话痨。便宜模型先判断:这条消息现在该不该回?</p>
+      </div>
+    </div>
+    <p class="muted">
+      Web / iOS / Telegram / 飞书 四端已稳定;MIT 开源;多性格 Bot 靠一个 <code style="font-family:var(--font-mono);font-size:0.9em;">.md</code> 文件即可定义。
+    </p>
+  </section>
+
+  <!-- 5 -->
+  <section id="s9">
+    <div class="section-head">
+      <span class="section-num">§ 09</span>
+      <h2>用户习惯：从「打开即用」到「不知不觉」</h2>
+    </div>
+    <p>
+      传统应用是<strong>工具型</strong>:用户需要时打开(计算器、地图、ChatGPT)。
+      BubbleBored 是<strong>投喂型</strong>:用户不是"主观思考后觉得有趣才点开",
+      而是被它主动开口、被它惊喜到之后，<strong>形成条件反射式的打开冲动</strong> ——
+      这就是微信长出来的原理。
+    </p>
+    <p>
+      为什么知乎做不到?因为知乎依然是<strong>用户主动进场</strong>的内容货架。
+      而 BubbleBored 更像美团、大众点评、闲鱼、汽车之家 —— 尤其是汽车之家:
+    </p>
+    <ul class="bullets">
+      <li>
+        <span class="idx">A</span>
+        <div class="bd">
+          <h4>用户并不是每次都真要买车</h4>
+          <p>打开的动机远大于"要解决问题"。</p>
+        </div>
+      </li>
+      <li>
+        <span class="idx">B</span>
+        <div class="bd">
+          <h4>"新的评价 + 新的相似车型" 构成盲盒式的惊喜</h4>
+          <p>每次点开都有一点点新增量，但不保证、也不可预测。</p>
+        </div>
+      </li>
+      <li>
+        <span class="idx">C</span>
+        <div class="bd">
+          <h4>盲盒 + 好奇心 + 低打开成本 = 条件反射</h4>
+          <p>久而久之，无意识地就想去看一眼。</p>
+        </div>
+      </li>
+    </ul>
+    <div class="pull">
+      <strong>BubbleBored 的惊喜机制</strong>:每次打开，都可能有"它昨晚替你翻到的东西"、
+      "它回头补的一句话"、"它主动起的新话题"。每次都是开盲盒。
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section id="s10">
+    <div class="section-head">
+      <span class="section-num">§ 10</span>
+      <h2>商业模式</h2>
+    </div>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2rem 0 0.75rem; color:var(--fg);">5.1 付费增值(核心)</h3>
+    <div class="grid cols-3">
+      <div class="card">
+        <div class="tag">FREE</div>
+        <h3>免费层</h3>
+        <p>基础对话、基础记忆、基础冲浪。让每个人都能先有一个自己的 Bot。</p>
+      </div>
+      <div class="card">
+        <div class="tag">PAID · 心路</div>
+        <h3>心路历程付费查看</h3>
+        <p>Bot 的思考过程、自我审视时反复问了自己什么、冲浪时看了哪些信源、为什么否决了某条建议 —— 这些"脑内活动"本身就值钱，因为它们才是用户信任它的依据。</p>
+      </div>
+      <div class="card">
+        <div class="tag">PAID · 吃饭</div>
+        <h3>请机器人吃饭</h3>
+        <p>用户付费给 Bot 升级模型(GPT-5 → 更强)、提高主动性频率、开更多冲浪预算。付费越多，Bot 越聪明、越主动 —— 最自然的价值对价关系。</p>
+      </div>
+    </div>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">5.2 统一入口(长期)</h3>
+    <p>参考 ChatGPT 的 GPTs、千问的智能体广场、App Store 的生态路径:</p>
+    <ul class="bullets">
+      <li><span class="idx">01</span><div class="bd"><h4>多性格 Bot 已经是平台原子</h4><p>一个 Markdown 文件 = 一个性格，门槛极低。</p></div></li>
+      <li><span class="idx">02</span><div class="bd"><h4>下一步:角色市场 + 多人共养</h4><p>他人养成的 Bot 直接拉来用;几位好友共同养一只。</p></div></li>
+      <li><span class="idx">03</span><div class="bd"><h4>再下一步:Bot 作为面向个人的小型入口</h4><p>订机票、比价、约时间、读论文，都通过"你的 Bot"去完成。</p></div></li>
+    </ul>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">5.3 数据飞轮(护城河)</h3>
+    <p>
+      <strong>私有用户记忆 + 私有画像，无法转移，也不应该转移。</strong>
+      这和"把数据留给你、随时导出"的工具产品完全相反 —— BubbleBored 的记忆必须像人类朋友一样不可迁移:
+      你不能把一个朋友十年的共同回忆打包塞给另一个人。这构成了天然的用户留存护城河，
+      <strong>时间越长，切换成本越高</strong>。
+    </p>
+    <div class="pull">
+      用户不是被锁，是<strong>舍不得</strong>。这是关系型产品的本质。
+    </div>
+
+    <h3 style="font-family:var(--font-serif); font-size:1.25rem; margin:2.5rem 0 0.75rem; color:var(--fg);">5.4 绕开大厂流量打法</h3>
+    <p>大厂靠补贴拉流量、靠广告位变现。我们反过来:</p>
+    <table class="tbl">
+      <thead><tr><th>大厂路径</th><th>BubbleBored 路径</th></tr></thead>
+      <tbody>
+        <tr><td>买量 / 补贴 / 低价订阅</td><td>不做;只靠口碑扩散</td></tr>
+        <tr><td>广告位 / 信息流变现</td><td>不做;让用户体验纯粹</td></tr>
+        <tr><td>按 DAU / GMV 定价</td><td>按"被影响的权利"和"更强的大脑"定价</td></tr>
+        <tr><td>流量导向 → 价值附加</td><td>价值导向 → 直接对价值付费</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 7 -->
+  <section id="s11">
+    <div class="section-head">
+      <span class="section-num">§ 11</span>
+      <h2>为什么是现在</h2>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>模型跨过门槛</h3>
+        <p>长上下文、稳定的分寸感、代理式工具调用已经够用 —— 几年前做不到的"自我审视说错了"、"自己决定要不要去搜"，现在跑得起来。</p>
+      </div>
+      <div class="card">
+        <h3>基础设施成熟</h3>
+        <p>OpenRouter 让多模型随时切换，Jina / MCP 让搜索冲浪标准化，Honcho 让长期记忆开箱即用 —— 一个小团队就能把整套架起来。</p>
+      </div>
+      <div class="card">
+        <h3>多端接入门槛低</h3>
+        <p>Telegram Bot API、飞书自建应用、iOS WebSocket，全部可以一周内对接。同一个 Bot 跑遍所有 IM，三年前是工程量级的事，现在不是了。</p>
+      </div>
+      <div class="card">
+        <h3>市场缺口仍在</h3>
+        <p>ChatGPT 不会主动找你，Replika 不会帮你解决问题。"主动 + 长期 + 真有用"这一格，没有正经玩家。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Closing -->
+  <div class="closing">
+    <p>
+      工具型 AI 让你更高效，
+      <strong>BubbleBored 让你身边多一个真的懂你、给得出靠谱建议、也敢指出你盲区的朋友</strong>。
+      这件事人都很难做到 —— 但也正因为难，一旦做成，没人能轻易替代。
+    </p>
+  </div>
+
+  <footer>
+    <div>© 待名 PendingName · BubbleBored</div>
+  </footer>
+
+</main>
+
+</div>
+
+<script>
+  (function () {
+    var fill = document.getElementById("progressFill");
+    var items = Array.prototype.slice.call(document.querySelectorAll("#toc li"));
+    var entries = items.map(function (li) {
+      var id = li.querySelector("a").getAttribute("href").slice(1);
+      return { li: li, el: document.getElementById(id) };
+    }).filter(function (e) { return e.el; });
+
+    function onScroll() {
+      var h = document.documentElement;
+      var total = h.scrollHeight - h.clientHeight;
+      var pct = total > 0 ? Math.min(100, Math.max(0, (h.scrollTop / total) * 100)) : 0;
+      if (fill) fill.style.width = pct + "%";
+      var y = h.scrollTop + 96;
+      var active = entries[0];
+      for (var i = 0; i < entries.length; i++) {
+        if (entries[i].el.offsetTop <= y) active = entries[i];
+      }
+      items.forEach(function (li) { li.classList.remove("active"); });
+      if (active) active.li.classList.add("active");
+    }
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    onScroll();
+  })();
+</script>
+</body>
+</html>
