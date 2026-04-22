@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 import { configManager } from '../../config/loader';
-import { findConversationById } from '../../db/queries';
+import { findConversationById, insertMessage } from '../../db/queries';
 import { runPlanner } from './planner';
 import { runWanderer } from './wanderer';
 import { runCurator } from './curator';
@@ -156,11 +157,17 @@ export async function runSurf(
       return;
     }
 
+    // Persist as a bot message so it shows up in the conversation transcript
+    // and survives reloads, same as review.ts does for corrections.
+    const msgId = randomUUID();
+    insertMessage(msgId, conversationId, 'bot', botId, finalMsg);
     replyFn({
-      type: 'surf_result',
+      type: 'message',
       conversationId,
+      messageId: msgId,
       content: finalMsg,
     });
+    // Also keep a surf_result log on the monitor panel's SSE stream.
     emit(finalMsg, 'surf_result');
   } catch (e: any) {
     if (e?.name === 'AbortError') {

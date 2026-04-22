@@ -6,34 +6,43 @@ enum Theme {
 
     // ── Palette ─────────────────────────────────────────────────────────────
     //
-    // Anthropic-ish warm neutrals. Light mode leans cream; dark mode is a
-    // warm near-black rather than iOS's cool charcoal.
+    // Mirrors the web client's token system (src/web/static/tokens.css):
+    // jade accent on warm-ink neutrals. OKLCH values converted to sRGB hex
+    // so iOS renders the same look without depending on Display-P3.
 
     enum Palette {
-        /// Main action color — a restrained Claude-orange. Not pure saturated
-        /// so it pairs with serifs without shouting.
-        static let accent = Color(light: 0xC4663C, dark: 0xE48B64)
+        /// Jade-600 light / jade-500 dark. The brand accent — not a warm
+        /// orange, a deep cool teal-green that pairs with warm neutrals.
+        static let accent = Color(light: 0x0F7162, dark: 0x1A9581)
 
-        /// Chat canvas. Sits behind messages and the composer.
-        static let canvas = Color(light: 0xF5F2EA, dark: 0x1A1815)
+        /// Hover/pressed state — jade-700 light / jade-400 dark.
+        static let accentHover = Color(light: 0x115A4F, dark: 0x47B39F)
 
-        /// Cards, pickers, sheets — one step "closer" than canvas.
-        static let surface = Color(light: 0xFAF8F2, dark: 0x23201C)
+        /// Soft accent background for hover fills and the user bubble
+        /// (jade-100 light, a muted deep-teal dark).
+        static let accentBg = Color(light: 0xD5EDE5, dark: 0x1E3A33)
 
-        /// A subtler surface for chips/pills/badges.
-        static let surfaceMuted = Color(light: 0xEDE7D8, dark: 0x2E2A25)
+        /// Chat canvas — ink-0 light, warm near-black dark.
+        static let canvas = Color(light: 0xFDFCFA, dark: 0x15140F)
 
-        /// Primary text — a warm near-black / warm off-white.
-        static let ink = Color(light: 0x1F1C17, dark: 0xEFE9DC)
+        /// Cards, pickers, sheets. `bg-elevated` on web is pure white.
+        static let surface = Color(light: 0xFFFFFF, dark: 0x1F1E18)
 
-        /// Secondary text.
-        static let inkMuted = Color(light: 0x6B6355, dark: 0xA9A090)
+        /// A subtler surface for chips/pills/badges — ink-100 / warm dark.
+        static let surfaceMuted = Color(light: 0xEEEDE6, dark: 0x2A2922)
 
-        /// Hairline borders.
-        static let hairline = Color(light: 0xE1D9C7, dark: 0x332F29)
+        /// Primary text — ink-900 light / warm off-white dark.
+        static let ink = Color(light: 0x1B1A14, dark: 0xF2F0E8)
 
-        /// User bubble tint — a subtle warm wash, not the saturated accent.
-        static let userBubble = Color(light: 0xE9E2D0, dark: 0x2F2B25)
+        /// Secondary text — ink-600 light / ink-400 dark.
+        static let inkMuted = Color(light: 0x5A5749, dark: 0xA29E8F)
+
+        /// Hairline borders — ink-200 light / warm dark line.
+        static let hairline = Color(light: 0xDFDDD4, dark: 0x36342C)
+
+        /// User bubble tint — web uses jade-100 for `--msg-user`. Subtle in
+        /// dark mode so it reads as "mine" without shouting.
+        static let userBubble = Color(light: 0xD5EDE5, dark: 0x1E3A33)
     }
 
     // ── Typography ──────────────────────────────────────────────────────────

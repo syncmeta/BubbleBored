@@ -246,7 +246,9 @@ chatApiRoutes.post('/conversations/:id/regenerate', async (c) => {
     conversationId: convId,
     botId: conv.bot_id,
     userId: trigger.sender_id,
-    mergedContent: effectiveContent,
+    // Regenerate doesn't insert new rows; the DB row for `trigger` is already
+    // the user message being re-run. Provide a single no-op entry for logging.
+    userMessages: [{ content: effectiveContent }],
     replyFn,
     regenerate: true,
   }).catch(e => {

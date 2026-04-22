@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BubbleBored</title>
+  <title>BubbleBored · 待名</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -11,13 +14,6 @@
     <aside id="sidebar">
       <div class="sidebar-top">
         <div class="logo">
-          <div class="logo-mark">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M2 12h20"/>
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-            </svg>
-          </div>
           BubbleBored
           <span id="ws-status" class="status-dot" title="连接状态"></span>
         </div>
@@ -88,6 +84,44 @@
               <path d="M3 3v5h5"/>
             </svg>
           </button>
+
+          <!-- 冲浪：主按钮触发，旁边箭头跳转到冲浪面板详情 -->
+          <div class="chat-action-group">
+            <button id="surf-btn" class="chat-action" onclick="triggerSurfForCurrent()" title="让 Bot 去互联网上冲浪一次">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 20l.5-1.5C4 14 6 10 12 10s8 4 9.5 8.5L22 20"/>
+                <path d="M12 10V4"/><circle cx="12" cy="4" r="1"/>
+              </svg>
+              <svg class="busy-spinner" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M12 2a10 10 0 0 1 10 10" />
+              </svg>
+            </button>
+            <button class="panel-jump" onclick="openSurfPanelForCurrent()" title="打开冲浪监控面板（定位到当前对话）">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 17L17 7"/><path d="M8 7h9v9"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- 回顾：主按钮触发，旁边箭头跳转到回顾面板详情 -->
+          <div class="chat-action-group">
+            <button id="review-btn" class="chat-action" onclick="triggerReviewForCurrent()" title="让 Bot 自我审视、必要时追加一条纠正">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"/>
+                <path d="M21 21l-4.3-4.3"/>
+                <path d="M11 8v3l2 2"/>
+              </svg>
+              <svg class="busy-spinner" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M12 2a10 10 0 0 1 10 10" />
+              </svg>
+            </button>
+            <button class="panel-jump" onclick="openReviewPanelForCurrent()" title="打开回顾监控面板（定位到当前对话）">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 17L17 7"/><path d="M8 7h9v9"/>
+              </svg>
+            </button>
+          </div>
+
           <button class="chat-action danger" onclick="deleteCurrentConversation()" title="删除对话">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>

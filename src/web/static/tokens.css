@@ -1,0 +1,179 @@
+/* =========================================================================
+ * 待名 (Pending Name) — shared design tokens for the BubbleBored web client.
+ *
+ * Mirrors the token system in /ziza-website/styles/globals.css so the
+ * product page and the app share one language: jade accent on warm-ink
+ * neutrals, Inter + Noto Sans SC type, ease-out-cubic motion.
+ *
+ * Linked from index.html, surf.html, review.html. This file is the single
+ * source of truth — do not hardcode colors/radii downstream.
+ * ========================================================================= */
+
+/* Inter + Noto Sans SC (matches ziza's next/font wiring, loaded via CDN
+   here so vanilla-HTML pages get the same typeface without a bundler). */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: light;
+
+  /* ---- Jade (brand accent) --------------------------------------------- */
+  --color-jade-50:  oklch(96.5% 0.018 175);
+  --color-jade-100: oklch(92.5% 0.034 175);
+  --color-jade-200: oklch(86.0% 0.056 175);
+  --color-jade-300: oklch(78.0% 0.080 175);
+  --color-jade-400: oklch(67.0% 0.105 175);
+  --color-jade-500: oklch(55.0% 0.115 175);
+  --color-jade-600: oklch(46.5% 0.105 175); /* default interactive */
+  --color-jade-700: oklch(38.5% 0.090 175);
+  --color-jade-800: oklch(31.0% 0.072 175);
+  --color-jade-900: oklch(24.5% 0.052 175);
+  --color-jade-950: oklch(18.0% 0.034 175);
+
+  /* ---- Ink (warm-leaning neutrals) ------------------------------------- */
+  --color-ink-0:   oklch(99.2% 0.004 90);
+  --color-ink-50:  oklch(97.5% 0.005 90);
+  --color-ink-100: oklch(94.5% 0.006 90);
+  --color-ink-200: oklch(89.0% 0.007 90);
+  --color-ink-300: oklch(80.0% 0.008 90);
+  --color-ink-400: oklch(66.0% 0.009 90);
+  --color-ink-500: oklch(52.0% 0.010 90);
+  --color-ink-600: oklch(42.0% 0.010 90);
+  --color-ink-700: oklch(32.5% 0.010 90);
+  --color-ink-800: oklch(23.0% 0.009 90);
+  --color-ink-900: oklch(15.0% 0.008 90);
+  --color-ink-950: oklch(10.0% 0.007 90);
+
+  /* ---- Semantic -------------------------------------------------------- */
+  --color-success: oklch(58% 0.13 150);
+  --color-warning: oklch(74% 0.14 75);
+  --color-danger:  oklch(58% 0.20 25);
+
+  /* ---- Theme surfaces -------------------------------------------------- */
+  --bg:           var(--color-ink-0);
+  --bg-elevated:  oklch(100% 0 0);
+  --bg-subtle:    var(--color-ink-50);
+  --bg-muted:     var(--color-ink-100);
+  --fg:           var(--color-ink-900);
+  --fg-muted:     var(--color-ink-600);
+  --fg-subtle:    var(--color-ink-500);
+  --line:         var(--color-ink-200);
+  --line-strong:  var(--color-ink-300);
+  --accent:       var(--color-jade-600);
+  --accent-hover: var(--color-jade-700);
+  --accent-fg:    oklch(99% 0.005 175);
+  --accent-bg:    var(--color-jade-50);
+  --accent-muted: var(--color-jade-300);
+  --ring:         var(--color-jade-500);
+
+  /* ---- Legacy app aliases (BubbleBored v1 names; map to the new system
+         so we don't have to touch every old rule in style.css). ---------- */
+  --bg-sidebar:   var(--bg-subtle);
+  --bg-hover:     var(--bg-muted);
+  --bg-active:    var(--bg-elevated);
+  --bg-panel:     var(--bg-elevated);
+  --bg-soft:      var(--bg-subtle);
+  --surface:      var(--bg-elevated);
+  --border:       var(--line);
+  --border-light: var(--bg-muted);
+  --text-1:       var(--fg);
+  --text-2:       var(--color-ink-700);
+  --text-3:       var(--fg-subtle);
+  --text-4:       var(--color-ink-400);
+
+  /* Pill/chip fills — used by bot-filter, msg bubbles */
+  --msg-user:     var(--color-jade-100);
+  --msg-bot:      var(--bg-muted);
+
+  /* Status / state */
+  --green:        var(--color-success);
+  --green-soft:   color-mix(in oklch, var(--color-success) 18%, transparent);
+  --green-text:   oklch(40% 0.08 150);
+  --red:          var(--color-danger);
+  --red-hover:    oklch(50% 0.20 25);
+  --orange:       var(--color-warning);
+
+  /* ---- Radius ---------------------------------------------------------- */
+  --r-sm:   0.375rem;  /*  6px */
+  --r-md:   0.625rem;  /* 10px */
+  --r-lg:   1rem;      /* 16px */
+  --r-xl:   1.5rem;    /* 24px */
+  --r-2xl:  2rem;      /* 32px */
+  --r-full: 9999px;
+
+  /* ---- Sizing ---------------------------------------------------------- */
+  --sidebar-w: 272px;
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --ease:             cubic-bezier(0.16, 1, 0.3, 1);   /* ease-out-cubic */
+  --ease-in-out:      cubic-bezier(0.65, 0, 0.35, 1);
+  --fast:   150ms;
+  --normal: 220ms;
+  --slow:   320ms;
+
+  /* ---- Elevation ------------------------------------------------------- */
+  --shadow-xs: 0 1px 2px oklch(0% 0 0 / 0.04);
+  --shadow-sm: 0 2px 6px oklch(0% 0 0 / 0.06);
+  --shadow-md: 0 6px 18px oklch(0% 0 0 / 0.08);
+  --shadow-lg: 0 20px 40px oklch(0% 0 0 / 0.12);
+  --shadow-ring: 0 0 0 3px color-mix(in oklch, var(--ring) 22%, transparent);
+
+  /* ---- Typography ------------------------------------------------------ */
+  --font-sans: "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, monospace;
+}
+
+/* =========================================================================
+ * Base
+ * ========================================================================= */
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html[lang^="zh"], html[lang^="ja"], html[lang^="ko"] {
+  word-break: break-word;
+  line-break: strict;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  font-synthesis: none;
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.005em;
+}
+
+::selection { background: var(--accent-bg); color: var(--accent); }
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Custom scrollbars — subtle, consistent across all pages. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-subtle); }
+
+/* Reduced motion — respect OS preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

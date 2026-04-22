@@ -12,7 +12,6 @@ const IMAGE_CONTEXT_WINDOW = 4;
 export async function buildPrompt(params: {
   botId: string;
   conversationId: string;
-  userMessage: string;
   extraContext?: string;
 }): Promise<ChatCompletionMessageParam[]> {
   const botConfig = configManager.getBotConfig(params.botId);
@@ -57,42 +56,66 @@ export async function buildPrompt(params: {
     { role: 'system', content: system },
   ];
 
-  for (const msg of history) {
-    const role = msg.sender_type === 'user' ? 'user' as const : 'assistant' as const;
-    // Only annotate user messages — annotating assistant messages causes the
-    // model to mimic the pattern and emit time annotations in its own output.
-    const textContent = role === 'user'
-      ? annotateMessage(msg.content, msg.created_at, now)
-      : msg.content;
+  // Walk history and collapse consecutive same-role rows into one API
+  // message. Storage keeps a row per user send; the LLM sees them joined so
+  // it doesn't see weird alternating-user-only sequences and so a rapid-fire
+  // trio ("yo", "quick q", "what's the best way to…") reads as one turn.
+  let i = 0;
+  while (i < history.length) {
+    const first = history[i];
+    const role = first.sender_type === 'user' ? 'user' as const : 'assistant' as const;
 
-    if (role !== 'user') {
-      messages.push({ role, content: textContent });
+    // Collect the contiguous run of same-sender rows.
+    const group: any[] = [];
+    while (i < history.length && history[i].sender_type === first.sender_type) {
+      group.push(history[i]);
+      i++;
+    }
+
+    if (role === 'assistant') {
+      // Bot messages are already stored per-segment; keep them split as
+      // distinct assistant messages so the model sees its own segmenting
+      // cadence rather than a single mashed-together blob.
+      for (const m of group) {
+        messages.push({ role, content: m.content });
+      }
       continue;
     }
 
-    const atts = attMap[msg.id] ?? [];
-    const images = atts.filter(a => a.kind === 'image');
-    if (images.length === 0) {
-      messages.push({ role, content: textContent });
+    // ── User run ──────────────────────────────────────────────────────
+    // Build per-row rendered text (annotated) and classify image handling.
+    type Rendered = { text: string; inlineImages: AttachmentRow[] };
+    const rendered: Rendered[] = group.map(m => {
+      const base = m.content ? annotateMessage(m.content, m.created_at, now) : '';
+      const atts = attMap[m.id] ?? [];
+      const images = atts.filter(a => a.kind === 'image');
+      if (images.length === 0) {
+        return { text: base, inlineImages: [] };
+      }
+      if (!inlineImageMsgIds.has(m.id)) {
+        // Older image-bearing message — drop pixels, keep a hint.
+        const hint = images.length === 1 ? '[图片]' : `[${images.length} 张图片]`;
+        return { text: base ? `${base}\n${hint}` : hint, inlineImages: [] };
+      }
+      return { text: base, inlineImages: images };
+    });
+
+    // Messages and messages separated by \n\n — this is the "only merge at
+    // LLM-request time" rule. Empty texts (image-only sends) don't contribute.
+    const combinedText = rendered.map(r => r.text).filter(Boolean).join('\n\n');
+    const allInlineImages = rendered.flatMap(r => r.inlineImages);
+
+    if (allInlineImages.length === 0) {
+      messages.push({ role, content: combinedText });
       continue;
     }
 
-    if (!inlineImageMsgIds.has(msg.id)) {
-      // Older image-bearing message — drop pixels, keep a hint
-      const hint = images.length === 1 ? '[图片]' : `[${images.length} 张图片]`;
-      const combined = textContent ? `${textContent}\n${hint}` : hint;
-      messages.push({ role, content: combined });
-      continue;
-    }
-
-    // Recent enough — include as multimodal content parts
+    // Multimodal: one text part (if any) followed by all inline images.
     const parts: ChatCompletionContentPart[] = [];
-    if (textContent) parts.push({ type: 'text', text: textContent });
-    for (const att of images) {
+    if (combinedText) parts.push({ type: 'text', text: combinedText });
+    for (const att of allInlineImages) {
       const bytes = await readAttachmentFile(att);
       if (!bytes) {
-        // File missing from disk but row exists — note it so the model
-        // doesn't get confused about what was supposed to be there.
         parts.push({ type: 'text', text: '[图片缺失]' });
         continue;
       }
@@ -105,11 +128,6 @@ export async function buildPrompt(params: {
     // OpenAI's schema requires non-empty array; guaranteed since we have ≥1 image.
     messages.push({ role, content: parts });
   }
-
-  // Add current user message. (Note: the just-inserted user row is already
-  // in `history` above, so this duplicates the most recent turn — preserved
-  // to match existing behavior; do not alter without a wider review.)
-  messages.push({ role: 'user', content: params.userMessage });
 
   return messages;
 }

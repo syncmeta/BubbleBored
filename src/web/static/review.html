@@ -3,50 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Review Monitor · BubbleBored</title>
+  <title>Review Monitor · 待名</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="/tokens.css">
   <style>
+    /* Design tokens live in /tokens.css. Page-specific additions below. */
     :root {
-      --bg: #F8F7F4;
-      --bg-panel: #FFFFFF;
-      --bg-soft: #F3F2EE;
-      --bg-hover: #ECEBE7;
-      --border: #E2E1DC;
-      --border-light: #EBEAE5;
-      --text-1: #1A1A18;
-      --text-2: #5A5955;
-      --text-3: #88878A;
-      --text-4: #B0AFB3;
-      --accent: #6E5DE7;
-      --accent-hover: #5D4CD6;
-      --accent-bg: rgba(110, 93, 231, 0.06);
-      --accent-muted: #AEA4F0;
-      --green: #34D399;
-      --green-soft: #dcfce7;
-      --green-text: #166534;
-      --amber-soft: #fef3c7;
-      --amber-text: #92400e;
-      --red: #E5534B;
-      --red-hover: #D4443C;
-      --msg-user: #ECEAFD;
-      --msg-bot: #F0EFEB;
-      --r-md: 12px;
-      --r-sm: 8px;
-      --r-full: 9999px;
-      --fast: 120ms;
-      --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+      --amber-soft: color-mix(in oklch, var(--color-warning) 22%, white);
+      --amber-text: oklch(40% 0.10 75);
     }
 
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text-1);
       height: 100dvh;
       display: flex;
       flex-direction: column;
-      -webkit-font-smoothing: antialiased;
-      letter-spacing: -0.01em;
     }
 
     header {
@@ -171,7 +142,7 @@
     .conv-pending-dot {
       width: 6px; height: 6px; border-radius: 50%;
       background: var(--red);
-      box-shadow: 0 0 0 3px rgba(229,83,75,0.15);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-danger) 18%, transparent);
       flex-shrink: 0;
     }
 
@@ -444,8 +415,14 @@
 
     async function init() {
       await loadTree();
+      // Deep-link support: /review.html?conv=<id> auto-selects that conversation
+      const urlConv = new URLSearchParams(location.search).get('conv');
+      if (urlConv && state.conv.has(urlConv)) {
+        state.selected = urlConv;
+      }
       render();
       renderLogs();
+      if (state.selected) renderDetail();
       connectSSE();
     }
 

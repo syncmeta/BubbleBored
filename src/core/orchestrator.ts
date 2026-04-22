@@ -26,12 +26,75 @@ function isInterrupted(conversationId: string): boolean {
   return (Date.now() - t) >= 2000;
 }
 
+// Counts how many handleUserMessage calls are currently running for a given
+// conversation. The counter alone isn't enough to prevent flicker across an
+// interrupt handoff, because the old call ends (counter 1→0) before the new
+// call begins (0→1) — debounce and the typing gate sit between them. So we
+// also hold the "off" signal whenever there's an outstanding interrupt signal
+// (= a new user message is pending) and cancel the hold when beginTyping is
+// called next. A safety timer ensures we never leave the indicator stuck.
+const activeGenerations = new Map<string, number>();
+const pendingTypingOff = new Map<string, Timer>();
+const TYPING_HANDOFF_SAFETY_MS = 30_000;
+
+function beginTyping(conversationId: string, replyFn: (msg: OutboundMessage) => void) {
+  // A new generation is starting — cancel any "off" signal we were holding.
+  const pending = pendingTypingOff.get(conversationId);
+  if (pending) {
+    clearTimeout(pending);
+    pendingTypingOff.delete(conversationId);
+  }
+  const prev = activeGenerations.get(conversationId) ?? 0;
+  activeGenerations.set(conversationId, prev + 1);
+  if (prev === 0) {
+    // Redundant emits while already-on are harmless (client ignores same state).
+    replyFn({ type: 'bot_typing', conversationId, active: true });
+  }
+}
+
+function endTyping(conversationId: string, replyFn: (msg: OutboundMessage) => void) {
+  const next = (activeGenerations.get(conversationId) ?? 0) - 1;
+  if (next > 0) {
+    activeGenerations.set(conversationId, next);
+    return;
+  }
+  activeGenerations.delete(conversationId);
+
+  // If an interrupt signal is present, a new user message is pending and a
+  // new generation is imminent. Hold the "off" so the UI doesn't flicker.
+  // beginTyping will cancel this timer when the new gen starts; otherwise
+  // the safety timer fires after 30s.
+  if (interruptSignals.has(conversationId)) {
+    const prev = pendingTypingOff.get(conversationId);
+    if (prev) clearTimeout(prev);
+    pendingTypingOff.set(conversationId, setTimeout(() => {
+      pendingTypingOff.delete(conversationId);
+      if ((activeGenerations.get(conversationId) ?? 0) === 0) {
+        replyFn({ type: 'bot_typing', conversationId, active: false });
+      }
+    }, TYPING_HANDOFF_SAFETY_MS));
+    return;
+  }
+
+  replyFn({ type: 'bot_typing', conversationId, active: false });
+}
+
+// One user send = one PendingEntry = one DB row. Multiple entries accumulate
+// when the debounce window merges rapid-fire sends — storage + display stay
+// per-entry; only the prompt-builder collapses consecutive user rows into a
+// single API message joined by \n\n.
+export interface UserMessageEntry {
+  content: string;
+  attachmentIds?: string[];
+}
+
 export async function handleUserMessage(params: {
   conversationId: string;
   botId: string;
   userId: string;
-  mergedContent: string;
-  attachmentIds?: string[];
+  // At least one entry when !regenerate. Ignored on regenerate (the caller
+  // has already rewound the transcript to the edit point).
+  userMessages: UserMessageEntry[];
   replyFn: (msg: OutboundMessage) => void;
   extraContext?: string;
   // Re-run the LLM for an existing user message without inserting a new row,
@@ -39,42 +102,52 @@ export async function handleUserMessage(params: {
   // responsible for having already deleted the stale bot reply(ies) from DB.
   regenerate?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, mergedContent, attachmentIds, replyFn, extraContext, regenerate } = params;
+  const { conversationId, botId, userId, userMessages, replyFn, extraContext, regenerate } = params;
   interruptSignals.delete(conversationId); // clear stale interrupt from triggering message
   const botConfig = configManager.getBotConfig(botId);
 
-  const attCount = attachmentIds?.length ?? 0;
-  console.log(`\n[chat] ${regenerate ? '↻ regen' : '←'} user(${userId.slice(0, 8)}) → bot(${botId}): ${mergedContent}${attCount ? ` [+${attCount} attachment(s)]` : ''}`);
+  const totalAtt = userMessages.reduce((n, e) => n + (e.attachmentIds?.length ?? 0), 0);
+  const previewJoined = userMessages.map(e => e.content).filter(Boolean).join(' ‖ ');
+  console.log(`\n[chat] ${regenerate ? '↻ regen' : '←'} user(${userId.slice(0, 8)}) → bot(${botId}): ${previewJoined}${totalAtt ? ` [+${totalAtt} attachment(s)]` : ''}`);
+
+  // Start the typing indicator as early as possible — it covers prompt
+  // building + LLM call + segment streaming. The counter in end/beginTyping
+  // handles the interrupt handoff, so we never flicker off between two
+  // back-to-back generations for the same conversation.
+  beginTyping(conversationId, replyFn);
+  try {
 
   if (!regenerate) {
-    // Store user message. Messages.content is NOT NULL so we always persist a
-    // string — for image-only messages that's just ''.
-    const userMsgId = randomUUID();
-    insertMessage(userMsgId, conversationId, 'user', userId, mergedContent);
+    // One DB row per entry — preserves the user's message granularity across
+    // refresh and keeps each bubble addressable for edit/regenerate/delete.
+    for (const entry of userMessages) {
+      const userMsgId = randomUUID();
+      insertMessage(userMsgId, conversationId, 'user', userId, entry.content);
 
-    // Bind any orphan attachments to this message. bindAttachmentsToMessage
-    // rejects ids whose conversation doesn't match — so an attacker passing
-    // someone else's upload id silently fails rather than leaking pixels.
-    let boundAttachmentsCount = 0;
-    if (attachmentIds && attachmentIds.length > 0) {
-      boundAttachmentsCount = bindAttachmentsToMessage(attachmentIds, userMsgId, conversationId);
-      if (boundAttachmentsCount !== attachmentIds.length) {
-        console.warn(`[chat] attachments: requested ${attachmentIds.length}, bound ${boundAttachmentsCount} (others rejected — stale/foreign id?)`);
+      const atts = entry.attachmentIds ?? [];
+      if (atts.length > 0) {
+        // bindAttachmentsToMessage rejects ids whose conversation doesn't
+        // match — an attacker passing someone else's upload id silently fails
+        // rather than leaking pixels.
+        const bound = bindAttachmentsToMessage(atts, userMsgId, conversationId);
+        if (bound !== atts.length) {
+          console.warn(`[chat] attachments: requested ${atts.length}, bound ${bound} (others rejected — stale/foreign id?)`);
+        }
+        // Echo a dedicated user_message_ack so the client can reconcile its
+        // optimistic local render (blob URL previews) with the server-assigned
+        // message id + canonical /uploads/<id> URLs.
+        const attSummaries = getAttachmentsForMessage(userMsgId).map(a => ({
+          id: a.id, kind: a.kind, mime: a.mime, size: a.size,
+          width: a.width, height: a.height, url: `/uploads/${a.id}`,
+        }));
+        replyFn({
+          type: 'user_message_ack',
+          conversationId,
+          messageId: userMsgId,
+          content: entry.content,
+          metadata: { attachments: attSummaries, attachmentIds: atts },
+        });
       }
-      // Echo a dedicated user_message_ack so the client can reconcile its
-      // optimistic local render (blob URL previews) with the server-assigned
-      // message id + canonical /uploads/<id> URLs.
-      const atts = getAttachmentsForMessage(userMsgId).map(a => ({
-        id: a.id, kind: a.kind, mime: a.mime, size: a.size,
-        width: a.width, height: a.height, url: `/uploads/${a.id}`,
-      }));
-      replyFn({
-        type: 'user_message_ack',
-        conversationId,
-        messageId: userMsgId,
-        content: mergedContent,
-        metadata: { attachments: atts, attachmentIds: attachmentIds },
-      });
     }
 
     // Update round counter
@@ -98,7 +171,6 @@ export async function handleUserMessage(params: {
   const messages = await buildPrompt({
     botId,
     conversationId,
-    userMessage: mergedContent,
     extraContext,
   });
   console.log(`[chat] prompt: ${messages.length} messages, model: ${botConfig.model}`);
@@ -251,15 +323,25 @@ export async function handleUserMessage(params: {
       }
     }
 
-    // Auto-title: after the very first bot reply in a fresh conversation,
-    // ask a cheap model to summarize the topic. Fire-and-forget; the title
-    // arrives via a `title_update` message on the websocket.
+    // Auto-title:
+    //   - Initial: fire whenever the conversation has no title yet and we
+    //     sent a bot reply. generateTitle re-checks internally, so failed
+    //     calls self-heal on the next reply.
+    //   - Refresh: every 3 rounds (round_count = 3, 6, 9, …) force a
+    //     regeneration so the title tracks where the conversation has drifted.
     const finalConv = findConversationById(conversationId);
-    if (finalConv && finalConv.round_count === 1 && (!finalConv.title || finalConv.title.trim() === '') && sentSegments.size > 0) {
-      const { generateTitle } = await import('./title');
-      generateTitle(conversationId, replyFn).catch(e =>
-        console.error('[title] error:', e)
-      );
+    if (finalConv && sentSegments.size > 0) {
+      const currentTitle = finalConv.title?.trim() ?? '';
+      const isEmpty = currentTitle.length === 0;
+      const isRefreshRound = finalConv.round_count > 0 && finalConv.round_count % 3 === 0;
+      if (isEmpty || isRefreshRound) {
+        const mode = isRefreshRound && !isEmpty ? 'refresh' : 'initial';
+        console.log(`[title] triggering ${mode} for conv ${conversationId.slice(0, 8)} (round ${finalConv.round_count})`);
+        const { generateTitle } = await import('./title');
+        generateTitle(conversationId, replyFn, { force: isRefreshRound }).catch(e =>
+          console.error('[title] error:', e)
+        );
+      }
     }
 
   } catch (err: any) {
@@ -274,5 +356,8 @@ export async function handleUserMessage(params: {
       latencyMs,
     });
     throw err;
+  }
+  } finally {
+    endTyping(conversationId, replyFn);
   }
 }

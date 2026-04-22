@@ -24,12 +24,19 @@ const INITIAL_TYPING_WAIT_MS = 2000;
 const TYPING_WINDOW_MS = 5000;
 const MAX_TYPING_EXTENSIONS = 2; // base + 2 extensions = 3 × 5s
 
+// One PendingEntry = one user "send" event. Content may be empty for an
+// image-only send; attachmentIds may be empty for a text-only send. At least
+// one side is non-empty for an entry to exist.
+export interface PendingEntry {
+  content: string;
+  attachmentIds: string[];
+}
+
 interface DebounceState {
   hardTimer: Timer | null;
-  pendingMessages: string[];
-  // Flat list of all attachment ids accumulated across messages in this
-  // debounce window — they all end up bound to the single merged user row.
-  pendingAttachmentIds: string[];
+  // One entry per user send, preserving both per-message text and attachment
+  // provenance — the orchestrator will turn each entry into its own DB row.
+  pending: PendingEntry[];
   processing: boolean;       // judge is in flight
   judgeReady: boolean;       // judge resolved to FLUSH (or errored)
   typingReady: boolean;      // typing gate resolved
@@ -46,8 +53,7 @@ function getState(conversationId: string): DebounceState {
   if (!s) {
     s = {
       hardTimer: null,
-      pendingMessages: [],
-      pendingAttachmentIds: [],
+      pending: [],
       processing: false,
       judgeReady: false,
       typingReady: false,
@@ -61,7 +67,7 @@ function getState(conversationId: string): DebounceState {
   return s;
 }
 
-export type FlushHandler = (mergedContent: string, attachmentIds: string[]) => void;
+export type FlushHandler = (entries: PendingEntry[]) => void;
 
 export function addMessage(
   conversationId: string,
@@ -78,20 +84,26 @@ export function addMessage(
   const atts = attachmentIds ?? [];
 
   if (!debounce.enabled) {
-    onReady(content, atts);
+    if (content.length > 0 || atts.length > 0) {
+      onReady([{ content, attachmentIds: atts }]);
+    }
     return;
   }
 
   const state = getState(conversationId);
   state.onReady = onReady;
 
-  // Always accumulate attachments, even if content is empty (image-only msg).
-  for (const a of atts) state.pendingAttachmentIds.push(a);
+  // Record this send as a single entry — preserves the 1:1 mapping between
+  // what the user typed and what will become a bubble / DB row.
+  if (content.length > 0 || atts.length > 0) {
+    state.pending.push({ content, attachmentIds: atts });
+  }
   if (content.length > 0) {
-    state.pendingMessages.push(content);
     addToDebounceBuffer(conversationId, content);
   }
-  console.log(`[debounce] buffered (${state.pendingMessages.length} msgs, ${state.pendingAttachmentIds.length} attachments): ${content.slice(0, 50)}`);
+  const textCount = state.pending.filter(e => e.content.length > 0).length;
+  const attCount = state.pending.reduce((n, e) => n + e.attachmentIds.length, 0);
+  console.log(`[debounce] buffered (${textCount} msgs, ${attCount} attachments): ${content.slice(0, 50)}`);
 
   // Hard timeout — safety net, bypasses both gates
   if (!state.hardTimer) {
@@ -103,7 +115,9 @@ export function addMessage(
 
   // Image-only messages bypass both gates — nothing for the judge to reason
   // about, and waiting on typing for a pure image upload feels laggy.
-  if (state.pendingMessages.length === 0 && state.pendingAttachmentIds.length > 0) {
+  const hasAnyText = state.pending.some(e => e.content.length > 0);
+  const hasAnyAtt = state.pending.some(e => e.attachmentIds.length > 0);
+  if (!hasAnyText && hasAnyAtt) {
     console.log(`[debounce] image-only → flush immediately`);
     doFlush(conversationId);
     return;
@@ -190,9 +204,10 @@ async function judge(
   state.processing = true;
   try {
     const judgePrompt = await configManager.readPrompt('debounce-judge.md');
-    const messagesText = state.pendingMessages.map((m, i) => `消息${i + 1}: ${m}`).join('\n');
+    const texts = state.pending.map(e => e.content).filter(c => c.length > 0);
+    const messagesText = texts.map((m, i) => `消息${i + 1}: ${m}`).join('\n');
 
-    console.log(`[debounce] judging (${state.pendingMessages.length} msgs)...`);
+    console.log(`[debounce] judging (${texts.length} msgs)...`);
     const { result, latencyMs, costUsd } = await chatCompletion({
       model: configManager.get().openrouter.debounceModel,
       messages: [
@@ -265,17 +280,16 @@ function doFlush(conversationId: string): void {
   if (state.hardTimer) clearTimeout(state.hardTimer);
   if (state.typingTimer) clearTimeout(state.typingTimer);
 
-  const merged = state.pendingMessages.join('\n');
-  const atts = state.pendingAttachmentIds.slice();
+  const entries = state.pending.slice();
   const onReady = state.onReady;
   states.delete(conversationId);
   clearDebounceBuffer(conversationId);
 
-  // Only suppress flush if BOTH are empty. An image-only message (empty
-  // content, non-empty attachments) should still make it through.
-  if ((merged.trim() || atts.length > 0) && onReady) {
-    console.log(`[debounce] flushed → "${merged.slice(0, 80)}${merged.length > 80 ? '...' : ''}" +${atts.length} att`);
-    onReady(merged, atts);
+  if (entries.length > 0 && onReady) {
+    const preview = entries.map(e => e.content).filter(Boolean).join(' ‖ ').slice(0, 80);
+    const attTotal = entries.reduce((n, e) => n + e.attachmentIds.length, 0);
+    console.log(`[debounce] flushed → ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} "${preview}" +${attTotal} att`);
+    onReady(entries);
   }
 }
 

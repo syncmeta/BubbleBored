@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import { configManager } from '../config/loader';
 import { listBots, listConversationsByBot, findConversationById } from '../db/queries';
 import { surfEvents, activeSurfs, stopSurf, runSurf } from '../core/surfing/searcher';
+import { messageBus } from '../bus/router';
+import { webChannel } from '../bus/channels/web';
 import type { OutboundMessage } from '../bus/types';
 
 export const surfRoutes = new Hono();
@@ -48,8 +50,13 @@ surfRoutes.post('/start/:conversationId', async (c) => {
   const controller = new AbortController();
   activeSurfs.set(conversationId, controller);
 
-  // No-op replyFn — surf monitor page uses SSE events instead
-  const replyFn = (_msg: OutboundMessage) => {};
+  // Prefer the bus's live replyFn (whichever channel the user last spoke on).
+  // Fall back to the web channel addressed by the conversation owner —
+  // covers the common case where a web user triggered from the panel
+  // without having spoken since reconnecting.
+  const replyFn: (msg: OutboundMessage) => void =
+    messageBus.getReplyFn(conv.id) ??
+    ((msg) => { webChannel.send(conv.user_id, msg).catch(() => {}); });
 
   runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, controller.signal).catch(e => {
     console.error(`[surf-api] error:`, e);

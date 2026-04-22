@@ -14,6 +14,17 @@ const state = {
   // Each entry: { clientId, file, previewUrl, status, attachmentId?, url?, error? }
   pendingAttachments: [],
   dragCounter: 0,
+  // conversationIds with an in-flight surf / pending review. Fed from the
+  // /api/surf/events and /api/review/events SSE streams; drives the busy
+  // state of the chat-header action buttons.
+  activeSurfs: new Set(),
+  pendingReviews: new Set(),
+  surfES: null,
+  reviewES: null,
+  // Conversations currently showing a bot "正在输入" indicator. Server sends
+  // `bot_typing {active}` events; the bubble only renders on the visible
+  // conversation, but we track all so it resumes on conv switch.
+  typingConvs: new Set(),
 };
 
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
@@ -37,6 +48,7 @@ async function init() {
     selectConversation(state.conversations[0].id);
   }
   connectWs();
+  connectSurfReviewEvents();
   setupInput();
   setupGlobalHandlers();
   startRelativeTimeTick();
@@ -246,6 +258,7 @@ function selectConversation(convId) {
 
   updateChatHeader(conv);
   loadHistory(convId);
+  refreshActionBusyState();
 }
 
 function updateChatHeader(conv) {
@@ -270,6 +283,8 @@ async function loadHistory(convId) {
         attachments: m.attachments,
       });
     }
+    // Covers the "empty history but typing in flight" case.
+    renderTypingIndicator();
     scrollToBottom();
   } catch (e) {
     console.error('load history error:', e);
@@ -429,6 +444,136 @@ function deleteCurrentConversation() {
   if (state.currentConversationId) deleteConv(state.currentConversationId);
 }
 
+// ── Surf / Review: trigger + panel jump + busy state ──
+
+async function triggerSurfForCurrent() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  if (state.activeSurfs.has(convId)) return;  // already running
+  // Optimistic busy — SSE will confirm in a moment
+  state.activeSurfs.add(convId);
+  refreshActionBusyState();
+  try {
+    const res = await fetch(`/api/surf/start/${convId}`, { method: 'POST' });
+    if (!res.ok && res.status !== 409) {
+      state.activeSurfs.delete(convId);
+      refreshActionBusyState();
+      const body = await res.json().catch(() => ({}));
+      alert('触发冲浪失败: ' + (body.error || res.status));
+    }
+  } catch (e) {
+    state.activeSurfs.delete(convId);
+    refreshActionBusyState();
+    alert('触发冲浪失败: ' + e.message);
+  }
+}
+
+async function triggerReviewForCurrent() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  if (state.pendingReviews.has(convId)) return;
+  state.pendingReviews.add(convId);
+  refreshActionBusyState();
+  try {
+    const res = await fetch(`/api/review/trigger/${convId}`, { method: 'POST' });
+    if (!res.ok) {
+      state.pendingReviews.delete(convId);
+      refreshActionBusyState();
+      const body = await res.json().catch(() => ({}));
+      alert('触发回顾失败: ' + (body.error || res.status));
+    }
+  } catch (e) {
+    state.pendingReviews.delete(convId);
+    refreshActionBusyState();
+    alert('触发回顾失败: ' + e.message);
+  }
+}
+
+function openSurfPanelForCurrent() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  window.open(`/surf.html?conv=${encodeURIComponent(convId)}`, '_blank');
+}
+
+function openReviewPanelForCurrent() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  window.open(`/review.html?conv=${encodeURIComponent(convId)}`, '_blank');
+}
+
+function refreshActionBusyState() {
+  const convId = state.currentConversationId;
+  const surfBtn = document.getElementById('surf-btn');
+  const reviewBtn = document.getElementById('review-btn');
+  if (surfBtn) surfBtn.classList.toggle('busy', !!convId && state.activeSurfs.has(convId));
+  if (reviewBtn) reviewBtn.classList.toggle('busy', !!convId && state.pendingReviews.has(convId));
+}
+
+// Subscribes to both SSE streams to know, for any conversation under any
+// bot, whether a surf / review is currently running. Used purely for the
+// header busy indicators — log content still lives in the dedicated panels.
+function connectSurfReviewEvents() {
+  try {
+    state.surfES?.close();
+    const surfES = new EventSource('/api/surf/events');
+    state.surfES = surfES;
+    surfES.addEventListener('init', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        state.activeSurfs = new Set(Array.isArray(data.active) ? data.active : []);
+        refreshActionBusyState();
+      } catch {}
+    });
+    surfES.addEventListener('log', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.conversationId && !state.activeSurfs.has(data.conversationId)) {
+          state.activeSurfs.add(data.conversationId);
+          refreshActionBusyState();
+        }
+      } catch {}
+    });
+    surfES.addEventListener('done', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.conversationId && state.activeSurfs.delete(data.conversationId)) {
+          refreshActionBusyState();
+        }
+      } catch {}
+    });
+  } catch (e) { console.error('surf SSE error:', e); }
+
+  try {
+    state.reviewES?.close();
+    const reviewES = new EventSource('/api/review/events');
+    state.reviewES = reviewES;
+    reviewES.addEventListener('init', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        state.pendingReviews = new Set(Array.isArray(data.pending) ? data.pending : []);
+        refreshActionBusyState();
+      } catch {}
+    });
+    reviewES.addEventListener('log', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.conversationId && !state.pendingReviews.has(data.conversationId)) {
+          state.pendingReviews.add(data.conversationId);
+          refreshActionBusyState();
+        }
+      } catch {}
+    });
+    reviewES.addEventListener('done', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.conversationId && state.pendingReviews.delete(data.conversationId)) {
+          refreshActionBusyState();
+        }
+      } catch {}
+    });
+  } catch (e) { console.error('review SSE error:', e); }
+}
+
 // ── Reset ──
 
 async function resetCurrentConversation() {
@@ -508,6 +653,16 @@ function handleWsMessage(msg) {
       appendSurfLog(msg.content);
       scrollToBottom();
     }
+  } else if (msg.type === 'bot_typing' && msg.conversationId) {
+    if (msg.active) {
+      state.typingConvs.add(msg.conversationId);
+    } else {
+      state.typingConvs.delete(msg.conversationId);
+    }
+    if (msg.conversationId === state.currentConversationId) {
+      renderTypingIndicator();
+      if (msg.active) scrollToBottom();
+    }
   } else if (msg.type === 'title_update' && msg.conversationId && msg.title) {
     const conv = state.conversations.find(c => c.id === msg.conversationId);
     if (conv) {
@@ -530,6 +685,39 @@ function bumpConversationToTop(convId) {
   conv.last_activity_at = Math.floor(Date.now() / 1000);
   state.conversations.unshift(conv);
   renderConvList();
+}
+
+// ── Typing indicator ──
+//
+// Shown while the server is preparing a reply (LLM call + segment streaming).
+// Server emits `bot_typing {active}` events; we just keep one bubble pinned
+// to the bottom of the message list whenever the current conversation is in
+// state.typingConvs.
+
+function renderTypingIndicator() {
+  const msgs = document.getElementById('messages');
+  if (!msgs) return;
+  const shouldShow = !!state.currentConversationId
+    && state.typingConvs.has(state.currentConversationId);
+  let el = document.getElementById('bot-typing');
+  if (!shouldShow) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'bot-typing';
+    el.className = 'msg-wrap bot typing-wrap';
+    el.innerHTML = `
+      <div class="msg bot typing" aria-label="正在输入">
+        <span class="typing-dots"><i></i><i></i><i></i></span>
+      </div>
+    `;
+    msgs.appendChild(el);
+  } else if (el.nextSibling) {
+    // Keep pinned to the bottom when new messages appear above it.
+    msgs.appendChild(el);
+  }
 }
 
 // ── Messages ──
@@ -604,6 +792,8 @@ function appendMessage(type, content, msgId, opts) {
   wrap.appendChild(bubble);
   wrap.appendChild(actions);
   msgs.appendChild(wrap);
+  // Keep the "正在输入" bubble pinned to the bottom if it's live.
+  renderTypingIndicator();
   return wrap;
 }
 

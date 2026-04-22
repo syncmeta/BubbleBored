@@ -6,19 +6,27 @@ import {
 } from '../db/queries';
 import type { OutboundMessage } from '../bus/types';
 
-// Generate a short title for a conversation by summarizing the first few messages.
-// Called once per conversation, after the first round (user → bot reply) completes.
+// Generate (or regenerate) a short title for a conversation by summarizing
+// recent messages. Called:
+//   - after the first bot reply (self-heals for untitled conversations)
+//   - every 3 rounds thereafter (keeps the title fresh as topic drifts)
 // Non-blocking: runs async, swallows errors, never blocks the chat path.
 export async function generateTitle(
   conversationId: string,
   replyFn: (msg: OutboundMessage) => void,
+  opts: { force?: boolean } = {},
 ): Promise<void> {
   try {
     const conv = findConversationById(conversationId);
     if (!conv) return;
-    if (conv.title && conv.title.trim().length > 0) return; // already titled
+    // force=true skips the "already titled" guard — used by the periodic
+    // re-title path so the title can track a drifting conversation.
+    if (!opts.force && conv.title && conv.title.trim().length > 0) return;
 
-    const history = getMessages(conversationId, 6);
+    // More history for the periodic re-title — the whole point is to reflect
+    // where the conversation has moved to, not just the opening exchange.
+    const historyLimit = opts.force ? 24 : 6;
+    const history = getMessages(conversationId, historyLimit);
     if (history.length < 2) return; // need at least one exchange
 
     const cfg = configManager.get();
@@ -39,17 +47,33 @@ export async function generateTitle(
         { role: 'system', content: promptText },
         { role: 'user', content: transcript },
       ],
-      max_tokens: 40,
+      // 120 leaves headroom for models that emit <think>…</think> reasoning
+      // before the title itself. 40 was barely enough for the title alone.
+      max_tokens: 120,
     });
 
-    let title = result.choices[0]?.message?.content?.trim() ?? '';
+    const raw = result.choices[0]?.message?.content ?? '';
+    console.log(`[title] raw (${latencyMs}ms, ${model}): ${JSON.stringify(raw)}`);
+
+    // Some free reasoning models wrap their chain-of-thought in <think>…</think>
+    // before the actual answer. Strip that so we don't title the conversation
+    // "让我想想用户在说什么".
+    let title = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // If only the opening <think> made it through (truncated), keep whatever is
+    // after the last closing tag we saw, otherwise fall back to raw.
+    if (!title && /<think>/i.test(raw)) {
+      const after = raw.split(/<\/think>/i).pop() ?? '';
+      title = after.trim();
+    }
+    // Take just the first non-empty line — title prompts sometimes get a list.
+    title = (title.split(/\r?\n/).map(s => s.trim()).find(Boolean) ?? '').trim();
     // Strip surrounding quotes/whitespace/punctuation the model might add anyway
     title = title.replace(/^["「『《【\s]+|["」』》】\s。．.！!？?]+$/g, '').trim();
     // Cap length defensively
     if (title.length > 40) title = title.slice(0, 40);
 
     if (!title) {
-      console.log(`[title] empty result for conv ${conversationId} (${latencyMs}ms)`);
+      console.log(`[title] empty result for conv ${conversationId} (${latencyMs}ms, model: ${result.model ?? model})`);
       return;
     }
 

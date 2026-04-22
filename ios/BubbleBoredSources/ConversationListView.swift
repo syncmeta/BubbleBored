@@ -53,11 +53,6 @@ struct ConversationListView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text("BubbleBored")
-                    .font(Theme.Type.serif(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-            }
             ToolbarItem(placement: .topBarLeading) {
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape")

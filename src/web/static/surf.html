@@ -3,48 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Surf Monitor · BubbleBored</title>
+  <title>Surf Monitor · 待名</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="/tokens.css">
   <style>
-    :root {
-      --bg: #F8F7F4;
-      --bg-panel: #FFFFFF;
-      --bg-soft: #F3F2EE;
-      --bg-hover: #ECEBE7;
-      --border: #E2E1DC;
-      --border-light: #EBEAE5;
-      --text-1: #1A1A18;
-      --text-2: #5A5955;
-      --text-3: #88878A;
-      --text-4: #B0AFB3;
-      --accent: #6E5DE7;
-      --accent-hover: #5D4CD6;
-      --accent-bg: rgba(110, 93, 231, 0.06);
-      --accent-muted: #AEA4F0;
-      --green: #34D399;
-      --green-soft: #dcfce7;
-      --green-text: #166534;
-      --red: #E5534B;
-      --red-hover: #D4443C;
-      --orange: #F59E0B;
-      --r-md: 12px;
-      --r-sm: 8px;
-      --r-full: 9999px;
-      --fast: 120ms;
-      --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
-      --shadow-xs: 0 1px 2px rgba(0,0,0,0.03);
-    }
-
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    /* Design tokens live in /tokens.css. Page-specific layout below. */
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text-1);
       height: 100dvh;
       display: flex;
       flex-direction: column;
-      -webkit-font-smoothing: antialiased;
-      letter-spacing: -0.01em;
     }
 
     header {
@@ -328,7 +297,7 @@
       padding: 14px 24px 20px;
       font-size: 12.5px;
       line-height: 1.75;
-      font-family: "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+      font-family: var(--font-mono);
     }
 
     .log-entry {
@@ -378,7 +347,7 @@
       font-size: 13px;
       text-align: center;
       margin-top: 80px;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      font-family: var(--font-sans);
     }
 
     .empty-detail {
@@ -390,10 +359,7 @@
       font-size: 13px;
     }
 
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
+    /* Scrollbar styles inherit from tokens.css */
   </style>
 </head>
 <body>
@@ -454,8 +420,14 @@
 
     async function init() {
       await loadTree();
+      // Deep-link support: /surf.html?conv=<id> auto-selects that conversation
+      const urlConv = new URLSearchParams(location.search).get('conv');
+      if (urlConv && state.conv.has(urlConv)) {
+        state.selected = urlConv;
+      }
       render();
       renderLogs();
+      if (state.selected) renderDetail();
       connectSSE();
     }
 

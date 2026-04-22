@@ -236,7 +236,7 @@ mobileApiRoutes.post('/conversations/:id/regenerate', async (c) => {
     conversationId: convId,
     botId: conv.bot_id,
     userId: trigger.sender_id,
-    mergedContent: effectiveContent,
+    userMessages: [{ content: effectiveContent }],
     replyFn,
     regenerate: true,
   }).catch(e => {

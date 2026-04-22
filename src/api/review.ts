@@ -5,6 +5,8 @@ import {
   getMessages,
 } from '../db/queries';
 import { reviewEvents, checkAndTriggerReview, getPendingReviews } from '../core/review';
+import { messageBus } from '../bus/router';
+import { webChannel } from '../bus/channels/web';
 import type { OutboundMessage } from '../bus/types';
 
 export const reviewRoutes = new Hono();
@@ -55,9 +57,14 @@ reviewRoutes.post('/trigger/:conversationId', async (c) => {
     return c.json({ error: 'not enough messages to review (need at least 2)' }, 400);
   }
 
-  // Reply goes to the SSE log stream only — review monitor page doesn't
-  // send user-facing messages; it's a diagnostic tool.
+  // Deliver to the conversation (bus's live replyFn, fallback to web channel
+  // owner) AND mirror every outbound to the review SSE stream so the panel
+  // still sees what got sent.
+  const deliver: (msg: OutboundMessage) => void =
+    messageBus.getReplyFn(conv.id) ??
+    ((msg) => { webChannel.send(conv.user_id, msg).catch(() => {}); });
   const replyFn = (msg: OutboundMessage) => {
+    deliver(msg);
     reviewEvents.emit('log', { botId: conv.bot_id, conversationId: conv.id, content: `[reply] ${msg.content}`, timestamp: Date.now() });
   };
 

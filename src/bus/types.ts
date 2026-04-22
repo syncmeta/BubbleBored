@@ -27,7 +27,10 @@ export interface OutboundMessage {
     | 'surf_status'
     | 'surf_result'
     | 'title_update'
-    | 'conversation_created';
+    | 'conversation_created'
+    // Bot is preparing/sending a reply. Client shows a typing indicator
+    // for as long as any generation is active for this conversation.
+    | 'bot_typing';
   conversationId: string;
   messageId?: string;
   segmentIndex?: number;
@@ -35,6 +38,7 @@ export interface OutboundMessage {
   delta?: string;
   totalSegments?: number;
   title?: string;
+  active?: boolean;
   metadata?: Record<string, unknown>;
 }
 

@@ -58,13 +58,12 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // Cancel any pending review timer (new message arrived)
   cancelPendingReview(conversationId);
 
-  // Pass through debounce — attachments ride alongside text and are bound
-  // to the merged user message when the debounce window fires.
-  debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (mergedContent, mergedAttachmentIds) => {
+  // Pass through debounce. Each entry the user sent becomes its own DB row —
+  // only at LLM-request time do consecutive user rows get joined with \n\n.
+  debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (entries) => {
     handleUserMessage({
       conversationId, botId, userId,
-      mergedContent,
-      attachmentIds: mergedAttachmentIds.length > 0 ? mergedAttachmentIds : undefined,
+      userMessages: entries,
       replyFn,
     }).catch(e => {
       console.error('[orchestrator] error:', e);
