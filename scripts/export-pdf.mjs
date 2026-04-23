@@ -31,7 +31,26 @@ const page = await context.newPage();
 
 await page.goto(pathToFileURL(input).href, { waitUntil: 'networkidle' });
 await page.addStyleTag({ content: 'html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }' });
-await page.evaluate(() => document.body.classList.add('export'));
+await page.evaluate(() => {
+  document.body.classList.add('export');
+  // Wrap every section's post-title content in a .section-body so CSS can
+  // center it vertically as a single block (flex auto-margin trick doesn't
+  // reliably group multiple siblings when content height approaches page).
+  document.querySelectorAll('main.page > section').forEach((sec) => {
+    if (sec.classList.contains('hero')) return;
+    const head = sec.querySelector(':scope > .section-head');
+    if (!head) return;
+    const body = document.createElement('div');
+    body.className = 'section-body';
+    let sib = head.nextSibling;
+    while (sib) {
+      const cur = sib;
+      sib = sib.nextSibling;
+      body.appendChild(cur);
+    }
+    sec.appendChild(body);
+  });
+});
 
 // Wait for favicons / remote logos to settle.
 await page.waitForLoadState('networkidle');

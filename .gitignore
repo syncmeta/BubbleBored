@@ -22,4 +22,4 @@ bun.lock
 .claude/
 
 bp-bubblebored.html
-bp-bubblebored.pdf
+*.pdf
