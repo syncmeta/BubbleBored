@@ -31,13 +31,13 @@ struct MessageEditorSheet: View {
 
                 VStack(alignment: .leading, spacing: 14) {
                     Text("改完之后这条之后的消息会被重新生成。")
-                        .font(Theme.Type.footnote)
+                        .font(Theme.Fonts.footnote)
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.top, 8)
 
                     TextEditor(text: $draft)
-                        .font(Theme.Type.body)
+                        .font(Theme.Fonts.body)
                         .foregroundStyle(Theme.Palette.ink)
                         .scrollContentBackground(.hidden)
                         .background(Theme.Palette.surface)
@@ -59,7 +59,7 @@ struct MessageEditorSheet: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("编辑消息")
-                        .font(Theme.Type.serif(size: 17, weight: .semibold))
+                        .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                 }
                 ToolbarItem(placement: .cancellationAction) {

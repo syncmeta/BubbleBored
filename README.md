@@ -1,11 +1,11 @@
-# BubbleBored
+# PendingBot
 
 [English](README_EN.md)
 
 两大目标：
 
-- **和人自然地交流、主动对话。** 和微信聊天一样，让它心里有你。
-- **破除信息茧房。** 自己上网冲浪，从使用者的利益出发，寻找他真正需要的东西。
+- **和人自然地交流 主动对话 不谄媚** 和微信聊天一样，让它心里有你，不拍你马屁
+- **审视自我 探索未知 做信息的VC** 自己上网冲浪，从使用者的利益出发，寻找他真正需要的东西
 
 我想让它给我推送我认知以外、又真正需要的东西，帮助我意识到自己所忽略的、不足的东西。
 
@@ -36,9 +36,10 @@ bun install
 | 变量 | 必填 | 说明 |
 |------|------|------|
 | `OPENROUTER_API_KEY` | 是 | [OpenRouter](https://openrouter.ai) API Key |
-| `HTTPS_PROXY` | 否 | 代理地址，网络不通时使用 |
+| `HTTPS_PROXY` | 否 | 代理地址，网络不通时使用（`HTTP_PROXY` / `ALL_PROXY` 同样生效） |
 | `JINA_API_KEY` | 否 | Jina 搜索 Key，用于冲浪功能 |
 | `HONCHO_API_KEY` | 否 | Honcho Key，用于用户记忆 |
+| `HONCHO_BASE_URL` | 否 | Honcho API 地址，自托管时填写 |
 | `HONCHO_WORKSPACE_ID` | 否 | Honcho 工作区 ID |
 
 ## 启动
@@ -55,29 +56,44 @@ bun run start        # 生产模式
 编辑 `config.yaml`：
 
 ```yaml
+server:
+  port: 3456
+  host: "0.0.0.0"
+
 openrouter:
   defaultModel: "anthropic/claude-sonnet-4.6"   # 主对话模型
   debounceModel: "openrouter/free"              # 防抖用的便宜模型
   reviewModel: "anthropic/claude-sonnet-4.6"    # 自我反思模型
-  surfingModel: "x-ai/grok-4.20"               # 冲浪模型
+  surfingModel: "x-ai/grok-4.20"                # 冲浪模型
+  titleModel: "openrouter/free"                 # 生成对话标题；不填则复用 debounceModel
+
+# 所有 bot 共享的默认开关，per-bot 段里只写需要覆盖的字段
+defaults:
+  accessMode: "open"              # open / approval / private
+  review:
+    enabled: true
+    roundInterval: 8              # 每 8 轮反思一次
+  surfing:
+    enabled: true
+    autoTrigger: false            # 是否自动定期冲浪
+  debounce:
+    enabled: true
 
 bots:
   my_bot:
     displayName: "起个名字"
     promptFile: "my_bot.md"       # 对应 prompts/bots/my_bot.md
-    # 以下都可选，不写就用全局默认值
+    # 以下都可选
     model: "..."                  # 覆盖默认模型
+    accessMode: "private"         # 覆盖访问模式
+    creators: ["user_id_1"]       # accessMode 为 approval / private 时的白名单
     review:
-      enabled: true
-      roundInterval: 8            # 每 8 轮反思一次
+      roundInterval: 4            # 只覆盖这一项，其他沿用 defaults
     surfing:
-      enabled: true
-      autoTrigger: true           # 自动定期冲浪
-    debounce:
-      enabled: true
+      autoTrigger: true
 ```
 
-可以定义多个 Bot，各有各的性格和配置。
+可以定义多个 Bot，各有各的性格和配置。更多可调参数（`timerMs`、`maxSearchRequests`、`initialIntervalSec`、`maxIntervalSec`、`idleStopSec`、`maxRequests`、`maxWaitMs` 等）见 [`src/config/schema.ts`](src/config/schema.ts)。
 
 ## 编写性格
 
@@ -89,14 +105,19 @@ bots:
 
 ```
 prompts/
-├── system.md            # 核心规则（通常不用动）
+├── system.md              # 核心规则（通常不用动）
 ├── bots/
-│   └── my_bot.md        # 你的 Bot 性格
-├── debounce-judge.md    # 防抖判断
-├── review.md            # 自我反思
-├── surfing.md           # 冲浪评估
-└── surfing-eval.md      # 搜索结果评估
+│   └── my_bot.md          # 你的 Bot 性格
+├── debounce-judge.md      # 防抖判断
+├── review.md              # 自我反思的行动提示
+├── review-eval.md         # 反思后对搜索结果的筛选
+├── surfing.md             # 冲浪总控
+├── surfing-wanderer.md    # 先广撒网，跟着好奇心乱逛
+├── surfing-curator.md     # 再从漫游结果里筛出真正有价值的
+└── title.md               # 为对话生成标题
 ```
+
+冲浪拆成两步：wanderer 负责"乱逛"，尽量多地收集线索；curator 再从中挑出适合回给你的东西。两者的性格在对应 prompt 里独立调。
 
 ## 使用
 
@@ -223,6 +244,28 @@ bots:
 6. 启动服务。在每个飞书应用的「版本管理与发布」里发布应用，然后在飞书里与对应 Bot 单聊即可。群聊需要 @ 机器人。
 
 飞书事件回调必须是公网地址。本地开发可以用 [ngrok](https://ngrok.com/)、[frp](https://github.com/fatedier/frp) 之类做一层内网穿透。
+
+## 接入 iOS
+
+仓库里附带一个原生 iOS app，位于 `ios/BubbleBored/`。
+
+和 Telegram / 飞书不同，iOS 不需要 per-bot 配置——一个 app 就能访问服务上所有的 Bot。它走的是独立的 `/api/mobile/*` REST 接口和 `/ws/mobile` WebSocket，userId 由客户端生成后存在 `UserDefaults` 里，首次请求时服务端自动建用户。
+
+接入步骤：
+
+1. 用 Xcode 打开 `ios/BubbleBored/BubbleBored.xcodeproj`，编译到设备或模拟器。
+
+2. 启动后端（`bun run dev` 或 `bun run start`）。
+
+3. 在 app 内进入「设置」，把 **Server URL** 填成后端地址，比如：
+
+   - 模拟器连本机：`http://127.0.0.1:3456`
+   - 真机连同一局域网的 Mac：`http://192.168.x.x:3456`
+   - 公网部署：`https://your-domain.com`
+
+4. 回到聊天页挑一个 Bot 开始聊。发 `/surf` 同样可以手动触发冲浪。
+
+app 内的 userId 与网页端独立——同一个人在 iOS 和网页上看到的是两份对话。
 
 ## 技术栈
 

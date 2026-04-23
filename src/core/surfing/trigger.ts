@@ -2,6 +2,7 @@ import { getDb } from '../../db/index';
 import { configManager } from '../../config/loader';
 import { updateSurfState } from '../../db/queries';
 import { messageBus } from '../../bus/router';
+import { activeSurfs } from './searcher';
 
 export function startSurfingScheduler(): void {
   setInterval(() => {
@@ -38,14 +39,24 @@ async function checkAllConversations(): Promise<void> {
       // Check if enough time has passed since last surf
       if (now - lastSurf < interval) continue;
 
+      // Skip if another surf is already running for this conversation —
+      // stopSurf from the panel relies on activeSurfs to abort cleanly.
+      if (activeSurfs.has(conv.id)) continue;
+
       console.log(`[surf] auto-triggering for conv ${conv.id}`);
 
       const replyFn = messageBus.getReplyFn(conv.id);
       if (!replyFn) continue; // No active connection
 
-      // Run surf
-      const { runSurf } = await import('./searcher');
-      await runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, undefined, 'auto');
+      const controller = new AbortController();
+      activeSurfs.set(conv.id, controller);
+
+      try {
+        const { runSurf } = await import('./searcher');
+        await runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, controller.signal, 'auto');
+      } finally {
+        activeSurfs.delete(conv.id);
+      }
 
       // Update decay state
       const newInterval = Math.min(

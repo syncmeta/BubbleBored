@@ -3,9 +3,10 @@ import type { ChatCompletionCreateParamsStreaming, ChatCompletionCreateParamsNon
 
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
 
-const proxyFetch: typeof globalThis.fetch = (url, init) => {
-  return fetch(url, { ...init, proxy: proxyUrl } as any);
-};
+// Typed as `any` because Bun's global fetch has an extra `preconnect` property
+// that TS's stock `typeof fetch` doesn't know about — and the OpenAI SDK just
+// needs something callable.
+const proxyFetch: any = (url: any, init: any) => fetch(url, { ...init, proxy: proxyUrl } as any);
 
 let client: OpenAI;
 
@@ -15,8 +16,8 @@ export function getLlm(): OpenAI {
       baseURL: 'https://openrouter.ai/api/v1',
       apiKey: process.env.OPENROUTER_API_KEY,
       defaultHeaders: {
-        'X-Title': 'BubbleBored',
-        'HTTP-Referer': 'https://bubblebored.app',
+        'X-Title': 'PendingBot',
+        'HTTP-Referer': 'https://pendingbot.app',
       },
       fetch: proxyUrl ? proxyFetch : undefined,
     });

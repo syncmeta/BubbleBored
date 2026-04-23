@@ -1,5 +1,5 @@
 /* =========================================================================
- * 待名 (Pending Name) — shared design tokens for the BubbleBored web client.
+ * 待名 (Pending Name) — shared design tokens for the PendingBot web client.
  *
  * Mirrors the token system in /ziza-website/styles/globals.css so the
  * product page and the app share one language: jade accent on warm-ink
@@ -65,7 +65,7 @@
   --accent-muted: var(--color-jade-300);
   --ring:         var(--color-jade-500);
 
-  /* ---- Legacy app aliases (BubbleBored v1 names; map to the new system
+  /* ---- Legacy app aliases (PendingBot v1 names; map to the new system
          so we don't have to touch every old rule in style.css). ---------- */
   --bg-sidebar:   var(--bg-subtle);
   --bg-hover:     var(--bg-muted);

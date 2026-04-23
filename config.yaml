@@ -3,12 +3,12 @@ server:
   host: "0.0.0.0"
 
 openrouter:
-  defaultModel: "anthropic/claude-opus-4.7"
+  defaultModel: "x-ai/grok-4.20"
   debounceModel: "openrouter/free"
-  reviewModel: "anthropic/claude-sonnet-4.6"
+  reviewModel: "x-ai/grok-4.20"
   surfingModel: "x-ai/grok-4.20"
-  # 不填则用 debounceModel
-  # titleModel: "openrouter/free"
+
+  titleModel: "openrouter/free" # 不填则用 debounceModel
 
 defaults:
   accessMode: "open"
@@ -27,7 +27,6 @@ defaults:
     maxRequests: 10
   debounce:
     enabled: true
-    windowMs: 2000
     maxWaitMs: 15000
 
 bots:

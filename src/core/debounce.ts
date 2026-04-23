@@ -1,7 +1,6 @@
 import { configManager } from '../config/loader';
 import { chatCompletion } from '../llm/client';
 import { logAudit } from '../llm/audit';
-import { addToDebounceBuffer, clearDebounceBuffer } from '../db/queries';
 import { typedSince } from './typing';
 import type { OutboundMessage } from '../bus/types';
 
@@ -97,9 +96,6 @@ export function addMessage(
   // what the user typed and what will become a bubble / DB row.
   if (content.length > 0 || atts.length > 0) {
     state.pending.push({ content, attachmentIds: atts });
-  }
-  if (content.length > 0) {
-    addToDebounceBuffer(conversationId, content);
   }
   const textCount = state.pending.filter(e => e.content.length > 0).length;
   const attCount = state.pending.reduce((n, e) => n + e.attachmentIds.length, 0);
@@ -283,7 +279,6 @@ function doFlush(conversationId: string): void {
   const entries = state.pending.slice();
   const onReady = state.onReady;
   states.delete(conversationId);
-  clearDebounceBuffer(conversationId);
 
   if (entries.length > 0 && onReady) {
     const preview = entries.map(e => e.content).filter(Boolean).join(' ‖ ').slice(0, 80);
@@ -299,6 +294,5 @@ export function cancelPending(conversationId: string): void {
     if (state.hardTimer) clearTimeout(state.hardTimer);
     if (state.typingTimer) clearTimeout(state.typingTimer);
     states.delete(conversationId);
-    clearDebounceBuffer(conversationId);
   }
 }

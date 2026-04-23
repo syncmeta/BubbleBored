@@ -4,7 +4,7 @@ import { configManager } from '../config/loader';
 import { chatCompletion } from '../llm/client';
 import { logAudit } from '../llm/audit';
 import { findConversationById, getMessages, insertMessage } from '../db/queries';
-import { getUserProfile } from '../honcho/memory';
+import { getUserProfile, recordBotMessage } from '../honcho/memory';
 import { runSearchLoop } from './search/loop';
 import type { OutboundMessage } from '../bus/types';
 
@@ -204,6 +204,7 @@ export async function checkAndTriggerReview(
     pendingTimers.delete(conversationId);
     const msgId = randomUUID();
     insertMessage(msgId, conversationId, 'bot', botId, reviewText);
+    recordBotMessage({ botId, conversationId, content: reviewText });
     replyFn({
       type: 'message',
       conversationId,

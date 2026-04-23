@@ -15,11 +15,12 @@ import { surfRoutes } from './api/surf';
 import { reviewRoutes } from './api/review';
 import { mobileApiRoutes } from './api/mobile';
 import { uploadRoutes } from './api/upload';
-import { addMessage as debounceAdd, cancelPending } from './core/debounce';
+import { addMessage as debounceAdd } from './core/debounce';
 import { handleUserMessage, signalNewMessage } from './core/orchestrator';
 import { cancelPendingReview } from './core/review';
 import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
+import { initHoncho } from './honcho/client';
 import type { OutboundMessage } from './bus/types';
 
 // Initialize
@@ -31,6 +32,8 @@ console.log('[init] database ready');
 
 syncBots();
 console.log('[init] bots synced');
+
+await initHoncho();
 
 configManager.watch();
 configManager.onChange(() => {

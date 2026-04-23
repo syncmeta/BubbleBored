@@ -69,6 +69,21 @@ final class WebSocketClient {
         }
     }
 
+    // ── typing tick throttle ────────────────────────────────────────────────
+    //
+    // Server's debounce layer listens for these ticks and holds off the LLM
+    // call while the user is still typing. Throttled to 400ms like the web
+    // client — more frequent doesn't help, less frequent risks firing early.
+    private var lastTypingTickAt: Date = .distantPast
+
+    func sendTypingTick(conversationID: String) {
+        guard status == .connected else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastTypingTickAt) < 0.4 { return }
+        lastTypingTickAt = now
+        send(.typingTick(conversationId: conversationID))
+    }
+
     // ── internals ───────────────────────────────────────────────────────────
 
     private func listen() {

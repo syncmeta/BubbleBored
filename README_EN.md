@@ -1,4 +1,4 @@
-# BubbleBored
+# PendingBot
 
 Two goals:
 
@@ -34,9 +34,10 @@ Copy `.env.example` to `.env` and fill in:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` | Yes | [OpenRouter](https://openrouter.ai) API key |
-| `HTTPS_PROXY` | No | Proxy URL if needed |
+| `HTTPS_PROXY` | No | Proxy URL if needed (`HTTP_PROXY` / `ALL_PROXY` also work) |
 | `JINA_API_KEY` | No | Jina search key, for surfing |
 | `HONCHO_API_KEY` | No | Honcho key, for user memory |
+| `HONCHO_BASE_URL` | No | Honcho API endpoint, for self-hosted Honcho |
 | `HONCHO_WORKSPACE_ID` | No | Honcho workspace ID |
 
 ## Run
@@ -53,29 +54,44 @@ Open `http://localhost:3456`.
 Edit `config.yaml`:
 
 ```yaml
+server:
+  port: 3456
+  host: "0.0.0.0"
+
 openrouter:
   defaultModel: "anthropic/claude-sonnet-4.6"   # Main chat model
   debounceModel: "openrouter/free"              # Cheap model for debouncing
   reviewModel: "anthropic/claude-sonnet-4.6"    # Self-review model
-  surfingModel: "x-ai/grok-4.20"               # Surfing model
+  surfingModel: "x-ai/grok-4.20"                # Surfing model
+  titleModel: "openrouter/free"                 # Conversation titles; falls back to debounceModel
+
+# Shared defaults for every bot — per-bot blocks only override what they need
+defaults:
+  accessMode: "open"              # open / approval / private
+  review:
+    enabled: true
+    roundInterval: 8              # Self-review every 8 rounds
+  surfing:
+    enabled: true
+    autoTrigger: false            # Surf automatically on a schedule
+  debounce:
+    enabled: true
 
 bots:
   my_bot:
     displayName: "Give it a name"
     promptFile: "my_bot.md"       # Maps to prompts/bots/my_bot.md
-    # All optional — falls back to global defaults
+    # All optional
     model: "..."                  # Override default model
+    accessMode: "private"         # Override access mode
+    creators: ["user_id_1"]       # Whitelist when accessMode is approval / private
     review:
-      enabled: true
-      roundInterval: 8            # Self-review every 8 rounds
+      roundInterval: 4            # Only override this; everything else inherits from defaults
     surfing:
-      enabled: true
-      autoTrigger: true           # Surf automatically on a schedule
-    debounce:
-      enabled: true
+      autoTrigger: true
 ```
 
-You can define multiple bots, each with its own personality and config.
+You can define multiple bots, each with its own personality and config. More knobs (`timerMs`, `maxSearchRequests`, `initialIntervalSec`, `maxIntervalSec`, `idleStopSec`, `maxRequests`, `maxWaitMs`, …) live in [`src/config/schema.ts`](src/config/schema.ts).
 
 ## Write a Personality
 
@@ -87,14 +103,19 @@ All prompts are hot-reloaded — changes take effect immediately, no restart nee
 
 ```
 prompts/
-├── system.md            # Core rules (usually leave alone)
+├── system.md              # Core rules (usually leave alone)
 ├── bots/
-│   └── my_bot.md        # Your bot's personality
-├── debounce-judge.md    # Debounce judge
-├── review.md            # Self-review
-├── surfing.md           # Surfing assessment
-└── surfing-eval.md      # Search result evaluation
+│   └── my_bot.md          # Your bot's personality
+├── debounce-judge.md      # Debounce judge
+├── review.md              # Action prompt for self-review
+├── review-eval.md         # Filters the search results the review pulls
+├── surfing.md             # Surfing controller
+├── surfing-wanderer.md    # Wanders the web following curiosity
+├── surfing-curator.md     # Curates the wanderer's haul into what's worth sharing
+└── title.md               # Generates conversation titles
 ```
+
+Surfing runs in two stages: the wanderer casts a wide net following its own curiosity, then the curator picks what's actually worth bringing back to you. Their personalities are tuned independently in their respective prompts.
 
 ## Usage
 
@@ -221,6 +242,28 @@ For each bot you want on Feishu:
 6. Start the server. Publish each app under "Version Management & Release", then DM the corresponding bot in Feishu. Group chats need an @-mention.
 
 Feishu event callbacks require a public URL. For local dev, use [ngrok](https://ngrok.com/), [frp](https://github.com/fatedier/frp), or similar for tunneling.
+
+## iOS App
+
+The repo ships with a native iOS app at `ios/BubbleBored/`.
+
+Unlike Telegram / Feishu, iOS does **not** need per-bot config — a single app talks to every bot on the server. It uses a dedicated `/api/mobile/*` REST surface plus a `/ws/mobile` WebSocket. The userId is generated client-side and stored in `UserDefaults`; the server auto-creates the user on the first request.
+
+Steps:
+
+1. Open `ios/BubbleBored/BubbleBored.xcodeproj` in Xcode and build to a device or simulator.
+
+2. Start the backend (`bun run dev` or `bun run start`).
+
+3. In the app's Settings, set **Server URL** to the backend, for example:
+
+   - Simulator to local host: `http://127.0.0.1:3456`
+   - Device to Mac on the same LAN: `http://192.168.x.x:3456`
+   - Public deployment: `https://your-domain.com`
+
+4. Back in the chat screen, pick a bot and start talking. `/surf` works the same way to trigger surfing manually.
+
+The iOS userId is independent from the web — the same person sees two separate conversation histories on iOS vs. the web UI.
 
 ## Stack
 

@@ -16,6 +16,7 @@ export class FeishuChannel implements Channel {
 
   private appId: string;
   private appSecret: string;
+  private verificationToken: string;
   private tenantToken = '';
   private tokenExpiresAt = 0;
   private processedEvents = new Set<string>();
@@ -25,6 +26,7 @@ export class FeishuChannel implements Channel {
     this.name = `feishu:${config.botId}`;
     this.appId = config.appId;
     this.appSecret = config.appSecret;
+    this.verificationToken = config.verificationToken ?? '';
   }
 
   async start(): Promise<void> {
@@ -35,13 +37,21 @@ export class FeishuChannel implements Channel {
   // --- Webhook handler (called from Hono route) ---
 
   async handleEvent(body: any): Promise<any> {
-    // URL verification challenge
+    // URL verification challenge (v1 shape — body.token, body.challenge)
     if (body.type === 'url_verification') {
+      if (this.verificationToken && body.token !== this.verificationToken) {
+        console.warn(`[${this.name}] url_verification: bad token`);
+        return { code: 403 };
+      }
       return { challenge: body.challenge };
     }
 
-    // v2 event
+    // v2 event — token is in body.header.token
     if (body.schema === '2.0' && body.header) {
+      if (this.verificationToken && body.header.token !== this.verificationToken) {
+        console.warn(`[${this.name}] event: bad token`);
+        return { code: 403 };
+      }
       const eventId = body.header.event_id;
 
       // Deduplicate — Feishu retries if it doesn't get 200 fast enough
@@ -87,7 +97,7 @@ export class FeishuChannel implements Channel {
     if (!content) return;
 
     if (content === '/start') {
-      this.sendText(senderId, 'BubbleBored 已连接，直接发消息开始聊天。');
+      this.sendText(senderId, 'PendingBot 已连接，直接发消息开始聊天。');
       return;
     }
 

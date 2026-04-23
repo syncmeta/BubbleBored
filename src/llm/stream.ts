@@ -101,17 +101,3 @@ export async function* streamWithSplit(
   }
 }
 
-export function collectStream(
-  stream: Stream<ChatCompletionChunk>
-): Promise<{ content: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
-  return new Promise(async (resolve) => {
-    let content = '';
-    let usage: any;
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content;
-      if (delta) content += delta;
-      if (chunk.usage) usage = chunk.usage;
-    }
-    resolve({ content, usage });
-  });
-}

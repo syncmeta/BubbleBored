@@ -66,7 +66,6 @@ export function deleteConversation(id: string): string[] {
   ).all(id).map(r => r.path);
   db.query('DELETE FROM attachments WHERE conversation_id = ?').run(id);
   db.query('DELETE FROM messages WHERE conversation_id = ?').run(id);
-  db.query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(id);
   db.query('UPDATE audit_log SET conversation_id = NULL WHERE conversation_id = ?').run(id);
   db.query('DELETE FROM conversations WHERE id = ?').run(id);
   return attachmentPaths;
@@ -110,6 +109,13 @@ export function getMessages(conversationId: string, limit: number = 50) {
   return getDb().query<any, [string, number]>(
     'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?'
   ).all(conversationId, limit).reverse();
+}
+
+export function countMessages(conversationId: string): number {
+  const row = getDb().query<{ n: number }, [string]>(
+    'SELECT COUNT(*) as n FROM messages WHERE conversation_id = ?'
+  ).get(conversationId);
+  return row?.n ?? 0;
 }
 
 // All messages in chronological order, tiebreaking on rowid so multi-segment
@@ -161,23 +167,6 @@ export function getAuditDetails(limit: number = 100, offset: number = 0) {
   ).all(limit, offset);
 }
 
-// Debounce buffer
-export function addToDebounceBuffer(conversationId: string, content: string) {
-  getDb().query(
-    'INSERT INTO debounce_buffer (conversation_id, content) VALUES (?, ?)'
-  ).run(conversationId, content);
-}
-
-export function getDebounceBuffer(conversationId: string) {
-  return getDb().query<any, [string]>(
-    'SELECT * FROM debounce_buffer WHERE conversation_id = ? ORDER BY created_at ASC'
-  ).all(conversationId);
-}
-
-export function clearDebounceBuffer(conversationId: string) {
-  getDb().query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(conversationId);
-}
-
 // Edit the text of an existing message (keeps its attachments intact).
 // Used by the edit-and-regenerate flow on user messages.
 export function updateMessageContent(messageId: string, content: string): void {
@@ -203,7 +192,6 @@ export function resetConversation(conversationId: string): string[] {
   ).all(conversationId).map(r => r.path);
   db.query('DELETE FROM attachments WHERE conversation_id = ?').run(conversationId);
   db.query('DELETE FROM messages WHERE conversation_id = ?').run(conversationId);
-  db.query('DELETE FROM debounce_buffer WHERE conversation_id = ?').run(conversationId);
   db.query('DELETE FROM audit_log WHERE conversation_id = ?').run(conversationId);
   db.query('UPDATE conversations SET round_count = 0, last_sender = NULL, surf_last_at = NULL WHERE id = ?').run(conversationId);
   return attachmentPaths;
@@ -214,13 +202,6 @@ export function listConversationsByUser(userId: string) {
     `SELECT c.*, b.display_name as bot_name FROM conversations c
      JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? ORDER BY c.last_activity_at DESC`
   ).all(userId);
-}
-
-export function findLatestConversationByBot(botId: string) {
-  return getDb().query<any, [string]>(
-    `SELECT * FROM conversations WHERE bot_id = ?
-     ORDER BY last_activity_at DESC LIMIT 1`
-  ).get(botId);
 }
 
 export function listConversationsByBot(botId: string) {
@@ -314,27 +295,6 @@ export function getAttachmentsForMessages(messageIds: string[]): Record<string, 
     (map[r.message_id] ??= []).push(r);
   }
   return map;
-}
-
-// The next three return the paths of the rows that will be removed so the
-// caller can `unlink` the actual files on disk. Row deletion happens inside
-// a single transaction; file deletion is best-effort and done by the caller.
-export function deleteAttachmentsByMessage(messageId: string): string[] {
-  const db = getDb();
-  const rows = db.query<{ path: string }, [string]>(
-    'SELECT path FROM attachments WHERE message_id = ?'
-  ).all(messageId);
-  db.query('DELETE FROM attachments WHERE message_id = ?').run(messageId);
-  return rows.map(r => r.path);
-}
-
-export function deleteAttachmentsByConversation(conversationId: string): string[] {
-  const db = getDb();
-  const rows = db.query<{ path: string }, [string]>(
-    'SELECT path FROM attachments WHERE conversation_id = ?'
-  ).all(conversationId);
-  db.query('DELETE FROM attachments WHERE conversation_id = ?').run(conversationId);
-  return rows.map(r => r.path);
 }
 
 // Sweep orphans older than N seconds — called periodically by a background

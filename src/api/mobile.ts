@@ -6,14 +6,12 @@ import {
   listConversationsByUser, findConversationById, createConversation,
   updateConversationTitle, deleteConversation,
   getMessages, resetConversation, deleteMessage,
-  getAttachmentsForMessages, getAttachmentsForMessage,
-  getAllMessagesAsc, updateConversationRound, updateMessageContent,
+  getAttachmentsForMessages,
 } from '../db/queries';
 import { configManager } from '../config/loader';
 import { getDb } from '../db/index';
 import { unlinkAttachmentFiles } from '../core/attachments';
-import { handleUserMessage, signalNewMessage } from '../core/orchestrator';
-import { cancelPendingReview } from '../core/review';
+import { regenerateConversation } from '../core/regenerate';
 import { iosChannel } from '../bus/channels/ios';
 import type { OutboundMessage } from '../bus/types';
 
@@ -25,7 +23,7 @@ import type { OutboundMessage } from '../bus/types';
  */
 export const mobileApiRoutes = new Hono();
 
-const CHANNEL = 'ios';
+const CHANNEL = 'ios' as const;
 
 // Ensure an ios-channel user exists for the given client-generated id.
 // Returns the internal user.id.
@@ -136,9 +134,6 @@ mobileApiRoutes.delete('/messages/:id', (c) => {
 });
 
 // ── Regenerate / edit ───────────────────────────────────────────────────────
-// iOS mirror of the web `/api/conversations/:id/regenerate` route. Logic is
-// kept in lockstep; the only difference is the channel (`ios` vs `web`) and
-// the reply transport (`iosChannel` vs `webChannel`).
 mobileApiRoutes.post('/conversations/:id/regenerate', async (c) => {
   const convId = c.req.param('id');
   const body = await c.req.json<{
@@ -147,112 +142,28 @@ mobileApiRoutes.post('/conversations/:id/regenerate', async (c) => {
     newContent?: string;
     edits?: Array<{ messageId: string; content: string }>;
   }>();
-  const { userId: channelUserId, edits } = body;
-  let { messageId, newContent } = body;
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  if (!messageId && (!edits || edits.length === 0)) {
-    return c.json({ error: 'messageId or edits required' }, 400);
-  }
-
-  const conv = findConversationById(convId);
-  if (!conv) return c.json({ error: 'conversation not found' }, 404);
-
-  const user = findUserByChannel(CHANNEL, channelUserId);
-  if (!user || user.id !== conv.user_id) {
-    return c.json({ error: 'unauthorized' }, 403);
-  }
-
-  const all = getAllMessagesAsc(convId) as Array<{
-    id: string; sender_type: string; sender_id: string; content: string;
-  }>;
-  const indexById = new Map(all.map((m, i) => [m.id, i]));
-
-  if (edits && edits.length > 0) {
-    let latestIdx = -1;
-    let latestId: string | null = null;
-    for (const e of edits) {
-      if (!e?.messageId || typeof e.content !== 'string') {
-        return c.json({ error: 'bad edit entry' }, 400);
-      }
-      const idx = indexById.get(e.messageId);
-      if (idx === undefined) {
-        return c.json({ error: `edit for unknown message ${e.messageId}` }, 400);
-      }
-      if (all[idx].sender_type !== 'user') {
-        return c.json({ error: `cannot edit non-user message ${e.messageId}` }, 400);
-      }
-      updateMessageContent(e.messageId, e.content);
-      all[idx].content = e.content;
-      if (idx > latestIdx) {
-        latestIdx = idx;
-        latestId = e.messageId;
-      }
-    }
-    if (latestId) {
-      const existing = messageId ? indexById.get(messageId) ?? -1 : -1;
-      if (existing < latestIdx) messageId = latestId;
-    }
-  }
-
-  if (!messageId) return c.json({ error: 'messageId required' }, 400);
-  const clickedIdx = indexById.get(messageId) ?? -1;
-  if (clickedIdx < 0) return c.json({ error: 'message not found' }, 404);
-
-  let triggerIdx = -1;
-  if (all[clickedIdx].sender_type === 'user') {
-    triggerIdx = clickedIdx;
-  } else {
-    for (let i = clickedIdx - 1; i >= 0; i--) {
-      if (all[i].sender_type === 'user') { triggerIdx = i; break; }
-    }
-  }
-  if (triggerIdx < 0) return c.json({ error: 'no user message to regenerate from' }, 400);
-  const trigger = all[triggerIdx];
-
-  let effectiveContent = trigger.content;
-  if (!edits && typeof newContent === 'string' && newContent !== trigger.content) {
-    updateMessageContent(trigger.id, newContent);
-    effectiveContent = newContent;
-  }
-
-  const toDelete = all.slice(triggerIdx + 1);
-  const paths: string[] = [];
-  for (const m of toDelete) {
-    paths.push(...deleteMessage(m.id));
-  }
-  unlinkAttachmentFiles(paths).catch(() => {});
-
-  updateConversationRound(convId, conv.round_count, 'user');
-  signalNewMessage(convId);
-  cancelPendingReview(convId);
+  const { userId: channelUserId } = body;
 
   const replyFn = (msg: OutboundMessage) => {
-    iosChannel.send(channelUserId, msg).catch(e =>
-      console.error('[mobile-regen] send error:', e)
-    );
+    if (channelUserId) {
+      iosChannel.send(channelUserId, msg).catch(e =>
+        console.error('[mobile-regen] send error:', e)
+      );
+    }
   };
 
-  handleUserMessage({
+  const result = await regenerateConversation({
     conversationId: convId,
-    botId: conv.bot_id,
-    userId: trigger.sender_id,
-    userMessages: [{ content: effectiveContent }],
+    channel: CHANNEL,
+    channelUserId: channelUserId ?? '',
+    messageId: body.messageId,
+    newContent: body.newContent,
+    edits: body.edits,
     replyFn,
-    regenerate: true,
-  }).catch(e => {
-    console.error('[mobile-regen] error:', e);
-    replyFn({ type: 'error', conversationId: convId, content: '重新生成失败，稍后再试' });
   });
 
-  const triggerAtts = getAttachmentsForMessage(trigger.id).map(a => ({
-    id: a.id, mime: a.mime, url: `/uploads/${a.id}`,
-  }));
-  return c.json({
-    ok: true,
-    deletedCount: toDelete.length,
-    triggerMessageId: trigger.id,
-    attachments: triggerAtts,
-  });
+  if (!result.ok) return c.json({ error: result.error }, result.status as any);
+  return c.json(result);
 });
 
 // ── Push (Phase 2 prep) ─────────────────────────────────────────────────────

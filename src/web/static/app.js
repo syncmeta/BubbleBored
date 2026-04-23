@@ -1,4 +1,4 @@
-// BubbleBored Web Client — multi-conversation
+// PendingBot Web Client — multi-conversation
 
 const state = {
   userId: localStorage.getItem('bb_userId') || generateId(),
@@ -22,7 +22,7 @@ const state = {
   surfES: null,
   reviewES: null,
   // Conversations currently showing a bot "正在输入" indicator. Server sends
-  // `bot_typing {active}` events; the bubble only renders on the visible
+  // `bot_typing {active}` events; the header label only renders on the visible
   // conversation, but we track all so it resumes on conv switch.
   typingConvs: new Set(),
 };
@@ -690,34 +690,16 @@ function bumpConversationToTop(convId) {
 // ── Typing indicator ──
 //
 // Shown while the server is preparing a reply (LLM call + segment streaming).
-// Server emits `bot_typing {active}` events; we just keep one bubble pinned
-// to the bottom of the message list whenever the current conversation is in
-// state.typingConvs.
+// Server emits `bot_typing {active}` events; we toggle a "正在输入..." label
+// in the chat header beside the conversation title whenever the current
+// conversation is in state.typingConvs.
 
 function renderTypingIndicator() {
-  const msgs = document.getElementById('messages');
-  if (!msgs) return;
+  const el = document.getElementById('chat-typing');
+  if (!el) return;
   const shouldShow = !!state.currentConversationId
     && state.typingConvs.has(state.currentConversationId);
-  let el = document.getElementById('bot-typing');
-  if (!shouldShow) {
-    if (el) el.remove();
-    return;
-  }
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'bot-typing';
-    el.className = 'msg-wrap bot typing-wrap';
-    el.innerHTML = `
-      <div class="msg bot typing" aria-label="正在输入">
-        <span class="typing-dots"><i></i><i></i><i></i></span>
-      </div>
-    `;
-    msgs.appendChild(el);
-  } else if (el.nextSibling) {
-    // Keep pinned to the bottom when new messages appear above it.
-    msgs.appendChild(el);
-  }
+  el.hidden = !shouldShow;
 }
 
 // ── Messages ──
@@ -792,8 +774,6 @@ function appendMessage(type, content, msgId, opts) {
   wrap.appendChild(bubble);
   wrap.appendChild(actions);
   msgs.appendChild(wrap);
-  // Keep the "正在输入" bubble pinned to the bottom if it's live.
-  renderTypingIndicator();
   return wrap;
 }
 

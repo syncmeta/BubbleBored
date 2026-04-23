@@ -11,26 +11,41 @@ enum APIError: LocalizedError {
         switch self {
         case .notConfigured: return "后端地址还没配置"
         case .badURL: return "地址格式不对"
-        case .http(let s, let b): return "服务端 \(s): \(b.prefix(200))"
-        case .decoding(let e): return "解析失败: \(e.localizedDescription)"
-        case .transport(let e): return "网络: \(e.localizedDescription)"
+        case .http(let s, let b): return "服务端 \(s)：\(b.prefix(200))"
+        case .decoding(let e): return "解析失败：\(e.localizedDescription)"
+        case .transport(let e): return "网络：\(e.localizedDescription)"
         }
     }
 }
 
-/// Thin REST client over `/api/mobile/*`. Stateless — pulls URL + userId from
-/// AppSettings at call time so a settings change takes effect immediately.
+/// Thin REST client over `/api/mobile/*` + `/api/upload`. Stateless — pulls
+/// URL + userId from AppSettings at call time so settings changes take
+/// effect immediately.
 struct APIClient {
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 10
-        cfg.timeoutIntervalForResource = 30
+        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForResource = 60
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
 
     private var settings: AppSettings { AppSettings.shared }
     private var userId: String { settings.userId }
+
+    // ── URL helpers ─────────────────────────────────────────────────────────
+
+    /// Resolve a server-relative path (like `/uploads/<id>`) to a full URL
+    /// using the currently-configured backend.
+    static func resolveURL(_ relativeOrAbsolute: String) -> URL? {
+        if relativeOrAbsolute.hasPrefix("http://") || relativeOrAbsolute.hasPrefix("https://") {
+            return URL(string: relativeOrAbsolute)
+        }
+        let base = AppSettings.shared.serverURL
+        guard !base.isEmpty else { return nil }
+        let sep = relativeOrAbsolute.hasPrefix("/") ? "" : "/"
+        return URL(string: "\(base)\(sep)\(relativeOrAbsolute)")
+    }
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -83,13 +98,9 @@ struct APIClient {
     struct OK: Decodable { let ok: Bool }
     struct Health: Decodable { let ok: Bool; let service: String; let ts: Int }
 
-    func health() async throws -> Health {
-        try await get("/health")
-    }
+    func health() async throws -> Health { try await get("/health") }
 
-    func bots() async throws -> [Bot] {
-        try await get("/bots")
-    }
+    func bots() async throws -> [Bot] { try await get("/bots") }
 
     func conversations() async throws -> [Conversation] {
         try await get("/conversations", query: [URLQueryItem(name: "userId", value: userId)])
@@ -120,5 +131,82 @@ struct APIClient {
 
     func deleteMessage(_ id: String) async throws {
         let _: OK = try await send("DELETE", "/messages/\(id)")
+    }
+
+    // ── regenerate / edit ──────────────────────────────────────────────────
+
+    /// "从这里重来" — replay from a specific user message, tossing everything after it.
+    func regenerate(conversationId: String, messageId: String) async throws -> RegenerateResult {
+        try await send("POST", "/conversations/\(conversationId)/regenerate", body: [
+            "userId": userId,
+            "messageId": messageId,
+        ])
+    }
+
+    /// Edit one or more user messages, then regenerate from the latest edit.
+    func regenerateWithEdits(
+        conversationId: String,
+        edits: [(messageId: String, content: String)]
+    ) async throws -> RegenerateResult {
+        let payload = edits.map { ["messageId": $0.messageId, "content": $0.content] }
+        return try await send("POST", "/conversations/\(conversationId)/regenerate", body: [
+            "userId": userId,
+            "edits": payload,
+        ])
+    }
+
+    // ── upload ─────────────────────────────────────────────────────────────
+
+    /// Upload an image. Posts to `/api/upload` (shared with web). Returns the
+    /// attachment id that iOS passes in the WS chat payload to bind the
+    /// upload to its user message row.
+    func uploadImage(
+        data: Data,
+        mime: String,
+        filename: String,
+        conversationId: String?
+    ) async throws -> UploadResult {
+        guard settings.isConfigured else { throw APIError.notConfigured }
+        guard let base = URL(string: settings.serverURL) else { throw APIError.badURL }
+        let url = base.appendingPathComponent("api").appendingPathComponent("upload")
+
+        let boundary = "bbm-\(UUID().uuidString)"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        func appendString(_ s: String) { body.append(s.data(using: .utf8)!) }
+
+        // conversationId part (optional)
+        if let cid = conversationId {
+            appendString("--\(boundary)\r\n")
+            appendString("Content-Disposition: form-data; name=\"conversationId\"\r\n\r\n")
+            appendString("\(cid)\r\n")
+        }
+        // file part
+        appendString("--\(boundary)\r\n")
+        appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+        appendString("Content-Type: \(mime)\r\n\r\n")
+        body.append(data)
+        appendString("\r\n--\(boundary)--\r\n")
+
+        req.httpBody = body
+
+        let (respData, resp): (Data, URLResponse)
+        do {
+            (respData, resp) = try await session.data(for: req)
+        } catch {
+            throw APIError.transport(error)
+        }
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let b = String(data: respData, encoding: .utf8) ?? ""
+            throw APIError.http(status: http.statusCode, body: b)
+        }
+        do {
+            return try JSONDecoder().decode(UploadResult.self, from: respData)
+        } catch {
+            throw APIError.decoding(error)
+        }
     }
 }

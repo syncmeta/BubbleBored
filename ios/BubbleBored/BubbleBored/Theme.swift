@@ -47,7 +47,7 @@ enum Theme {
 
     // ── Typography ──────────────────────────────────────────────────────────
 
-    enum Type {
+    enum Fonts {
         /// Serif display — used for app/section titles. Uses the system's
         /// built-in serif (New York on iOS), feels editorial.
         static func serif(size: CGFloat, weight: Font.Weight = .semibold) -> Font {

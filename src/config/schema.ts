@@ -19,7 +19,6 @@ export const SurfingConfigSchema = z.object({
 
 export const DebounceConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  windowMs: z.number().int().default(2000),
   maxWaitMs: z.number().int().default(15000),
 });
 
@@ -57,7 +56,7 @@ export const GlobalConfigSchema = z.object({
   }),
   openrouter: z.object({
     defaultModel: z.string().default('anthropic/claude-sonnet-4'),
-    debounceModel: z.string().default('meta-llama/llama-3.3-70b-instruct:free'),
+    debounceModel: z.string().default('openrouter/free'),
     reviewModel: z.string().optional(),
     surfingModel: z.string().optional(),
     titleModel: z.string().optional(),

@@ -10,20 +10,31 @@ import {
   resetSurfInterval, findConversationById, bindAttachmentsToMessage,
   getAttachmentsForMessage,
 } from '../db/queries';
+import { recordUserMessage, recordBotMessage } from '../honcho/memory';
 import type { OutboundMessage } from '../bus/types';
 
 // Interrupt tracking: when a new user message arrives during generation,
 // give the current generation a 2s grace period then drop remaining segments.
+// The stored value is the ms timestamp at which the signal was raised; callers
+// pass the generation's own start time so older signals (from before this gen
+// began) are ignored rather than being wiped at entry — that prevented the
+// race where a signalNewMessage landed just before handleUserMessage's entry
+// clear and got silently discarded.
 const interruptSignals = new Map<string, number>();
 
 export function signalNewMessage(conversationId: string) {
   interruptSignals.set(conversationId, Date.now());
 }
 
-function isInterrupted(conversationId: string): boolean {
+function isInterrupted(conversationId: string, genStartedAt: number): boolean {
   const t = interruptSignals.get(conversationId);
-  if (!t) return false;
+  if (!t || t < genStartedAt) return false;
   return (Date.now() - t) >= 2000;
+}
+
+function hasFreshInterrupt(conversationId: string, genStartedAt: number): boolean {
+  const t = interruptSignals.get(conversationId);
+  return t !== undefined && t >= genStartedAt;
 }
 
 // Counts how many handleUserMessage calls are currently running for a given
@@ -52,7 +63,11 @@ function beginTyping(conversationId: string, replyFn: (msg: OutboundMessage) => 
   }
 }
 
-function endTyping(conversationId: string, replyFn: (msg: OutboundMessage) => void) {
+function endTyping(
+  conversationId: string,
+  replyFn: (msg: OutboundMessage) => void,
+  genStartedAt: number,
+) {
   const next = (activeGenerations.get(conversationId) ?? 0) - 1;
   if (next > 0) {
     activeGenerations.set(conversationId, next);
@@ -60,11 +75,11 @@ function endTyping(conversationId: string, replyFn: (msg: OutboundMessage) => vo
   }
   activeGenerations.delete(conversationId);
 
-  // If an interrupt signal is present, a new user message is pending and a
-  // new generation is imminent. Hold the "off" so the UI doesn't flicker.
-  // beginTyping will cancel this timer when the new gen starts; otherwise
-  // the safety timer fires after 30s.
-  if (interruptSignals.has(conversationId)) {
+  // If an interrupt signal fresher than this gen is present, a new user
+  // message is pending and a new generation is imminent. Hold the "off" so
+  // the UI doesn't flicker. beginTyping will cancel this timer when the new
+  // gen starts; otherwise the safety timer fires after 30s.
+  if (hasFreshInterrupt(conversationId, genStartedAt)) {
     const prev = pendingTypingOff.get(conversationId);
     if (prev) clearTimeout(prev);
     pendingTypingOff.set(conversationId, setTimeout(() => {
@@ -103,7 +118,10 @@ export async function handleUserMessage(params: {
   regenerate?: boolean;
 }): Promise<void> {
   const { conversationId, botId, userId, userMessages, replyFn, extraContext, regenerate } = params;
-  interruptSignals.delete(conversationId); // clear stale interrupt from triggering message
+  // Per-gen start timestamp — isInterrupted/hasFreshInterrupt ignore signals
+  // raised before this, so we don't need to wipe the map at entry and can't
+  // accidentally swallow a just-arrived signal.
+  const genStartedAt = Date.now();
   const botConfig = configManager.getBotConfig(botId);
 
   const totalAtt = userMessages.reduce((n, e) => n + (e.attachmentIds?.length ?? 0), 0);
@@ -123,6 +141,7 @@ export async function handleUserMessage(params: {
     for (const entry of userMessages) {
       const userMsgId = randomUUID();
       insertMessage(userMsgId, conversationId, 'user', userId, entry.content);
+      recordUserMessage({ userId, conversationId, content: entry.content });
 
       const atts = entry.attachmentIds ?? [];
       if (atts.length > 0) {
@@ -202,7 +221,7 @@ export async function handleUserMessage(params: {
 
     const sendSegment = (idx: number) => {
       if (sentSegments.has(idx)) return;
-      if (isInterrupted(conversationId)) return; // new message arrived, grace expired
+      if (isInterrupted(conversationId, genStartedAt)) return; // new message arrived, grace expired
       const content = segments.get(idx);
       if (content) {
         sentSegments.add(idx);
@@ -217,7 +236,7 @@ export async function handleUserMessage(params: {
 
     for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta)) {
       // Check if new message arrived and grace period expired
-      if (isInterrupted(conversationId)) {
+      if (isInterrupted(conversationId, genStartedAt)) {
         console.log(`[chat] interrupted by new message, stopping generation`);
         break;
       }
@@ -280,7 +299,7 @@ export async function handleUserMessage(params: {
       sendSegment(idx);
     }
 
-    const wasInterrupted = interruptSignals.has(conversationId);
+    const wasInterrupted = hasFreshInterrupt(conversationId, genStartedAt);
     if (wasInterrupted) {
       console.log(`[chat] → interrupted, sent ${sentSegments.size}/${segments.size} segments`);
     } else {
@@ -293,6 +312,7 @@ export async function handleUserMessage(params: {
       if (!content) continue;
       const segMsgId = idx === 0 ? messageId : randomUUID();
       insertMessage(segMsgId, conversationId, 'bot', botId, content, idx);
+      recordBotMessage({ botId, conversationId, content });
     }
 
     // Update conversation sender only if we actually sent something
@@ -358,6 +378,6 @@ export async function handleUserMessage(params: {
     throw err;
   }
   } finally {
-    endTyping(conversationId, replyFn);
+    endTyping(conversationId, replyFn, genStartedAt);
   }
 }

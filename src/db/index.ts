@@ -89,14 +89,6 @@ function runMigrations(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_type, created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_model ON audit_log(model, created_at);
 
-    CREATE TABLE IF NOT EXISTS debounce_buffer (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      conversation_id TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_debounce_conv ON debounce_buffer(conversation_id);
   `);
 
   // Versioned migrations (PRAGMA user_version is per-DB)
@@ -163,5 +155,13 @@ function runMigrations(db: Database): void {
     // SQLite doesn't let us DROP NOT NULL, so the application layer will pass ''
     // (empty string) — which satisfies the existing NOT NULL constraint.
     db.exec('PRAGMA user_version = 4');
+  }
+
+  // v5: drop the debounce_buffer table — the in-memory debounce state is the
+  // source of truth now and the SQL writes were never read back.
+  if (userVersion < 5) {
+    db.exec(`DROP INDEX IF EXISTS idx_debounce_conv`);
+    db.exec(`DROP TABLE IF EXISTS debounce_buffer`);
+    db.exec('PRAGMA user_version = 5');
   }
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BubbleBored · 待名</title>
+  <title>PendingBot · 待名</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/tokens.css">
@@ -14,7 +14,7 @@
     <aside id="sidebar">
       <div class="sidebar-top">
         <div class="logo">
-          BubbleBored
+          PendingBot
           <span id="ws-status" class="status-dot" title="连接状态"></span>
         </div>
 
@@ -71,7 +71,10 @@
 
       <div id="chat-view" style="display:none">
         <div id="chat-header">
-          <span id="chat-title"></span>
+          <div id="chat-title-wrap">
+            <span id="chat-title"></span>
+            <span id="chat-typing" hidden>正在输入<span class="typing-ellipsis"><i>.</i><i>.</i><i>.</i></span></span>
+          </div>
           <span id="chat-bot" class="chat-bot-tag"></span>
           <button class="chat-action" onclick="renameCurrentConversation()" title="重命名">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

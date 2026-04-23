@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { configManager } from '../config/loader';
 import {
   listBots, listConversationsByBot, findConversationById,
-  getMessages,
+  getMessages, countMessages,
 } from '../db/queries';
 import { reviewEvents, checkAndTriggerReview, getPendingReviews } from '../core/review';
 import { messageBus } from '../bus/router';
@@ -22,18 +22,15 @@ reviewRoutes.get('/bots', (c) => {
       review = configManager.getBotConfig(b.id).review;
     } catch {}
 
-    const conversations = listConversationsByBot(b.id).map(conv => {
-      const msgs = getMessages(conv.id, 999);
-      return {
-        id: conv.id,
-        title: conv.title,
-        user_name: conv.user_name,
-        last_activity_at: conv.last_activity_at,
-        round_count: conv.round_count ?? 0,
-        msg_count: msgs.length,
-        has_pending: pending.has(conv.id),
-      };
-    });
+    const conversations = listConversationsByBot(b.id).map(conv => ({
+      id: conv.id,
+      title: conv.title,
+      user_name: conv.user_name,
+      last_activity_at: conv.last_activity_at,
+      round_count: conv.round_count ?? 0,
+      msg_count: countMessages(conv.id),
+      has_pending: pending.has(conv.id),
+    }));
 
     return {
       id: b.id,
@@ -52,8 +49,7 @@ reviewRoutes.post('/trigger/:conversationId', async (c) => {
   const conv = findConversationById(conversationId);
   if (!conv) return c.json({ error: 'conversation not found' }, 404);
 
-  const msgs = getMessages(conv.id, 999);
-  if (msgs.length < 2) {
+  if (countMessages(conv.id) < 2) {
     return c.json({ error: 'not enough messages to review (need at least 2)' }, 400);
   }
 

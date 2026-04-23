@@ -9,10 +9,6 @@ export function noteTypingTick(conversationId: string): void {
   lastTickAt.set(conversationId, Date.now());
 }
 
-export function lastTypingAt(conversationId: string): number {
-  return lastTickAt.get(conversationId) ?? 0;
-}
-
 // Has the user typed anything strictly after `since` (ms epoch)?
 export function typedSince(conversationId: string, since: number): boolean {
   const t = lastTickAt.get(conversationId);
