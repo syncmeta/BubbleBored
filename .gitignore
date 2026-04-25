@@ -1,25 +1,26 @@
 # Dependencies
-node_modules/
+main/node_modules/
 
 # Build output
-dist/
+main/dist/
 
 # SQLite database files
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
+main/data/*.sqlite
+main/data/*.sqlite-shm
+main/data/*.sqlite-wal
 
 # Environment variables
-.env
+main/.env
 
 # macOS
 .DS_Store
 
 # Bun
-bun.lock
+main/bun.lock
 
 # Claude Code
 .claude/
 
-bp-bubblebored.html
-*.pdf
+# Business plan / pitch deck exports
+docs/bp-bubblebored.html
+docs/*.pdf

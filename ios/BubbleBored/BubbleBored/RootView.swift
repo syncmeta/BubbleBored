@@ -7,7 +7,6 @@ struct RootView: View {
     @State private var selection: String?
     @State private var showSettings = false
     @State private var showNewChat = false
-    @State private var firstRunPulse = false
 
     var body: some View {
         Group {
@@ -74,83 +73,33 @@ struct RootView: View {
     @ViewBuilder
     private var firstRun: some View {
         ZStack {
-            // Warm canvas with a soft radial glow.
             Theme.Palette.canvas.ignoresSafeArea()
-            RadialGradient(
-                colors: [Theme.Palette.accent.opacity(0.18), .clear],
-                center: .init(x: 0.5, y: 0.35),
-                startRadius: 10,
-                endRadius: 360
-            )
-            .ignoresSafeArea()
 
-            VStack(spacing: 28) {
+            VStack {
                 Spacer()
 
-                // Animated bubble mark.
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Theme.Palette.accent,
-                                    Theme.Palette.accent.opacity(0.75)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 92, height: 92)
-                        .shadow(color: Theme.Palette.accent.opacity(0.35),
-                                radius: 24, y: 8)
-                        .scaleEffect(firstRunPulse ? 1.03 : 1.0)
-                        .animation(
-                            .easeInOut(duration: 2.6).repeatForever(autoreverses: true),
-                            value: firstRunPulse
-                        )
-
-                    Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                        .font(.system(size: 36, weight: .regular))
-                        .foregroundStyle(.white)
-                }
-
-                VStack(spacing: 10) {
-                    Text("PendingBot")
-                        .font(Theme.Fonts.serif(size: 34, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-
-                    Text("给自己养一个主动的朋友")
-                        .font(Theme.Fonts.serif(size: 17, weight: .regular))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .italic()
-                }
+                Image("LaunchLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 120, height: 120)
 
                 Spacer()
 
                 Button {
                     showSettings = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Text("开始配置")
-                            .font(Theme.Fonts.rounded(size: 16, weight: .semibold))
-                        Image(systemName: "arrow.forward")
-                            .font(.system(size: 13, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 14)
-                    .background(
-                        Capsule().fill(Theme.Palette.accent)
-                    )
-                    .shadow(color: Theme.Palette.accent.opacity(0.35),
-                            radius: 12, y: 4)
+                    Image(systemName: "arrow.forward")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .background(Circle().fill(Theme.Palette.accent))
+                        .shadow(color: Theme.Palette.accent.opacity(0.35),
+                                radius: 12, y: 4)
                 }
                 .buttonStyle(.plain)
-                .padding(.bottom, 48)
+                .padding(.bottom, 56)
             }
-            .padding(.horizontal, 32)
         }
-        .onAppear { firstRunPulse = true }
     }
 
     // ── empty detail (split view, nothing selected) ─────────────────────────

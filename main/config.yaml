@@ -3,7 +3,7 @@ server:
   host: "0.0.0.0"
 
 openrouter:
-  defaultModel: "x-ai/grok-4.20"
+  defaultModel: "anthropic/claude-opus-4.6"
   debounceModel: "openrouter/free"
   reviewModel: "x-ai/grok-4.20"
   surfingModel: "x-ai/grok-4.20"

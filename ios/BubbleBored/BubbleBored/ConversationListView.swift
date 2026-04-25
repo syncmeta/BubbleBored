@@ -30,13 +30,16 @@ struct ConversationListView: View {
                     }
                 } else {
                     ForEach(model.filteredConversations) { conv in
-                        row(for: conv)
+                        row(for: conv, selected: selection == conv.id)
                             .tag(conv.id as String?)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowBackground(
-                                selection == conv.id ? Theme.Palette.surfaceMuted : Color.clear
-                            )
-                            .listRowSeparatorTint(Theme.Palette.hairline)
+                            .listRowInsets(EdgeInsets(
+                                top: 5,
+                                leading: Theme.Metrics.gutter,
+                                bottom: 5,
+                                trailing: Theme.Metrics.gutter
+                            ))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) {
                                     Task { await model.delete(conversationID: conv.id) }
@@ -134,7 +137,7 @@ struct ConversationListView: View {
 
     // ── row ─────────────────────────────────────────────────────────────────
 
-    private func row(for conv: Conversation) -> some View {
+    private func row(for conv: Conversation, selected: Bool) -> some View {
         let botName = model.bot(conv.bot_id)?.name ?? conv.bot_name ?? conv.bot_id
         let preview = lastMessagePreview(for: conv.id)
 
@@ -176,7 +179,17 @@ struct ConversationListView: View {
                 }
             }
         }
-        .contentShape(Rectangle())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(selected ? Theme.Palette.surfaceMuted : Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
     }
 
     private func lastMessagePreview(for convID: String) -> String? {
