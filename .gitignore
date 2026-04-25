@@ -20,7 +20,3 @@ main/bun.lock
 
 # Claude Code
 .claude/
-
-# Business plan / pitch deck exports
-docs/bp-bubblebored.html
-docs/*.pdf
