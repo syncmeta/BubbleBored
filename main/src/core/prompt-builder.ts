@@ -2,6 +2,7 @@ import { configManager } from '../config/loader';
 import { getMessages, getAttachmentsForMessages, type AttachmentRow } from '../db/queries';
 import { annotateMessage } from './time';
 import { readAttachmentFile } from './attachments';
+import { buildPerceptionBlock } from './perception';
 import type { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/resources/chat/completions';
 
 // Only attach the N most recent image-bearing user messages inline; older
@@ -32,6 +33,16 @@ export async function buildPrompt(params: {
   }
   if (params.extraContext) {
     system += '\n\n' + params.extraContext;
+  }
+
+  // Append the AI-generated perception block last so the model treats it as
+  // ambient ground rather than primary instruction. The block is best-effort
+  // — failures degrade silently to no perception.
+  try {
+    const perception = await buildPerceptionBlock({ conversationId: params.conversationId });
+    if (perception) system += '\n\n' + perception;
+  } catch (e: any) {
+    console.warn('[prompt] perception build failed:', e?.message ?? e);
   }
 
   // Get history messages with time annotations

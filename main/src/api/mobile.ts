@@ -71,7 +71,7 @@ mobileApiRoutes.get('/conversations', (c) => {
   if (!channelUserId) return c.json({ error: 'userId required' }, 400);
   const user = findUserByChannel(CHANNEL, channelUserId);
   if (!user) return c.json([]);
-  return c.json(listConversationsByUser(user.id));
+  return c.json(listConversationsByUser(user.id, 'message'));
 });
 
 mobileApiRoutes.post('/conversations', async (c) => {

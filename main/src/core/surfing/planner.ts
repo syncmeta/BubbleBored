@@ -83,7 +83,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutput> {
   // (c) Cross-conversation snapshot of same user with same bot
   let crossText = '';
   try {
-    const allConvs = listConversationsByUser(userId);
+    const allConvs = listConversationsByUser(userId, 'message');
     const others = allConvs
       .filter((c: any) => c.bot_id === botId && c.id !== conversationId)
       .slice(0, CROSS_CONV_LIMIT);

@@ -30,6 +30,14 @@
         </div>
       </div>
 
+      <div id="feature-tabs" class="feature-tabs" role="tablist">
+        <button class="feature-tab active" data-tab="message" role="tab"><span>消息</span></button>
+        <button class="feature-tab" data-tab="surf" role="tab"><span>冲浪</span></button>
+        <button class="feature-tab" data-tab="review" role="tab"><span>回顾</span></button>
+        <button class="feature-tab" data-tab="debate" role="tab"><span>议论</span></button>
+        <button class="feature-tab" data-tab="portrait" role="tab"><span>画像</span></button>
+        <button class="feature-tab" data-tab="me" role="tab"><span>你</span></button>
+      </div>
       <div id="bot-filter" class="bot-filter"></div>
       <nav id="conv-list"></nav>
 
@@ -66,7 +74,177 @@
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
           </svg>
         </div>
-        <p>选个对话，或者开个新的</p>
+        <p id="empty-state-text">选个对话，或者开个新的</p>
+      </div>
+
+      <!-- Tab-specific placeholder views (画像 / 冲浪 / 回顾 still pending) -->
+      <div id="placeholder-view" style="display:none">
+        <div class="empty-icon">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="M9 8h6M9 12h6M9 16h3"/>
+          </svg>
+        </div>
+        <p id="placeholder-text">施工中 — 等下一阶段实现</p>
+      </div>
+
+      <!-- 议论 tab — multi-agent group chat. User can't send normal msgs;
+           only inject 辟谣 + trigger next round. -->
+      <div id="debate-view" style="display:none">
+        <div id="debate-header">
+          <div id="debate-title-wrap">
+            <span id="debate-title"></span>
+            <span id="debate-meta"></span>
+          </div>
+          <button class="chat-action" id="debate-edit-btn" title="改设置" onclick="openDebateEditor()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+            </svg>
+          </button>
+          <button class="chat-action danger" onclick="deleteCurrentDebate()" title="删除">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="messages-scroll">
+          <div id="debate-messages"></div>
+        </div>
+        <div id="debate-input-area">
+          <div class="input-outer">
+            <div class="input-wrap">
+              <textarea id="debate-clarify-input" placeholder="辟谣 / 注入观点（可选）" rows="1"></textarea>
+              <button id="debate-inject-btn" class="btn-soft" onclick="injectDebateClarification()" title="注入这段并自动开下一轮">注入并下一轮</button>
+              <button id="debate-round-btn" onclick="runDebateRoundClick()" aria-label="下一轮议论">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/>
+                  <path d="M21 3v5h-5"/>
+                  <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/>
+                  <path d="M3 21v-5h5"/>
+                </svg>
+              </button>
+            </div>
+            <div id="debate-status" class="debate-status"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 画像 tab — pick a source conv, generate 5 kinds of imagined assets,
+           chat with the generator about its imagination. -->
+      <div id="portrait-view" style="display:none">
+        <div id="portrait-header">
+          <div id="portrait-title-wrap">
+            <span id="portrait-title"></span>
+            <span id="portrait-meta"></span>
+          </div>
+          <button class="chat-action danger" onclick="deleteCurrentPortrait()" title="删除">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="portrait-body">
+          <div class="portrait-kinds">
+            <button class="portrait-kind-btn" data-kind="moments">朋友圈</button>
+            <button class="portrait-kind-btn" data-kind="memos">备忘录</button>
+            <button class="portrait-kind-btn" data-kind="schedule">日程</button>
+            <button class="portrait-kind-btn" data-kind="alarms">闹钟</button>
+            <button class="portrait-kind-btn" data-kind="bills">账单</button>
+            <label class="portrait-with-image">
+              <input type="checkbox" id="portrait-with-image">
+              <span>含图</span>
+            </label>
+          </div>
+          <div id="portrait-feed" class="portrait-feed"></div>
+        </div>
+        <div id="portrait-input-area">
+          <div class="input-wrap">
+            <textarea id="portrait-chat-input" placeholder="跟生成画像的 AI 聊几句…" rows="1"></textarea>
+            <button id="portrait-chat-send" onclick="sendPortraitChat()">发送</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: create new portrait conv (pick source) -->
+      <div id="portrait-modal" class="modal-overlay" style="display:none" onclick="closePortraitModal(event)">
+        <div class="modal-card" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <span>新画像</span>
+            <button class="modal-close" onclick="closePortraitModal()" aria-label="关闭">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="modal-label">基于哪个消息会话？</label>
+            <div id="portrait-source-list" class="source-list"></div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" onclick="closePortraitModal()">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: create / edit debate -->
+      <div id="debate-modal" class="modal-overlay" style="display:none" onclick="closeDebateModal(event)">
+        <div class="modal-card" onclick="event.stopPropagation()">
+          <div class="modal-head">
+            <span id="debate-modal-title">新议论</span>
+            <button class="modal-close" onclick="closeDebateModal()" aria-label="关闭">×</button>
+          </div>
+          <div class="modal-body">
+            <label class="modal-label">议题（可空，默认对最近聊天的整体观感）</label>
+            <textarea id="debate-modal-topic" rows="2" placeholder="比如：这个产品立意"></textarea>
+            <label class="modal-label">参与模型（至少 2 个）</label>
+            <div id="debate-modal-models" class="model-picker"></div>
+            <a class="modal-link" onclick="window.location.hash='#me-models'; switchTab('me')">管理模型库 →</a>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" onclick="closeDebateModal()">取消</button>
+            <button class="btn-primary" id="debate-modal-submit" onclick="submitDebateModal()">创建议论</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 「你」tab dashboard -->
+      <div id="me-view" style="display:none">
+        <div class="me-scroll">
+          <section class="me-section">
+            <h3>基本信息</h3>
+            <div class="me-form">
+              <label>昵称
+                <input type="text" id="me-display-name" maxlength="40" placeholder="昵称">
+              </label>
+              <label>简介 / 让 AI 一眼读懂你
+                <textarea id="me-bio" rows="3" placeholder="一两句话介绍你自己"></textarea>
+              </label>
+              <button class="btn-primary" id="me-save-profile" onclick="saveMyProfile()">保存</button>
+              <span id="me-profile-saved" class="me-saved" hidden>已保存 ✓</span>
+            </div>
+          </section>
+
+          <section class="me-section" id="me-models">
+            <h3>模型提供商 <span class="me-section-hint">用于「议论」选模型；总开关控制是否参与</span></h3>
+            <div id="me-provider-models" class="model-picker"></div>
+            <div class="me-add-model">
+              <input type="text" id="me-new-provider" placeholder="provider（anthropic / openai / ...）">
+              <input type="text" id="me-new-slug" placeholder="OpenRouter slug">
+              <input type="text" id="me-new-name" placeholder="显示名">
+              <button class="btn-soft" onclick="addProviderModel()">添加</button>
+            </div>
+          </section>
+
+          <section class="me-section">
+            <h3>AI 收藏 <span class="me-section-hint">AI 觉得你值得读的东西，也可手动添加</span></h3>
+            <div id="me-picks-list" class="picks-list"></div>
+            <details class="me-add-pick">
+              <summary>手动添加一条</summary>
+              <div class="me-form">
+                <label>标题<input type="text" id="me-pick-title"></label>
+                <label>URL（可空）<input type="text" id="me-pick-url"></label>
+                <label>简介（可空）<textarea id="me-pick-summary" rows="2"></textarea></label>
+                <button class="btn-soft" onclick="addManualPick()">添加</button>
+              </div>
+            </details>
+          </section>
+        </div>
       </div>
 
       <div id="chat-view" style="display:none">

@@ -1,11 +1,18 @@
 // PendingBot Web Client — multi-conversation
 
+// Top-level feature tabs. message is the existing chat experience; the rest
+// are independent activities populated in later phases.
+const FEATURE_TABS = ['message', 'surf', 'review', 'debate', 'portrait', 'me'];
+
 const state = {
   userId: localStorage.getItem('bb_userId') || generateId(),
   bots: [],                      // [{ id, display_name, ... }]
   botsById: new Map(),
-  conversations: [],             // [{ id, bot_id, title, last_activity_at, ... }]  sorted DESC
+  // Conversations per feature tab (only the active tab is loaded; others are
+  // lazy-loaded on tab switch). Keyed by tab id.
+  convsByTab: { message: [], surf: [], review: [], debate: [], portrait: [] },
   currentConversationId: null,
+  currentTab: localStorage.getItem('bb_currentTab') || 'message',
   botFilter: localStorage.getItem('bb_botFilter') || '',  // '' = all bots
   ws: null,
   reconnectTimer: null,
@@ -37,14 +44,24 @@ function generateId() {
   return 'u_' + Math.random().toString(36).slice(2, 10);
 }
 
+// Sugar: the active tab's conversation list. Many call sites still want the
+// "current" view of conversations without caring about feature partitioning.
+Object.defineProperty(state, 'conversations', {
+  get() { return state.convsByTab[state.currentTab] || []; },
+  set(v) { state.convsByTab[state.currentTab] = v; },
+});
+
 async function init() {
   await loadBots();
+  setupFeatureTabs();
   await loadConversations();
   renderBotFilter();
   renderConvList();
   updateNewChatLabel();
-  // Auto-select most recent conversation (matches what users expect)
-  if (state.conversations.length > 0) {
+  applyTabView();
+  // Auto-select most recent conversation in the active tab (only meaningful
+  // for the message tab; other tabs land on the placeholder anyway).
+  if (state.currentTab === 'message' && state.conversations.length > 0) {
     selectConversation(state.conversations[0].id);
   }
   connectWs();
@@ -52,6 +69,94 @@ async function init() {
   setupInput();
   setupGlobalHandlers();
   startRelativeTimeTick();
+}
+
+function setupFeatureTabs() {
+  const root = document.getElementById('feature-tabs');
+  if (!root) return;
+  for (const btn of root.querySelectorAll('.feature-tab')) {
+    btn.classList.toggle('active', btn.dataset.tab === state.currentTab);
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  }
+}
+
+async function switchTab(tabId) {
+  if (!FEATURE_TABS.includes(tabId)) return;
+  if (tabId === state.currentTab) return;
+  state.currentTab = tabId;
+  localStorage.setItem('bb_currentTab', tabId);
+  // Clear selection on tab change — convId is tab-scoped
+  state.currentConversationId = null;
+  for (const btn of document.querySelectorAll('.feature-tab')) {
+    btn.classList.toggle('active', btn.dataset.tab === tabId);
+  }
+  await loadConversations();
+  renderBotFilter();
+  renderConvList();
+  updateNewChatLabel();
+  applyTabView();
+}
+
+// Show the right main pane for the active tab. The chat-view stays alive
+// behind the placeholder so reselecting message-tab conversations is instant.
+function applyTabView() {
+  const empty = document.getElementById('empty-state');
+  const chat = document.getElementById('chat-view');
+  const debate = document.getElementById('debate-view');
+  const placeholder = document.getElementById('placeholder-view');
+  const meView = document.getElementById('me-view');
+
+  // Default: hide all
+  if (empty) empty.style.display = 'none';
+  if (chat) chat.style.display = 'none';
+  if (debate) debate.style.display = 'none';
+  if (placeholder) placeholder.style.display = 'none';
+  if (meView) meView.style.display = 'none';
+
+  if (state.currentTab === 'me') {
+    if (meView) meView.style.display = 'flex';
+    return;
+  }
+  if (state.currentTab === 'message') {
+    if (state.currentConversationId) {
+      if (chat) chat.style.display = 'flex';
+    } else {
+      if (empty) empty.style.display = 'flex';
+    }
+    return;
+  }
+  if (state.currentTab === 'debate') {
+    if (state.currentConversationId) {
+      if (debate) debate.style.display = 'flex';
+    } else {
+      if (empty) empty.style.display = 'flex';
+      const txt = document.getElementById('empty-state-text');
+      if (txt) txt.textContent = '点「新对话」开启一场议论';
+    }
+    return;
+  }
+  // Other tabs (surf / review / portrait): placeholder
+  if (state.currentConversationId) {
+    if (placeholder) placeholder.style.display = 'flex';
+    const text = document.getElementById('placeholder-text');
+    if (text) {
+      text.textContent = ({
+        surf: '冲浪独立流将在后续阶段实现 — 该会话已记录。',
+        review: '回顾独立流将在后续阶段实现 — 该会话已记录。',
+        portrait: '画像将在 Phase 2 实现 — 选源会话、生成多种数字痕迹。',
+      })[state.currentTab] ?? '施工中';
+    }
+  } else {
+    if (empty) empty.style.display = 'flex';
+    const txt = document.getElementById('empty-state-text');
+    if (txt) {
+      txt.textContent = ({
+        surf: '点「新对话」开启一段冲浪',
+        review: '点「新对话」开启一次回顾',
+        portrait: '点「新对话」选源会话生成画像',
+      })[state.currentTab] ?? '选个对话，或者开个新的';
+    }
+  }
 }
 
 // ── Bots ──
@@ -88,8 +193,13 @@ function botAvatarHTML(botId) {
 // ── Conversations ──
 
 async function loadConversations() {
+  // 'me' tab has no conversations
+  if (state.currentTab === 'me') {
+    return;
+  }
   try {
-    const res = await fetch(`/api/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const url = `/api/conversations?userId=${encodeURIComponent(state.userId)}&feature=${state.currentTab}`;
+    const res = await fetch(url);
     const convs = await res.json();
     state.conversations = Array.isArray(convs) ? convs : [];
   } catch (e) {
@@ -248,14 +358,20 @@ function selectConversation(convId) {
   if (!conv) return;
   state.currentConversationId = convId;
 
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'flex';
-
   // Update active state in sidebar
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
 
+  if (state.currentTab !== 'message') {
+    // Non-message tabs land on the placeholder for now; their full UI lands
+    // in the per-feature phase.
+    applyTabView();
+    return;
+  }
+
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'flex';
   updateChatHeader(conv);
   loadHistory(convId);
   refreshActionBusyState();
@@ -330,10 +446,11 @@ function onNewChatClick(e) {
 
 async function createConversation(botId) {
   try {
+    const featureType = state.currentTab === 'me' ? 'message' : state.currentTab;
     const res = await fetch('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: state.userId, botId }),
+      body: JSON.stringify({ userId: state.userId, botId, featureType }),
     });
     const conv = await res.json();
     if (!conv?.id) {
@@ -1598,4 +1715,1097 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s ?? '';
   return d.innerHTML;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+//  议论 (Debate) — multi-agent group chat, user can only inject 辟谣
+// ──────────────────────────────────────────────────────────────────────────
+
+const debateState = {
+  providerModels: [],            // [{ id, provider, slug, display_name, enabled }]
+  currentDebate: null,           // hydrated debate conv (with topic + model_slugs)
+  pickedModelSlugs: new Set(),   // for the modal
+  busyConvIds: new Set(),
+  modalMode: 'create',           // 'create' | 'edit'
+  es: null,
+};
+
+// Stable color from a model slug (mirrors botColor()).
+function modelColor(slug) {
+  let h = 0;
+  for (let i = 0; i < (slug || '').length; i++) h = (h * 31 + slug.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  return `hsl(${hue}, 60%, 55%)`;
+}
+
+function modelDisplayName(slug) {
+  const found = debateState.providerModels.find(m => m.slug === slug);
+  return found?.display_name ?? slug;
+}
+
+async function loadProviderModels() {
+  try {
+    const res = await fetch('/api/debate/provider-models');
+    debateState.providerModels = await res.json();
+  } catch (e) {
+    console.error('load provider models error:', e);
+    debateState.providerModels = [];
+  }
+}
+
+// Hook into loadConversations: when on the debate tab, hit the debate-specific
+// list endpoint that hydrates topic + model_slugs.
+async function loadDebateConversations() {
+  try {
+    const res = await fetch(`/api/debate/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const list = await res.json();
+    state.convsByTab.debate = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.error('load debate convs error:', e);
+    state.convsByTab.debate = [];
+  }
+}
+
+function renderDebateConvItem(conv) {
+  const el = document.createElement('div');
+  el.className = 'conv-item';
+  el.dataset.convId = conv.id;
+  if (conv.id === state.currentConversationId) el.classList.add('active');
+
+  const title = conv.title || '议论';
+  const subtitle = conv.topic ? esc(conv.topic) : '（无议题）';
+  const modelDots = (conv.model_slugs ?? []).slice(0, 5).map(slug =>
+    `<span class="conv-model-dot" style="background:${modelColor(slug)}" title="${esc(slug)}"></span>`
+  ).join('');
+
+  el.innerHTML = `
+    <span class="conv-body">
+      <span class="conv-title">${esc(title)}</span>
+      <span class="conv-subtitle">${subtitle}</span>
+      <span class="conv-debate-meta">${modelDots} <span>· ${conv.round_count_debate ?? 0} 轮</span></span>
+    </span>
+    <span class="conv-actions">
+      <button title="删除" class="danger" data-act="delete">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        </svg>
+      </button>
+    </span>
+  `;
+
+  el.addEventListener('click', (e) => {
+    const actBtn = e.target.closest('button[data-act]');
+    if (actBtn) {
+      e.stopPropagation();
+      if (actBtn.dataset.act === 'delete') deleteDebateConv(conv.id);
+      return;
+    }
+    selectDebateConv(conv.id);
+  });
+  return el;
+}
+
+async function selectDebateConv(convId) {
+  state.currentConversationId = convId;
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.convId === convId);
+  });
+
+  // Hide other panes, show debate-view
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('placeholder-view').style.display = 'none';
+  document.getElementById('me-view').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('debate-view').style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/debate/conversations/${convId}`);
+    debateState.currentDebate = await res.json();
+  } catch {
+    debateState.currentDebate = null;
+  }
+  updateDebateHeader();
+
+  // Load history
+  try {
+    const res = await fetch(`/api/debate/conversations/${convId}/messages`);
+    const msgs = await res.json();
+    const root = document.getElementById('debate-messages');
+    root.innerHTML = '';
+    for (const m of msgs) appendDebateMessage(m);
+    scrollDebateToBottom();
+  } catch (e) {
+    console.error('debate history load:', e);
+  }
+}
+
+function updateDebateHeader() {
+  const d = debateState.currentDebate;
+  const title = document.getElementById('debate-title');
+  const meta = document.getElementById('debate-meta');
+  if (!d) {
+    title.textContent = '议论';
+    meta.textContent = '';
+    return;
+  }
+  title.textContent = d.topic || d.title || '议论';
+  const modelNames = (d.model_slugs ?? []).map(modelDisplayName).join(' · ');
+  meta.textContent = `${(d.model_slugs ?? []).length} 个模型 · ${d.round_count_debate ?? 0} 轮 · ${modelNames}`;
+}
+
+function appendDebateMessage(m) {
+  const root = document.getElementById('debate-messages');
+  if (!root) return;
+  const el = document.createElement('div');
+
+  // Distinguish row kinds by sender_type. Debater messages are tagged with
+  // their slug; clarify rows are user injections.
+  const senderType = m.sender_type || (m.metadata?.sender_kind === 'clarify' ? 'user' : 'debater');
+  if (senderType === 'user' || m.metadata?.sender_kind === 'clarify') {
+    el.className = 'debate-msg clarify';
+    el.textContent = m.content;
+  } else {
+    const slug = m.sender_id || m.metadata?.slug || '';
+    const name = m.metadata?.display_name || modelDisplayName(slug);
+    el.className = 'debate-msg debater';
+    el.innerHTML = `
+      <div class="debate-who">
+        <span class="debate-who-dot" style="background:${modelColor(slug)}"></span>
+        <span>${esc(name)}</span>
+      </div>
+      <div class="debate-body">${esc(m.content)}</div>
+    `;
+  }
+  root.appendChild(el);
+}
+
+function scrollDebateToBottom() {
+  const root = document.getElementById('debate-messages');
+  if (!root) return;
+  const scroller = root.parentElement;
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
+async function runDebateRoundClick() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  const btn = document.getElementById('debate-round-btn');
+  btn.disabled = true;
+  btn.classList.add('busy');
+  setDebateStatus('议论中…');
+  try {
+    await fetch(`/api/debate/round/${convId}`, { method: 'POST' });
+    // Server fires messages over WS + a `done` event over SSE; we'll
+    // re-enable the button on `done`.
+  } catch (e) {
+    setDebateStatus(`出错：${e.message}`);
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+}
+
+async function injectDebateClarification() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  const input = document.getElementById('debate-clarify-input');
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = '';
+  const btn = document.getElementById('debate-round-btn');
+  btn.disabled = true;
+  btn.classList.add('busy');
+  setDebateStatus('注入并开始下一轮…');
+  try {
+    await fetch(`/api/debate/inject/${convId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, autoRound: true }),
+    });
+  } catch (e) {
+    setDebateStatus(`出错：${e.message}`);
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+}
+
+function setDebateStatus(text) {
+  const el = document.getElementById('debate-status');
+  if (el) el.textContent = text || '';
+}
+
+async function deleteDebateConv(convId) {
+  if (!confirm('删除这场议论？')) return;
+  try {
+    await fetch(`/api/debate/conversations/${convId}`, { method: 'DELETE' });
+    state.convsByTab.debate = state.convsByTab.debate.filter(c => c.id !== convId);
+    if (state.currentConversationId === convId) {
+      state.currentConversationId = null;
+      applyTabView();
+    }
+    renderConvList();
+  } catch (e) {
+    alert('删除失败: ' + e.message);
+  }
+}
+
+function deleteCurrentDebate() {
+  if (state.currentConversationId) deleteDebateConv(state.currentConversationId);
+}
+
+// ── Modal: create / edit debate ──
+
+async function openDebateModal(mode = 'create', existingDebate = null) {
+  await loadProviderModels();
+  debateState.modalMode = mode;
+  const title = document.getElementById('debate-modal-title');
+  const submitBtn = document.getElementById('debate-modal-submit');
+  const topicEl = document.getElementById('debate-modal-topic');
+
+  if (mode === 'edit' && existingDebate) {
+    title.textContent = '改设置';
+    submitBtn.textContent = '保存';
+    topicEl.value = existingDebate.topic || '';
+    debateState.pickedModelSlugs = new Set(existingDebate.model_slugs || []);
+  } else {
+    title.textContent = '新议论';
+    submitBtn.textContent = '创建议论';
+    topicEl.value = '';
+    // Pre-pick all enabled models for first-run convenience
+    debateState.pickedModelSlugs = new Set(
+      debateState.providerModels.filter(m => m.enabled).map(m => m.slug)
+    );
+  }
+
+  renderDebateModalModels();
+  document.getElementById('debate-modal').style.display = 'flex';
+}
+
+function renderDebateModalModels() {
+  const root = document.getElementById('debate-modal-models');
+  if (!root) return;
+  if (debateState.providerModels.length === 0) {
+    root.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12.5px;text-align:center">还没有模型，先去「你」tab 添加。</div>';
+    return;
+  }
+  root.innerHTML = debateState.providerModels.map(m => {
+    const checked = debateState.pickedModelSlugs.has(m.slug) ? 'checked' : '';
+    return `
+      <label class="model-picker-row">
+        <input type="checkbox" data-slug="${esc(m.slug)}" ${checked}>
+        <span class="mp-name">${esc(m.display_name)}</span>
+        <span class="mp-slug">${esc(m.slug)}</span>
+        <span class="mp-provider">${esc(m.provider)}</span>
+      </label>
+    `;
+  }).join('');
+  root.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const slug = cb.dataset.slug;
+      if (cb.checked) debateState.pickedModelSlugs.add(slug);
+      else debateState.pickedModelSlugs.delete(slug);
+    });
+  });
+}
+
+function closeDebateModal(e) {
+  if (e && e.target.id !== 'debate-modal') return;
+  document.getElementById('debate-modal').style.display = 'none';
+}
+
+async function submitDebateModal() {
+  const slugs = Array.from(debateState.pickedModelSlugs);
+  if (slugs.length < 2) {
+    alert('至少勾两个模型');
+    return;
+  }
+  const topic = document.getElementById('debate-modal-topic').value.trim();
+
+  if (debateState.modalMode === 'edit' && debateState.currentDebate) {
+    // For Phase 1 edit just deletes & recreates; keep simple.
+    alert('暂不支持编辑现有议论，请新建一场');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/debate/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: state.userId,
+        topic: topic || null,
+        modelSlugs: slugs,
+      }),
+    });
+    const data = await res.json();
+    if (!data?.id) {
+      alert('创建失败：' + (data?.error ?? 'unknown'));
+      return;
+    }
+    closeDebateModal();
+    await loadDebateConversations();
+    renderConvList();
+    selectDebateConv(data.id);
+  } catch (e) {
+    alert('创建失败: ' + e.message);
+  }
+}
+
+function openDebateEditor() {
+  if (!debateState.currentDebate) return;
+  openDebateModal('edit', debateState.currentDebate);
+}
+
+// ── Debate SSE ──
+
+function connectDebateEvents() {
+  if (debateState.es) return;
+  debateState.es = new EventSource('/api/debate/events');
+  debateState.es.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.conversationId === state.currentConversationId) {
+        if (data.kind === 'error') setDebateStatus(`⚠️ ${data.content}`);
+        else setDebateStatus(data.content);
+      }
+    } catch {}
+  });
+  debateState.es.addEventListener('done', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const btn = document.getElementById('debate-round-btn');
+      if (state.currentConversationId === data.conversationId) {
+        if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+        setDebateStatus(`Round ${data.round} 完成 · ${data.delivered} 条`);
+        // Refresh round counter on the current debate
+        if (debateState.currentDebate) {
+          debateState.currentDebate.round_count_debate = data.round;
+          updateDebateHeader();
+        }
+      }
+      // Refresh sidebar list to update round counts
+      if (state.currentTab === 'debate') {
+        loadDebateConversations().then(renderConvList);
+      }
+    } catch {}
+  });
+  debateState.es.onerror = () => { /* EventSource auto-reconnects */ };
+}
+
+// ── Hooks into the existing app shell ──
+
+// Patch loadConversations: route debate tab to its own endpoint.
+const __origLoadConversations = loadConversations;
+loadConversations = async function() {
+  if (state.currentTab === 'debate') {
+    await loadDebateConversations();
+    return;
+  }
+  return __origLoadConversations();
+};
+
+// Patch renderConvList: render debate items differently.
+const __origRenderConvList = renderConvList;
+renderConvList = function() {
+  if (state.currentTab !== 'debate') return __origRenderConvList();
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+  const convs = state.conversations;
+  if (convs.length === 0) {
+    list.innerHTML = '<div class="conv-empty">还没有议论<br>点上面「新对话」开启</div>';
+    return;
+  }
+  for (const c of convs) list.appendChild(renderDebateConvItem(c));
+};
+
+// Patch onNewChatClick: open the debate modal instead.
+const __origOnNewChatClick = onNewChatClick;
+onNewChatClick = function(e) {
+  if (state.currentTab === 'debate') {
+    if (e) e.stopPropagation();
+    openDebateModal('create');
+    return;
+  }
+  return __origOnNewChatClick(e);
+};
+
+// Patch selectConversation: route debate convs to selectDebateConv.
+const __origSelectConversation = selectConversation;
+selectConversation = function(convId) {
+  if (state.currentTab === 'debate') {
+    selectDebateConv(convId);
+    return;
+  }
+  __origSelectConversation(convId);
+};
+
+// Patch handleWsMessage so debate messages land in the debate view.
+const __origHandleWsMessage = handleWsMessage;
+handleWsMessage = function(msg) {
+  const kind = msg?.metadata?.sender_kind;
+  if (kind === 'debater' || kind === 'clarify') {
+    if (msg.conversationId === state.currentConversationId && state.currentTab === 'debate') {
+      appendDebateMessage({
+        sender_type: kind === 'clarify' ? 'user' : 'debater',
+        sender_id: msg.metadata?.slug ?? '',
+        content: msg.content,
+        metadata: msg.metadata,
+      });
+      scrollDebateToBottom();
+    }
+    return;
+  }
+  return __origHandleWsMessage(msg);
+};
+
+// Kick off SSE on page load; the connection is cheap and lets the debate view
+// react to round-done even when the user opens the tab later.
+connectDebateEvents();
+
+
+// ──────────────────────────────────────────────────────────────────────────
+//  画像 (Portrait) — pick a source 消息 conv, generate 5 imagined-asset kinds
+// ──────────────────────────────────────────────────────────────────────────
+
+const PORTRAIT_KINDS = ['moments', 'memos', 'schedule', 'alarms', 'bills'];
+const PORTRAIT_KIND_LABELS = {
+  moments: '朋友圈',
+  memos: '备忘录',
+  schedule: '日程',
+  alarms: '闹钟',
+  bills: '账单',
+};
+
+const portraitState = {
+  current: null,            // hydrated portrait conv (with portraits[])
+  busyKinds: new Set(),     // kinds currently generating
+};
+
+async function loadPortraitConversations() {
+  try {
+    const res = await fetch(`/api/portrait/conversations?userId=${encodeURIComponent(state.userId)}`);
+    state.convsByTab.portrait = await res.json();
+    if (!Array.isArray(state.convsByTab.portrait)) state.convsByTab.portrait = [];
+  } catch (e) {
+    console.error('load portrait convs error:', e);
+    state.convsByTab.portrait = [];
+  }
+}
+
+function renderPortraitConvItem(conv) {
+  const el = document.createElement('div');
+  el.className = 'conv-item';
+  el.dataset.convId = conv.id;
+  if (conv.id === state.currentConversationId) el.classList.add('active');
+  const kindBadges = (conv.kinds ?? []).map(k =>
+    `<span class="conv-model-dot" style="background:${kindColor(k)}" title="${esc(PORTRAIT_KIND_LABELS[k] ?? k)}"></span>`
+  ).join('');
+  el.innerHTML = `
+    <span class="conv-body">
+      <span class="conv-title">${esc(conv.title || '画像')}</span>
+      <span class="conv-debate-meta">${kindBadges} <span>· ${conv.portrait_count ?? 0} 项</span></span>
+    </span>
+    <span class="conv-actions">
+      <button title="删除" class="danger" data-act="delete">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        </svg>
+      </button>
+    </span>
+  `;
+  el.addEventListener('click', (e) => {
+    const act = e.target.closest('button[data-act]');
+    if (act) {
+      e.stopPropagation();
+      if (act.dataset.act === 'delete') deletePortraitConv(conv.id);
+      return;
+    }
+    selectPortraitConv(conv.id);
+  });
+  return el;
+}
+
+function kindColor(kind) {
+  return ({
+    moments:  '#3b82f6',
+    memos:    '#f59e0b',
+    schedule: '#10b981',
+    alarms:   '#ef4444',
+    bills:    '#8b5cf6',
+  })[kind] ?? '#64748b';
+}
+
+async function selectPortraitConv(convId) {
+  state.currentConversationId = convId;
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.convId === convId);
+  });
+
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('placeholder-view').style.display = 'none';
+  document.getElementById('me-view').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('debate-view').style.display = 'none';
+  document.getElementById('portrait-view').style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/portrait/conversations/${convId}`);
+    portraitState.current = await res.json();
+  } catch {
+    portraitState.current = null;
+  }
+
+  // Load chat thread
+  try {
+    const res = await fetch(`/api/portrait/conversations/${convId}/messages`);
+    portraitState.current.messages = await res.json();
+  } catch {
+    portraitState.current.messages = [];
+  }
+
+  renderPortraitView();
+}
+
+function renderPortraitView() {
+  const d = portraitState.current;
+  const title = document.getElementById('portrait-title');
+  const meta = document.getElementById('portrait-meta');
+  if (!d) {
+    title.textContent = '画像';
+    meta.textContent = '';
+    return;
+  }
+  title.textContent = d.title || '画像';
+  meta.textContent = `源会话 · ${d.sourceConversationId?.slice(0, 8) ?? '—'} · 已生成 ${(d.portraits ?? []).length} 项`;
+
+  // Re-bind the kind buttons to the active conv
+  document.querySelectorAll('.portrait-kind-btn').forEach(btn => {
+    btn.onclick = () => generatePortraitOfKind(btn.dataset.kind);
+    btn.classList.toggle('busy', portraitState.busyKinds.has(btn.dataset.kind));
+  });
+
+  // Feed: each existing portrait gets a section (most recent first per kind)
+  const feed = document.getElementById('portrait-feed');
+  feed.innerHTML = '';
+  const portraits = d.portraits ?? [];
+  if (portraits.length === 0) {
+    feed.innerHTML = '<div class="conv-empty" style="padding:32px 0">还没有生成任何画像 — 点上面任一卡片来生成</div>';
+  } else {
+    for (const p of portraits) feed.appendChild(renderPortraitSection(p));
+  }
+
+  // Chat thread
+  const thread = document.createElement('div');
+  thread.className = 'portrait-chat-thread';
+  for (const m of (d.messages ?? [])) {
+    const b = document.createElement('div');
+    b.className = `portrait-chat-bubble ${m.sender_type === 'user' ? 'user' : 'bot'}`;
+    b.textContent = m.content;
+    thread.appendChild(b);
+  }
+  feed.appendChild(thread);
+}
+
+function renderPortraitSection(p) {
+  const sec = document.createElement('div');
+  sec.className = 'portrait-section';
+  const items = (p.content?.items) ?? [];
+  const head = document.createElement('div');
+  head.className = 'portrait-section-head';
+  head.innerHTML = `
+    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${kindColor(p.kind)}"></span>
+    <span>${esc(PORTRAIT_KIND_LABELS[p.kind] ?? p.kind)}</span>
+    <span class="ps-when">${esc(new Date(p.created_at * 1000).toLocaleString())}</span>
+    <button data-pid="${esc(p.id)}" data-act="regen">重新生成</button>
+    <button data-pid="${esc(p.id)}" data-act="del">删除</button>
+  `;
+  head.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.act === 'regen') generatePortraitOfKind(p.kind);
+      else if (btn.dataset.act === 'del') deletePortraitAsset(btn.dataset.pid);
+    });
+  });
+  sec.appendChild(head);
+
+  if (p.kind === 'moments') {
+    for (const it of items) {
+      const card = document.createElement('div');
+      card.className = 'pi-card';
+      let html = `
+        <div class="pi-when">${esc(it.posted_relative ?? '')}</div>
+        <div class="pi-text">${esc(it.text ?? '')}</div>
+      `;
+      if (it.image_prompt) {
+        html += `<div class="pi-img-placeholder">[配图：${esc(it.image_prompt)}]</div>`;
+      }
+      if (Array.isArray(it.comments) && it.comments.length > 0) {
+        html += `<div class="pi-comments">` + it.comments.map(c =>
+          `<div><span class="pi-comment-author">${esc(c.author ?? '')}</span>：${esc(c.text ?? '')}</div>`
+        ).join('') + `</div>`;
+      }
+      if (it.ai_note) html += `<div class="pi-ai-note">— AI 备注：${esc(it.ai_note)}</div>`;
+      card.innerHTML = html;
+      sec.appendChild(card);
+    }
+  } else if (p.kind === 'memos') {
+    for (const it of items) {
+      const card = document.createElement('div');
+      card.className = 'pi-memo';
+      let html = `
+        ${it.title ? `<div class="pi-memo-title">${esc(it.title)}</div>` : ''}
+        <div class="pi-text">${esc(it.body ?? '')}</div>
+        ${it.posted_relative ? `<div class="pi-when">${esc(it.posted_relative)}</div>` : ''}
+      `;
+      if (it.image_prompt) html += `<div class="pi-img-placeholder">[图：${esc(it.image_prompt)}]</div>`;
+      if (it.ai_note) html += `<div class="pi-ai-note">— ${esc(it.ai_note)}</div>`;
+      card.innerHTML = html;
+      sec.appendChild(card);
+    }
+  } else if (p.kind === 'schedule') {
+    const wrap = document.createElement('div');
+    wrap.style = 'border:1px solid var(--border-light); border-radius:8px; overflow:hidden;';
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'pi-row';
+      row.innerHTML = `
+        <span class="pi-when">${esc(it.day ?? '')} ${esc(it.when ?? '')}</span>
+        <span class="pi-title">${esc(it.title ?? '')}${it.details ? ` · <span class="pi-extra">${esc(it.details)}</span>` : ''}</span>
+      `;
+      wrap.appendChild(row);
+    }
+    sec.appendChild(wrap);
+  } else if (p.kind === 'alarms') {
+    const wrap = document.createElement('div');
+    wrap.style = 'border:1px solid var(--border-light); border-radius:8px; overflow:hidden;';
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = `pi-row ${it.enabled === false ? 'disabled' : ''}`;
+      row.innerHTML = `
+        <span class="pi-time">${esc(it.time ?? '')}</span>
+        <span class="pi-title">${esc(it.label ?? '')}</span>
+        <span class="pi-extra">${esc(it.repeat ?? '一次性')}</span>
+        <span class="pi-toggle"></span>
+      `;
+      wrap.appendChild(row);
+    }
+    sec.appendChild(wrap);
+  } else if (p.kind === 'bills') {
+    const table = document.createElement('table');
+    table.className = 'pi-bills-table';
+    table.innerHTML = `<thead><tr><th>日期</th><th>商家</th><th>类别</th><th class="pi-amount">金额</th></tr></thead>`;
+    const tbody = document.createElement('tbody');
+    for (const it of items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${esc(it.date ?? '')}</td>
+        <td>${esc(it.merchant ?? '')}${it.note ? ` · <span style="color:var(--text-4);font-size:11px">${esc(it.note)}</span>` : ''}</td>
+        <td><span class="pi-cat">${esc(it.category ?? '其它')}</span></td>
+        <td class="pi-amount">${esc(it.amount ?? '')}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    sec.appendChild(table);
+  }
+
+  return sec;
+}
+
+async function generatePortraitOfKind(kind) {
+  if (!PORTRAIT_KINDS.includes(kind)) return;
+  if (!state.currentConversationId) return;
+  if (portraitState.busyKinds.has(kind)) return;
+
+  portraitState.busyKinds.add(kind);
+  document.querySelectorAll('.portrait-kind-btn').forEach(btn => {
+    if (btn.dataset.kind === kind) btn.classList.add('busy');
+  });
+
+  const withImage = !!document.getElementById('portrait-with-image').checked;
+
+  try {
+    const res = await fetch(`/api/portrait/generate/${state.currentConversationId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, withImage }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('生成失败：' + data.error);
+    } else {
+      // Refresh the portrait view from the server (drops the placeholder)
+      await selectPortraitConv(state.currentConversationId);
+    }
+  } catch (e) {
+    alert('生成失败：' + e.message);
+  } finally {
+    portraitState.busyKinds.delete(kind);
+    document.querySelectorAll('.portrait-kind-btn').forEach(btn => {
+      if (btn.dataset.kind === kind) btn.classList.remove('busy');
+    });
+  }
+}
+
+async function deletePortraitAsset(portraitId) {
+  if (!confirm('删除这一组画像？')) return;
+  try {
+    await fetch(`/api/portrait/portraits/${portraitId}`, { method: 'DELETE' });
+    if (state.currentConversationId) await selectPortraitConv(state.currentConversationId);
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+async function deletePortraitConv(convId) {
+  if (!confirm('删除这个画像会话（含所有生成的画像）？')) return;
+  try {
+    await fetch(`/api/portrait/conversations/${convId}`, { method: 'DELETE' });
+    state.convsByTab.portrait = state.convsByTab.portrait.filter(c => c.id !== convId);
+    if (state.currentConversationId === convId) {
+      state.currentConversationId = null;
+      applyTabView();
+    }
+    renderConvList();
+  } catch (e) { alert('删除失败: ' + e.message); }
+}
+
+function deleteCurrentPortrait() {
+  if (state.currentConversationId) deletePortraitConv(state.currentConversationId);
+}
+
+async function sendPortraitChat() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  const input = document.getElementById('portrait-chat-input');
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = '';
+  const btn = document.getElementById('portrait-chat-send');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/portrait/chat/${convId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('出错：' + data.error);
+    } else {
+      // Append both user + reply to the local thread
+      portraitState.current.messages = portraitState.current.messages ?? [];
+      portraitState.current.messages.push({ sender_type: 'user', content });
+      portraitState.current.messages.push({ sender_type: 'bot', content: data.reply });
+      renderPortraitView();
+    }
+  } catch (e) {
+    alert('出错：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Source-pick modal (new portrait conv) ──
+
+async function openPortraitModal() {
+  const list = document.getElementById('portrait-source-list');
+  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  document.getElementById('portrait-modal').style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/portrait/sources?userId=${encodeURIComponent(state.userId)}`);
+    const sources = await res.json();
+    if (!Array.isArray(sources) || sources.length === 0) {
+      list.innerHTML = '<div style="padding:20px;color:var(--text-4);font-size:12.5px;text-align:center">还没有任何消息会话 — 先去「消息」聊几句。</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const conv of sources) {
+      const row = document.createElement('div');
+      row.className = 'source-list-row';
+      row.innerHTML = `
+        <span class="sl-title">${esc(conv.title || '新对话')}</span>
+        <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
+      `;
+      row.addEventListener('click', () => createPortraitConv(conv.id));
+      list.appendChild(row);
+    }
+  } catch (e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function closePortraitModal(e) {
+  if (e && e.target.id !== 'portrait-modal') return;
+  document.getElementById('portrait-modal').style.display = 'none';
+}
+
+async function createPortraitConv(sourceConversationId) {
+  try {
+    const res = await fetch('/api/portrait/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: state.userId,
+        sourceConversationId,
+      }),
+    });
+    const data = await res.json();
+    if (!data?.id) {
+      alert('创建失败：' + (data?.error ?? 'unknown'));
+      return;
+    }
+    closePortraitModal();
+    await loadPortraitConversations();
+    renderConvList();
+    selectPortraitConv(data.id);
+  } catch (e) { alert('创建失败：' + e.message); }
+}
+
+// ── Hooks into the existing app shell ──
+
+const __origLoadConversations2 = loadConversations;
+loadConversations = async function() {
+  if (state.currentTab === 'portrait') { await loadPortraitConversations(); return; }
+  return __origLoadConversations2();
+};
+
+const __origRenderConvList2 = renderConvList;
+renderConvList = function() {
+  if (state.currentTab !== 'portrait') return __origRenderConvList2();
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+  const convs = state.conversations;
+  if (convs.length === 0) {
+    list.innerHTML = '<div class="conv-empty">还没有画像<br>点上面「新对话」选个源会话</div>';
+    return;
+  }
+  for (const c of convs) list.appendChild(renderPortraitConvItem(c));
+};
+
+const __origOnNewChatClick2 = onNewChatClick;
+onNewChatClick = function(e) {
+  if (state.currentTab === 'portrait') {
+    if (e) e.stopPropagation();
+    openPortraitModal();
+    return;
+  }
+  return __origOnNewChatClick2(e);
+};
+
+const __origSelectConversation2 = selectConversation;
+selectConversation = function(convId) {
+  if (state.currentTab === 'portrait') { selectPortraitConv(convId); return; }
+  __origSelectConversation2(convId);
+};
+
+// Patch applyTabView so portrait tab opens the portrait-view rather than the
+// generic placeholder.
+const __origApplyTabView = applyTabView;
+applyTabView = function() {
+  if (state.currentTab === 'portrait') {
+    const empty = document.getElementById('empty-state');
+    document.getElementById('chat-view').style.display = 'none';
+    document.getElementById('debate-view').style.display = 'none';
+    document.getElementById('placeholder-view').style.display = 'none';
+    document.getElementById('me-view').style.display = 'none';
+    if (state.currentConversationId) {
+      empty.style.display = 'none';
+      document.getElementById('portrait-view').style.display = 'flex';
+    } else {
+      document.getElementById('portrait-view').style.display = 'none';
+      empty.style.display = 'flex';
+      const txt = document.getElementById('empty-state-text');
+      if (txt) txt.textContent = '点「新对话」选源会话生成画像';
+    }
+    return;
+  }
+  // Hide portrait-view when leaving the tab
+  document.getElementById('portrait-view').style.display = 'none';
+
+  if (state.currentTab === 'me') {
+    document.getElementById('chat-view').style.display = 'none';
+    document.getElementById('debate-view').style.display = 'none';
+    document.getElementById('portrait-view').style.display = 'none';
+    document.getElementById('placeholder-view').style.display = 'none';
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('me-view').style.display = 'flex';
+    loadMeView();
+    return;
+  }
+  return __origApplyTabView();
+};
+
+
+// ──────────────────────────────────────────────────────────────────────────
+//  「你」 tab — basic info + AI picks + provider models
+// ──────────────────────────────────────────────────────────────────────────
+
+async function loadMeView() {
+  await Promise.all([loadMyProfile(), loadMyPicks(), loadMeProviderModels()]);
+}
+
+async function loadMyProfile() {
+  try {
+    const res = await fetch(`/api/me/profile?userId=${encodeURIComponent(state.userId)}`);
+    const p = await res.json();
+    document.getElementById('me-display-name').value = p.display_name ?? '';
+    document.getElementById('me-bio').value = p.bio ?? '';
+  } catch (e) { /* ignore */ }
+}
+
+async function saveMyProfile() {
+  const displayName = document.getElementById('me-display-name').value.trim();
+  const bio = document.getElementById('me-bio').value.trim();
+  const btn = document.getElementById('me-save-profile');
+  btn.disabled = true;
+  try {
+    await fetch('/api/me/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: state.userId, displayName, bio }),
+    });
+    const saved = document.getElementById('me-profile-saved');
+    saved.hidden = false;
+    setTimeout(() => { saved.hidden = true; }, 1800);
+  } catch (e) { alert('保存失败：' + e.message); }
+  finally { btn.disabled = false; }
+}
+
+async function loadMyPicks() {
+  const root = document.getElementById('me-picks-list');
+  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:8px 0">加载中…</div>';
+  try {
+    const res = await fetch(`/api/me/picks?userId=${encodeURIComponent(state.userId)}`);
+    const picks = await res.json();
+    if (!Array.isArray(picks) || picks.length === 0) {
+      root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px 0">还没有 AI 收藏</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const p of picks) {
+      const card = document.createElement('div');
+      card.className = 'pick-card';
+      const titleHtml = p.url
+        ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>`
+        : esc(p.title);
+      const when = new Date(p.picked_at * 1000).toLocaleString();
+      const by = p.picked_by_bot_id
+        ? `${esc(p.picked_by_bot_id)} 收藏`
+        : '手动添加';
+      card.innerHTML = `
+        <button class="pick-remove" data-id="${esc(p.id)}">×</button>
+        <div class="pick-title">${titleHtml}</div>
+        ${p.summary ? `<div class="pick-summary">${esc(p.summary)}</div>` : ''}
+        <div class="pick-meta">${esc(by)} · ${esc(when)}</div>
+        ${p.why_picked ? `<div class="pick-why">${esc(p.why_picked)}</div>` : ''}
+      `;
+      card.querySelector('.pick-remove').addEventListener('click', () => removePick(p.id));
+      root.appendChild(card);
+    }
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:8px 0">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function addManualPick() {
+  const title = document.getElementById('me-pick-title').value.trim();
+  if (!title) return;
+  const url = document.getElementById('me-pick-url').value.trim();
+  const summary = document.getElementById('me-pick-summary').value.trim();
+  try {
+    await fetch('/api/me/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: state.userId, title,
+        url: url || undefined,
+        summary: summary || undefined,
+      }),
+    });
+    document.getElementById('me-pick-title').value = '';
+    document.getElementById('me-pick-url').value = '';
+    document.getElementById('me-pick-summary').value = '';
+    loadMyPicks();
+  } catch (e) { alert('添加失败：' + e.message); }
+}
+
+async function removePick(id) {
+  try {
+    await fetch(`/api/me/picks/${id}`, { method: 'DELETE' });
+    loadMyPicks();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+async function loadMeProviderModels() {
+  const root = document.getElementById('me-provider-models');
+  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px;text-align:center">加载中…</div>';
+  try {
+    const res = await fetch('/api/me/provider-models');
+    const list = await res.json();
+    debateState.providerModels = list;
+    if (!Array.isArray(list) || list.length === 0) {
+      root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px;text-align:center">还没添加任何模型</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const m of list) {
+      const row = document.createElement('div');
+      row.className = 'model-picker-row';
+      row.innerHTML = `
+        <input type="checkbox" data-id="${esc(m.id)}" ${m.enabled ? 'checked' : ''}>
+        <span class="mp-name">${esc(m.display_name)}</span>
+        <span class="mp-slug">${esc(m.slug)}</span>
+        <span class="mp-provider">${esc(m.provider)}</span>
+        <button class="pick-remove" data-id="${esc(m.id)}" title="删除">×</button>
+      `;
+      row.querySelector('input').addEventListener('change', (e) => {
+        toggleProviderModel(m.id, e.target.checked);
+      });
+      row.querySelector('button.pick-remove').addEventListener('click', () => {
+        removeProviderModel(m.id);
+      });
+      root.appendChild(row);
+    }
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${esc(e.message)}</div>`;
+  }
+}
+
+async function addProviderModel() {
+  const provider = document.getElementById('me-new-provider').value.trim();
+  const slug = document.getElementById('me-new-slug').value.trim();
+  const displayName = document.getElementById('me-new-name').value.trim();
+  if (!slug || !displayName) {
+    alert('slug 和显示名都要填');
+    return;
+  }
+  try {
+    const res = await fetch('/api/me/provider-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, slug, displayName }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    document.getElementById('me-new-provider').value = '';
+    document.getElementById('me-new-slug').value = '';
+    document.getElementById('me-new-name').value = '';
+    loadMeProviderModels();
+  } catch (e) { alert('添加失败：' + e.message); }
+}
+
+async function toggleProviderModel(id, enabled) {
+  try {
+    await fetch(`/api/me/provider-models/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function removeProviderModel(id) {
+  if (!confirm('删除这个模型？')) return;
+  try {
+    await fetch(`/api/me/provider-models/${id}`, { method: 'DELETE' });
+    loadMeProviderModels();
+  } catch (e) { alert('删除失败：' + e.message); }
 }

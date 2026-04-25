@@ -34,22 +34,31 @@ export function listBots() {
 }
 
 // Conversations
-// Returns the most recent conversation for (botId, userId) — multi-conversation
-// makes (bot_id, user_id) non-unique, so we always pick the latest by activity.
-export function findConversation(botId: string, userId: string) {
-  return getDb().query<any, [string, string]>(
-    'SELECT * FROM conversations WHERE bot_id = ? AND user_id = ? ORDER BY last_activity_at DESC LIMIT 1'
-  ).get(botId, userId);
+// Returns the most recent conversation for (botId, userId, feature) — used by
+// inbound channels where a chat thread maps to one conversation. Defaults to
+// 'message' so debate/surf/portrait convs (with the same bot/user) aren't
+// accidentally promoted to be the inbound chat target.
+export function findConversation(
+  botId: string, userId: string, featureType: string = 'message',
+) {
+  return getDb().query<any, [string, string, string]>(
+    `SELECT * FROM conversations
+     WHERE bot_id = ? AND user_id = ? AND feature_type = ?
+     ORDER BY last_activity_at DESC LIMIT 1`
+  ).get(botId, userId, featureType);
 }
 
 export function findConversationById(id: string) {
   return getDb().query<any, [string]>('SELECT * FROM conversations WHERE id = ?').get(id);
 }
 
-export function createConversation(id: string, botId: string, userId: string, title?: string | null) {
+export function createConversation(
+  id: string, botId: string, userId: string,
+  title?: string | null, featureType: string = 'message',
+) {
   getDb().query(
-    'INSERT INTO conversations (id, bot_id, user_id, title) VALUES (?, ?, ?, ?)'
-  ).run(id, botId, userId, title ?? null);
+    'INSERT INTO conversations (id, bot_id, user_id, title, feature_type) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, botId, userId, title ?? null, featureType);
 }
 
 export function updateConversationTitle(id: string, title: string) {
@@ -197,14 +206,28 @@ export function resetConversation(conversationId: string): string[] {
   return attachmentPaths;
 }
 
-export function listConversationsByUser(userId: string) {
+export function listConversationsByUser(userId: string, featureType?: string) {
+  if (featureType) {
+    return getDb().query<any, [string, string]>(
+      `SELECT c.*, b.display_name as bot_name FROM conversations c
+       JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? AND c.feature_type = ?
+       ORDER BY c.last_activity_at DESC`
+    ).all(userId, featureType);
+  }
   return getDb().query<any, [string]>(
     `SELECT c.*, b.display_name as bot_name FROM conversations c
      JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? ORDER BY c.last_activity_at DESC`
   ).all(userId);
 }
 
-export function listConversationsByBot(botId: string) {
+export function listConversationsByBot(botId: string, featureType?: string) {
+  if (featureType) {
+    return getDb().query<any, [string, string]>(
+      `SELECT c.*, u.display_name as user_name FROM conversations c
+       JOIN users u ON c.user_id = u.id WHERE c.bot_id = ? AND c.feature_type = ?
+       ORDER BY c.last_activity_at DESC`
+    ).all(botId, featureType);
+  }
   return getDb().query<any, [string]>(
     `SELECT c.*, u.display_name as user_name FROM conversations c
      JOIN users u ON c.user_id = u.id WHERE c.bot_id = ?
@@ -295,6 +318,211 @@ export function getAttachmentsForMessages(messageIds: string[]): Record<string, 
     (map[r.message_id] ??= []).push(r);
   }
   return map;
+}
+
+// ---------- Debate / Provider models ----------
+
+export interface ProviderModelRow {
+  id: string;
+  provider: string;
+  slug: string;
+  display_name: string;
+  enabled: number;
+  created_at: number;
+}
+
+export function listProviderModels(enabledOnly = false): ProviderModelRow[] {
+  const sql = enabledOnly
+    ? 'SELECT * FROM provider_models WHERE enabled = 1 ORDER BY provider, display_name'
+    : 'SELECT * FROM provider_models ORDER BY provider, display_name';
+  return getDb().query<ProviderModelRow, []>(sql).all();
+}
+
+export function findProviderModelBySlug(slug: string): ProviderModelRow | null {
+  return getDb().query<ProviderModelRow, [string]>(
+    'SELECT * FROM provider_models WHERE slug = ?'
+  ).get(slug);
+}
+
+export function createProviderModel(
+  id: string, provider: string, slug: string, displayName: string,
+): void {
+  getDb().query(
+    `INSERT INTO provider_models (id, provider, slug, display_name) VALUES (?, ?, ?, ?)`
+  ).run(id, provider, slug, displayName);
+}
+
+export function updateProviderModelEnabled(id: string, enabled: boolean): void {
+  getDb().query('UPDATE provider_models SET enabled = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, id);
+}
+
+export function deleteProviderModel(id: string): void {
+  getDb().query('DELETE FROM provider_models WHERE id = ?').run(id);
+}
+
+export interface DebateSettingsRow {
+  conversation_id: string;
+  model_slugs: string;
+  topic: string | null;
+  round_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export function createDebateSettings(
+  conversationId: string, modelSlugs: string[], topic: string | null,
+): void {
+  getDb().query(
+    `INSERT INTO debate_settings (conversation_id, model_slugs, topic) VALUES (?, ?, ?)`
+  ).run(conversationId, JSON.stringify(modelSlugs), topic);
+}
+
+export function getDebateSettings(conversationId: string): DebateSettingsRow | null {
+  return getDb().query<DebateSettingsRow, [string]>(
+    'SELECT * FROM debate_settings WHERE conversation_id = ?'
+  ).get(conversationId);
+}
+
+export function bumpDebateRound(conversationId: string): number {
+  const row = getDb().query<{ round_count: number }, [string]>(
+    `UPDATE debate_settings SET round_count = round_count + 1, updated_at = unixepoch()
+     WHERE conversation_id = ? RETURNING round_count`
+  ).get(conversationId);
+  return row?.round_count ?? 0;
+}
+
+// ---------- 「你」 user dashboard ----------
+
+export interface UserProfileRow {
+  user_id: string;
+  bio: string | null;
+  avatar_path: string | null;
+  custom_fields_json: string | null;
+  updated_at: number;
+}
+
+export function getUserDashboardProfile(userId: string): UserProfileRow | null {
+  return getDb().query<UserProfileRow, [string]>(
+    'SELECT * FROM user_profile WHERE user_id = ?'
+  ).get(userId);
+}
+
+export function upsertUserDashboardProfile(params: {
+  userId: string;
+  bio?: string | null;
+  avatarPath?: string | null;
+  customFieldsJson?: string | null;
+}): void {
+  getDb().query(
+    `INSERT INTO user_profile (user_id, bio, avatar_path, custom_fields_json, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(user_id) DO UPDATE SET
+       bio = excluded.bio,
+       avatar_path = excluded.avatar_path,
+       custom_fields_json = excluded.custom_fields_json,
+       updated_at = unixepoch()`
+  ).run(
+    params.userId, params.bio ?? null, params.avatarPath ?? null,
+    params.customFieldsJson ?? null,
+  );
+}
+
+export function setUserDisplayName(userId: string, displayName: string): void {
+  getDb().query(`UPDATE users SET display_name = ?, updated_at = unixepoch() WHERE id = ?`)
+    .run(displayName, userId);
+}
+
+export interface AiPickRow {
+  id: string;
+  user_id: string;
+  title: string;
+  url: string | null;
+  summary: string | null;
+  why_picked: string | null;
+  picked_by_bot_id: string | null;
+  picked_at: number;
+  removed_at: number | null;
+}
+
+export function listAiPicks(userId: string, includeRemoved = false): AiPickRow[] {
+  const sql = includeRemoved
+    ? `SELECT * FROM ai_picks WHERE user_id = ? ORDER BY picked_at DESC`
+    : `SELECT * FROM ai_picks WHERE user_id = ? AND removed_at IS NULL ORDER BY picked_at DESC`;
+  return getDb().query<AiPickRow, [string]>(sql).all(userId);
+}
+
+export function createAiPick(params: {
+  id: string; userId: string; title: string; url?: string | null;
+  summary?: string | null; whyPicked?: string | null; pickedByBotId?: string | null;
+}): void {
+  getDb().query(
+    `INSERT INTO ai_picks (id, user_id, title, url, summary, why_picked, picked_by_bot_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.userId, params.title,
+    params.url ?? null, params.summary ?? null,
+    params.whyPicked ?? null, params.pickedByBotId ?? null,
+  );
+}
+
+export function softDeleteAiPick(id: string): void {
+  getDb().query(`UPDATE ai_picks SET removed_at = unixepoch() WHERE id = ?`).run(id);
+}
+
+export function hardDeleteAiPick(id: string): void {
+  getDb().query(`DELETE FROM ai_picks WHERE id = ?`).run(id);
+}
+
+// ---------- Portraits ----------
+
+export type PortraitKind = 'moments' | 'memos' | 'schedule' | 'alarms' | 'bills';
+
+export interface PortraitRow {
+  id: string;
+  conversation_id: string;
+  source_conversation_id: string | null;
+  kind: PortraitKind;
+  with_image: number;
+  status: string;
+  content_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export function createPortrait(params: {
+  id: string;
+  conversationId: string;
+  sourceConversationId: string | null;
+  kind: PortraitKind;
+  withImage: boolean;
+  contentJson: string;
+  status?: string;
+}): void {
+  getDb().query(
+    `INSERT INTO portraits (id, conversation_id, source_conversation_id, kind, with_image, status, content_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.conversationId, params.sourceConversationId,
+    params.kind, params.withImage ? 1 : 0,
+    params.status ?? 'ready', params.contentJson,
+  );
+}
+
+export function listPortraitsByConversation(conversationId: string): PortraitRow[] {
+  return getDb().query<PortraitRow, [string]>(
+    `SELECT * FROM portraits WHERE conversation_id = ? ORDER BY created_at DESC`
+  ).all(conversationId);
+}
+
+export function findPortrait(id: string): PortraitRow | null {
+  return getDb().query<PortraitRow, [string]>(
+    `SELECT * FROM portraits WHERE id = ?`
+  ).get(id);
+}
+
+export function deletePortrait(id: string): void {
+  getDb().query(`DELETE FROM portraits WHERE id = ?`).run(id);
 }
 
 // Sweep orphans older than N seconds — called periodically by a background

@@ -1,6 +1,9 @@
 import { insertAudit } from '../db/queries';
 
-export type TaskType = 'chat' | 'debounce' | 'review' | 'review_eval' | 'surfing' | 'surfing_eval' | 'title';
+export type TaskType =
+  | 'chat' | 'debounce' | 'review' | 'review_eval'
+  | 'surfing' | 'surfing_eval' | 'title'
+  | 'debate' | 'portrait' | 'perception';
 
 export interface AuditParams {
   conversationId?: string;

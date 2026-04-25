@@ -22,7 +22,7 @@ reviewRoutes.get('/bots', (c) => {
       review = configManager.getBotConfig(b.id).review;
     } catch {}
 
-    const conversations = listConversationsByBot(b.id).map(conv => ({
+    const conversations = listConversationsByBot(b.id, 'message').map(conv => ({
       id: conv.id,
       title: conv.title,
       user_name: conv.user_name,

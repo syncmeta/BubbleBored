@@ -14,19 +14,26 @@ import type { OutboundMessage } from '../bus/types';
 
 export const chatApiRoutes = new Hono();
 
-// List user conversations
+// List user conversations. `?feature=message|surf|review|debate|portrait`
+// filters to one tab; missing filter returns all (legacy / debug).
 chatApiRoutes.get('/conversations', (c) => {
   const channelUserId = c.req.query('userId');
   if (!channelUserId) return c.json({ error: 'userId required' }, 400);
+  const feature = c.req.query('feature') || undefined;
   const user = findUserByChannel('web', channelUserId);
   if (!user) return c.json([]);
-  const convs = listConversationsByUser(user.id);
+  const convs = listConversationsByUser(user.id, feature);
   return c.json(convs);
 });
 
-// Create a new conversation (web only — multi-conversation feature)
+// Create a new conversation. `featureType` defaults to 'message' so the
+// existing chat flow keeps working; debate / surf / review / portrait tabs
+// pass their own feature.
 chatApiRoutes.post('/conversations', async (c) => {
-  const { userId, botId, title } = await c.req.json<{ userId: string; botId: string; title?: string }>();
+  const { userId, botId, title, featureType } = await c.req.json<{
+    userId: string; botId: string; title?: string;
+    featureType?: 'message' | 'surf' | 'review' | 'debate' | 'portrait';
+  }>();
   if (!userId || !botId) return c.json({ error: 'userId and botId required' }, 400);
 
   // Auto-create web user if missing (mirrors router behavior)
@@ -39,7 +46,7 @@ chatApiRoutes.post('/conversations', async (c) => {
   if (!user) return c.json({ error: 'user creation failed' }, 500);
 
   const id = randomUUID();
-  createConversation(id, botId, user.id, title ?? null);
+  createConversation(id, botId, user.id, title ?? null, featureType ?? 'message');
   const conv = findConversationById(id);
   return c.json(conv);
 });

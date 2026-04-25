@@ -164,4 +164,114 @@ function runMigrations(db: Database): void {
     db.exec(`DROP TABLE IF EXISTS debounce_buffer`);
     db.exec('PRAGMA user_version = 5');
   }
+
+  // v6: feature_type on conversations — partitions the conv list across the
+  // top-level tabs (message / surf / review / debate / portrait). Existing
+  // rows default to 'message' so old chats keep showing up in the chat tab.
+  if (userVersion < 6) {
+    const cols = db.query(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'feature_type')) {
+      db.exec(`ALTER TABLE conversations ADD COLUMN feature_type TEXT NOT NULL DEFAULT 'message'`);
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_feature ON conversations(feature_type, last_activity_at DESC)`);
+    db.exec('PRAGMA user_version = 6');
+  }
+
+  // v7: debate (multi-agent) tables. debate_settings holds the configured
+  // model line-up and topic per debate conversation; provider_models is the
+  // user's library of OpenRouter slugs that can participate. Seeded on first
+  // run with a default line-up so the feature is usable out of the box.
+  if (userVersion < 7) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS debate_settings (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+        model_slugs TEXT NOT NULL,
+        topic TEXT,
+        round_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS provider_models (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_models_slug ON provider_models(slug);
+    `);
+
+    // Seed defaults — covers four major providers + grok so debate has
+    // distinct voices on first launch. User can edit list in 「你」tab.
+    const seed = [
+      ['anthropic', 'anthropic/claude-sonnet-4.5', 'Claude Sonnet 4.5'],
+      ['openai',    'openai/gpt-5',                'GPT-5'],
+      ['google',    'google/gemini-2.5-pro',       'Gemini 2.5 Pro'],
+      ['xai',       'x-ai/grok-4',                 'Grok-4'],
+      ['deepseek',  'deepseek/deepseek-chat',      'DeepSeek-V3'],
+    ] as const;
+    const insert = db.query(
+      `INSERT OR IGNORE INTO provider_models (id, provider, slug, display_name) VALUES (?, ?, ?, ?)`
+    );
+    for (const [provider, slug, name] of seed) {
+      insert.run(`pm_${slug.replace(/[^a-z0-9]/gi, '_')}`, provider, slug, name);
+    }
+
+    db.exec('PRAGMA user_version = 7');
+  }
+
+  // v8: portrait tables. A 画像 tab conv (feature_type='portrait') is the
+  // chat thread with the generator agent; portraits stores each generated
+  // asset (kind = moments / memos / schedule / alarms / bills) and its
+  // content_json payload. source_conversation_id pins which message conv
+  // the AI used to imagine the portrait.
+  if (userVersion < 8) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS portraits (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id),
+        source_conversation_id TEXT REFERENCES conversations(id),
+        kind TEXT NOT NULL,
+        with_image INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'ready',
+        content_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_portraits_conv ON portraits(conversation_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_portraits_source ON portraits(source_conversation_id);
+    `);
+    db.exec('PRAGMA user_version = 8');
+  }
+
+  // v9: 「你」 tab tables. user_profile is a singleton-per-user dashboard
+  // record; ai_picks is the running list of articles/links bots want the user
+  // to read (any bot can add/remove via tools — surfaced in 你 tab).
+  if (userVersion < 9) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_profile (
+        user_id TEXT PRIMARY KEY REFERENCES users(id),
+        bio TEXT,
+        avatar_path TEXT,
+        custom_fields_json TEXT,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_picks (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        title TEXT NOT NULL,
+        url TEXT,
+        summary TEXT,
+        why_picked TEXT,
+        picked_by_bot_id TEXT,
+        picked_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        removed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_picks_user ON ai_picks(user_id, picked_at DESC);
+    `);
+    db.exec('PRAGMA user_version = 9');
+  }
 }

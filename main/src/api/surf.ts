@@ -17,7 +17,7 @@ surfRoutes.get('/bots', (c) => {
       surfing = configManager.getBotConfig(b.id).surfing;
     } catch {}
 
-    const conversations = listConversationsByBot(b.id).map(conv => ({
+    const conversations = listConversationsByBot(b.id, 'message').map(conv => ({
       id: conv.id,
       title: conv.title,
       user_name: conv.user_name,
