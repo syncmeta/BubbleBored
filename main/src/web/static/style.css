@@ -1222,6 +1222,11 @@ main {
 }
 .source-list-row:last-child { border-bottom: none; }
 .source-list-row:hover { background: var(--bg-hover); }
+.source-list-row.selected {
+  background: var(--accent-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.source-list-row.selected .sl-title { color: var(--accent); font-weight: 500; }
 .source-list-row .sl-title { flex: 1; font-size: 13px; color: var(--text-1); }
 .source-list-row .sl-meta { font-size: 11px; color: var(--text-4); }
 
