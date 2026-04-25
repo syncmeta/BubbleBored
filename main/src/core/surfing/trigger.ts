@@ -2,14 +2,19 @@ import { getDb } from '../../db/index';
 import { configManager } from '../../config/loader';
 import { updateSurfState } from '../../db/queries';
 import { messageBus } from '../../bus/router';
-import { activeSurfs } from './searcher';
+import { activeSurfs, surfsByMessageConv, createSurfConversation, runSurf } from './searcher';
+import { modelFor } from '../models';
 
+// Auto-triggers a surf for active message conversations whose surf cooldown
+// has expired. Each auto-triggered surf creates a new 冲浪 tab conversation
+// (with source_message_conv_id set), then runs there. The final curator
+// message is delivered into both the surf conv and the source message conv.
 export function startSurfingScheduler(): void {
   setInterval(() => {
     checkAllConversations().catch(e =>
       console.error('[surf-scheduler] error:', e)
     );
-  }, 60_000); // Every minute
+  }, 60_000);
   console.log('[surf] scheduler started');
 }
 
@@ -17,11 +22,11 @@ async function checkAllConversations(): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const db = getDb();
 
-  // Find active conversations with surfing enabled
+  // Auto-trigger only fires for message conversations — surfing the 冲浪 /
+  // 议论 / 画像 tabs themselves makes no sense.
   const convs = db.query<any, [number]>(
-    `SELECT c.*, b.id as bot_id_ref FROM conversations c
-     JOIN bots b ON c.bot_id = b.id
-     WHERE c.last_activity_at > ?`
+    `SELECT c.* FROM conversations c
+     WHERE c.feature_type = 'message' AND c.last_activity_at > ?`
   ).all(now - 172800); // Within 48h
 
   for (const conv of convs) {
@@ -33,35 +38,40 @@ async function checkAllConversations(): Promise<void> {
       const interval = conv.surf_interval ?? botConfig.surfing.initialIntervalSec;
       const lastActivity = conv.last_activity_at;
 
-      // Check idle stop
       if (now - lastActivity > botConfig.surfing.idleStopSec) continue;
-
-      // Check if enough time has passed since last surf
       if (now - lastSurf < interval) continue;
-
-      // Skip if another surf is already running for this conversation —
-      // stopSurf from the panel relies on activeSurfs to abort cleanly.
-      if (activeSurfs.has(conv.id)) continue;
-
-      console.log(`[surf] auto-triggering for conv ${conv.id}`);
+      if (surfsByMessageConv.has(conv.id)) continue;
 
       const replyFn = messageBus.getReplyFn(conv.id);
-      if (!replyFn) continue; // No active connection
+      if (!replyFn) continue; // No active connection to deliver back to
+
+      console.log(`[surf] auto-triggering for message conv ${conv.id}`);
+
+      const surfConvId = createSurfConversation({
+        botId: conv.bot_id, userId: conv.user_id,
+        sourceMessageConvId: conv.id,
+        modelSlug: modelFor('surfing'),
+        budget: botConfig.surfing.maxRequests,
+        title: '自动冲浪',
+      });
 
       const controller = new AbortController();
-      activeSurfs.set(conv.id, controller);
+      activeSurfs.set(surfConvId, controller);
+      surfsByMessageConv.set(conv.id, surfConvId);
 
-      try {
-        const { runSurf } = await import('./searcher');
-        await runSurf(conv.id, conv.bot_id, conv.user_id, replyFn, controller.signal, 'auto');
-      } finally {
-        activeSurfs.delete(conv.id);
-      }
+      // Fire-and-forget — the scheduler shouldn't block on the surf.
+      runSurf({
+        surfConvId,
+        sourceConvId: conv.id,
+        replyFn,
+        signal: controller.signal,
+        trigger: 'auto',
+      }).catch(e => console.error(`[surf] auto error for ${conv.id}:`, e));
 
-      // Update decay state
+      // Update decay state on the message conv
       const newInterval = Math.min(
         interval * botConfig.surfing.multiplier,
-        botConfig.surfing.maxIntervalSec
+        botConfig.surfing.maxIntervalSec,
       );
       updateSurfState(conv.id, Math.floor(newInterval));
     } catch (e) {

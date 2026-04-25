@@ -6,10 +6,10 @@
 // Important contract: this is AI-generated speculation, not ground truth.
 // system.md tells the model not to repeat or rely heavily on it.
 
-import { configManager } from '../../config/loader';
 import { chatCompletion } from '../../llm/client';
 import { logAudit } from '../../llm/audit';
 import { findConversationById, getMessages, listConversationsByUser } from '../../db/queries';
+import { modelFor } from '../models';
 import { getWeather } from './weather';
 
 interface PerceptionParts {
@@ -69,8 +69,7 @@ async function inferTaskPhase(conversationId: string): Promise<string> {
     `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
   ).join('\n');
 
-  const debounceModel = configManager.get().openrouter.debounceModel;
-  const model = debounceModel ?? configManager.get().openrouter.defaultModel;
+  const model = modelFor('perception');
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({
@@ -129,8 +128,7 @@ async function inferCrossFocus(userId: string, botId: string): Promise<string> {
   }
 
   // Cheap LLM summary — same model as task-phase
-  const debounceModel = configManager.get().openrouter.debounceModel;
-  const model = debounceModel ?? configManager.get().openrouter.defaultModel;
+  const model = modelFor('perception');
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({

@@ -274,4 +274,48 @@ function runMigrations(db: Database): void {
     `);
     db.exec('PRAGMA user_version = 9');
   }
+
+  // v10: model_assignments — UI-managed per-task model picks. Replaces the
+  // openrouter.* slugs in config.yaml as the source of truth. Seeded from
+  // config.yaml on first run so an existing install upgrades smoothly.
+  if (userVersion < 10) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS model_assignments (
+        task_type TEXT PRIMARY KEY,
+        slug TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 10');
+  }
+
+  // v11: surf_runs + review_runs settings tables. 冲浪/回顾 are now
+  // standalone activities — each conversation in those tabs is one run with
+  // a recorded model + optional source-message-conv reference. Run logs and
+  // results live as messages in the conversation.
+  if (userVersion < 11) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS surf_runs (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+        source_message_conv_id TEXT REFERENCES conversations(id),
+        model_slug TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        started_at INTEGER,
+        ended_at INTEGER,
+        budget INTEGER NOT NULL DEFAULT 10,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS review_runs (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+        source_message_conv_id TEXT REFERENCES conversations(id),
+        model_slug TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        started_at INTEGER,
+        ended_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 11');
+  }
 }

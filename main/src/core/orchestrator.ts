@@ -11,6 +11,7 @@ import {
   getAttachmentsForMessage,
 } from '../db/queries';
 import { recordUserMessage, recordBotMessage } from '../honcho/memory';
+import { modelFor } from './models';
 import type { OutboundMessage } from '../bus/types';
 
 // Interrupt tracking: when a new user message arrives during generation,
@@ -192,7 +193,8 @@ export async function handleUserMessage(params: {
     conversationId,
     extraContext,
   });
-  console.log(`[chat] prompt: ${messages.length} messages, model: ${botConfig.model}`);
+  const chatModel = modelFor('chat');
+  console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}`);
 
   const messageId = randomUUID();
   const startTime = Date.now();
@@ -201,7 +203,7 @@ export async function handleUserMessage(params: {
   try {
     console.log(`[chat] calling LLM...`);
     const { stream } = await chatCompletionStream({
-      model: botConfig.model,
+      model: chatModel,
       messages,
     });
 

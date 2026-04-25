@@ -11,6 +11,7 @@ import { generatePortrait } from '../core/portrait/generator';
 import { configManager } from '../config/loader';
 import { chatCompletion } from '../llm/client';
 import { logAudit } from '../llm/audit';
+import { modelFor } from '../core/models';
 import { messageBus } from '../bus/router';
 import { webChannel } from '../bus/channels/web';
 import type { OutboundMessage } from '../bus/types';
@@ -126,7 +127,9 @@ portraitRoutes.get('/conversations/:id', (c) => {
 
 portraitRoutes.post('/generate/:convId', async (c) => {
   const portraitConvId = c.req.param('convId');
-  const body = await c.req.json<{ kind: PortraitKind; withImage?: boolean }>();
+  const body = await c.req.json<{
+    kind: PortraitKind; withImage?: boolean; model?: string;
+  }>();
   if (!VALID_KINDS.has(body.kind)) return c.json({ error: 'invalid kind' }, 400);
 
   const conv = findConversationById(portraitConvId);
@@ -142,6 +145,7 @@ portraitRoutes.post('/generate/:convId', async (c) => {
       sourceConversationId: sourceId,
       kind: body.kind,
       withImage: !!body.withImage,
+      model: body.model?.trim() || undefined,
     });
     return c.json({ ok: true, portraitId: out.portraitId, content: out.content });
   } catch (e: any) {
@@ -191,7 +195,7 @@ portraitRoutes.post('/chat/:convId', async (c) => {
   }));
 
   const systemPrompt = await configManager.readPrompt('portrait/chat.md');
-  const model = configManager.get().openrouter.defaultModel;
+  const model = modelFor('chat');
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },

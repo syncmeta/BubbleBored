@@ -2,6 +2,7 @@ import { configManager } from '../config/loader';
 import { chatCompletion } from '../llm/client';
 import { logAudit } from '../llm/audit';
 import { typedSince } from './typing';
+import { modelFor } from './models';
 import type { OutboundMessage } from '../bus/types';
 
 // Debounce has two independent gates, both must resolve before flushing:
@@ -203,9 +204,10 @@ async function judge(
     const texts = state.pending.map(e => e.content).filter(c => c.length > 0);
     const messagesText = texts.map((m, i) => `消息${i + 1}: ${m}`).join('\n');
 
+    const debounceModel = modelFor('debounce');
     console.log(`[debounce] judging (${texts.length} msgs)...`);
     const { result, latencyMs, costUsd } = await chatCompletion({
-      model: configManager.get().openrouter.debounceModel,
+      model: debounceModel,
       messages: [
         { role: 'system', content: judgePrompt },
         { role: 'user', content: messagesText },
@@ -217,7 +219,7 @@ async function judge(
     logAudit({
       conversationId,
       taskType: 'debounce',
-      model: configManager.get().openrouter.debounceModel,
+      model: debounceModel,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,

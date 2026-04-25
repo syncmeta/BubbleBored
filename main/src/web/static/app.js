@@ -24,8 +24,14 @@ const state = {
   // conversationIds with an in-flight surf / pending review. Fed from the
   // /api/surf/events and /api/review/events SSE streams; drives the busy
   // state of the chat-header action buttons.
+  // Keys here are SURF conv ids, not message conv ids — the surf-tab list
+  // uses this to badge running runs.
   activeSurfs: new Set(),
+  // Message conv ids that currently have a surf bound to them as source —
+  // drives the chat-header surf button busy indicator.
+  surfingFromMessage: new Set(),
   pendingReviews: new Set(),
+  reviewingFromMessage: new Set(),
   surfES: null,
   reviewES: null,
   // Conversations currently showing a bot "正在输入" indicator. Server sends
@@ -563,16 +569,26 @@ function deleteCurrentConversation() {
 
 // ── Surf / Review: trigger + panel jump + busy state ──
 
+// In-message surf trigger: creates a 冲浪 tab conversation pinned to this
+// message conv as source, runs it, and pipes the final message back into the
+// chat (preserved UX). The full run record lives in the new surf conv.
 async function triggerSurfForCurrent() {
   const convId = state.currentConversationId;
   if (!convId) return;
-  if (state.activeSurfs.has(convId)) return;  // already running
-  // Optimistic busy — SSE will confirm in a moment
+  if (state.activeSurfs.has(convId)) return;
   state.activeSurfs.add(convId);
   refreshActionBusyState();
   try {
-    const res = await fetch(`/api/surf/start/${convId}`, { method: 'POST' });
-    if (!res.ok && res.status !== 409) {
+    const res = await fetch('/api/surf/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: state.userId,
+        sourceMessageConversationId: convId,
+        autoStart: true,
+      }),
+    });
+    if (!res.ok) {
       state.activeSurfs.delete(convId);
       refreshActionBusyState();
       const body = await res.json().catch(() => ({}));
@@ -585,45 +601,38 @@ async function triggerSurfForCurrent() {
   }
 }
 
+// In-message review trigger: creates a 回顾 tab conversation pinned to this
+// message conv as source, runs it, and (if the verdict isn't [OK]) appends
+// the conclusion back into the chat.
 async function triggerReviewForCurrent() {
   const convId = state.currentConversationId;
   if (!convId) return;
-  if (state.pendingReviews.has(convId)) return;
-  state.pendingReviews.add(convId);
+  if (state.reviewingFromMessage.has(convId)) return;
+  state.reviewingFromMessage.add(convId);
   refreshActionBusyState();
   try {
     const res = await fetch(`/api/review/trigger/${convId}`, { method: 'POST' });
     if (!res.ok) {
-      state.pendingReviews.delete(convId);
+      state.reviewingFromMessage.delete(convId);
       refreshActionBusyState();
       const body = await res.json().catch(() => ({}));
       alert('触发回顾失败: ' + (body.error || res.status));
     }
   } catch (e) {
-    state.pendingReviews.delete(convId);
+    state.reviewingFromMessage.delete(convId);
     refreshActionBusyState();
     alert('触发回顾失败: ' + e.message);
   }
-}
-
-function openSurfPanelForCurrent() {
-  const convId = state.currentConversationId;
-  if (!convId) return;
-  window.open(`/surf.html?conv=${encodeURIComponent(convId)}`, '_blank');
-}
-
-function openReviewPanelForCurrent() {
-  const convId = state.currentConversationId;
-  if (!convId) return;
-  window.open(`/review.html?conv=${encodeURIComponent(convId)}`, '_blank');
 }
 
 function refreshActionBusyState() {
   const convId = state.currentConversationId;
   const surfBtn = document.getElementById('surf-btn');
   const reviewBtn = document.getElementById('review-btn');
-  if (surfBtn) surfBtn.classList.toggle('busy', !!convId && state.activeSurfs.has(convId));
-  if (reviewBtn) reviewBtn.classList.toggle('busy', !!convId && state.pendingReviews.has(convId));
+  // The chat-header buttons live on the message tab; busy = there's a surf
+  // / review in flight whose source is this message conv.
+  if (surfBtn) surfBtn.classList.toggle('busy', !!convId && state.surfingFromMessage.has(convId));
+  if (reviewBtn) reviewBtn.classList.toggle('busy', !!convId && state.reviewingFromMessage.has(convId));
 }
 
 // Subscribes to both SSE streams to know, for any conversation under any
@@ -638,24 +647,37 @@ function connectSurfReviewEvents() {
       try {
         const data = JSON.parse(e.data);
         state.activeSurfs = new Set(Array.isArray(data.active) ? data.active : []);
+        state.surfingFromMessage = new Set(Array.isArray(data.sources) ? data.sources : []);
         refreshActionBusyState();
       } catch {}
     });
     surfES.addEventListener('log', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.conversationId && !state.activeSurfs.has(data.conversationId)) {
-          state.activeSurfs.add(data.conversationId);
-          refreshActionBusyState();
+        let changed = false;
+        if (data.surfConvId && !state.activeSurfs.has(data.surfConvId)) {
+          state.activeSurfs.add(data.surfConvId);
+          changed = true;
         }
+        if (data.sourceMessageConvId && !state.surfingFromMessage.has(data.sourceMessageConvId)) {
+          state.surfingFromMessage.add(data.sourceMessageConvId);
+          changed = true;
+        }
+        if (changed) refreshActionBusyState();
+        // Live-update the surf view's status / log if the user is watching it
+        if (window.handleSurfSseLog) window.handleSurfSseLog(data);
       } catch {}
     });
     surfES.addEventListener('done', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.conversationId && state.activeSurfs.delete(data.conversationId)) {
-          refreshActionBusyState();
+        let changed = false;
+        if (data.surfConvId && state.activeSurfs.delete(data.surfConvId)) changed = true;
+        if (data.sourceMessageConvId && state.surfingFromMessage.delete(data.sourceMessageConvId)) {
+          changed = true;
         }
+        if (changed) refreshActionBusyState();
+        if (window.handleSurfSseDone) window.handleSurfSseDone(data);
       } catch {}
     });
   } catch (e) { console.error('surf SSE error:', e); }
@@ -668,24 +690,36 @@ function connectSurfReviewEvents() {
       try {
         const data = JSON.parse(e.data);
         state.pendingReviews = new Set(Array.isArray(data.pending) ? data.pending : []);
+        state.reviewingFromMessage = new Set(Array.isArray(data.sources) ? data.sources : []);
         refreshActionBusyState();
       } catch {}
     });
     reviewES.addEventListener('log', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.conversationId && !state.pendingReviews.has(data.conversationId)) {
-          state.pendingReviews.add(data.conversationId);
-          refreshActionBusyState();
+        let changed = false;
+        if (data.reviewConvId && !state.pendingReviews.has(data.reviewConvId)) {
+          state.pendingReviews.add(data.reviewConvId);
+          changed = true;
         }
+        if (data.sourceMessageConvId && !state.reviewingFromMessage.has(data.sourceMessageConvId)) {
+          state.reviewingFromMessage.add(data.sourceMessageConvId);
+          changed = true;
+        }
+        if (changed) refreshActionBusyState();
+        if (window.handleReviewSseLog) window.handleReviewSseLog(data);
       } catch {}
     });
     reviewES.addEventListener('done', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.conversationId && state.pendingReviews.delete(data.conversationId)) {
-          refreshActionBusyState();
+        let changed = false;
+        if (data.reviewConvId && state.pendingReviews.delete(data.reviewConvId)) changed = true;
+        if (data.sourceMessageConvId && state.reviewingFromMessage.delete(data.sourceMessageConvId)) {
+          changed = true;
         }
+        if (changed) refreshActionBusyState();
+        if (window.handleReviewSseDone) window.handleReviewSseDone(data);
       } catch {}
     });
   } catch (e) { console.error('review SSE error:', e); }
@@ -1980,31 +2014,22 @@ async function openDebateModal(mode = 'create', existingDebate = null) {
   document.getElementById('debate-modal').style.display = 'flex';
 }
 
+// Mounts a multi-select model picker into the modal. Replaces the older
+// always-visible checkbox list with a searchable dropdown so the modal stays
+// short when the model library grows.
 function renderDebateModalModels() {
-  const root = document.getElementById('debate-modal-models');
-  if (!root) return;
-  if (debateState.providerModels.length === 0) {
-    root.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12.5px;text-align:center">还没有模型，先去「你」tab 添加。</div>';
-    return;
-  }
-  root.innerHTML = debateState.providerModels.map(m => {
-    const checked = debateState.pickedModelSlugs.has(m.slug) ? 'checked' : '';
-    return `
-      <label class="model-picker-row">
-        <input type="checkbox" data-slug="${esc(m.slug)}" ${checked}>
-        <span class="mp-name">${esc(m.display_name)}</span>
-        <span class="mp-slug">${esc(m.slug)}</span>
-        <span class="mp-provider">${esc(m.provider)}</span>
-      </label>
-    `;
-  }).join('');
-  root.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const slug = cb.dataset.slug;
-      if (cb.checked) debateState.pickedModelSlugs.add(slug);
-      else debateState.pickedModelSlugs.delete(slug);
-    });
+  const host = document.getElementById('debate-modal-models-host');
+  if (!host) return;
+  host.innerHTML = '';
+  const picker = createModelPicker({
+    multi: true,
+    values: Array.from(debateState.pickedModelSlugs),
+    placeholder: '搜索并勾选要参与的模型 …',
+    onChange: (set) => {
+      debateState.pickedModelSlugs = new Set(set);
+    },
   });
+  host.appendChild(picker);
 }
 
 function closeDebateModal(e) {
@@ -2178,6 +2203,8 @@ const PORTRAIT_KIND_LABELS = {
 const portraitState = {
   current: null,            // hydrated portrait conv (with portraits[])
   busyKinds: new Set(),     // kinds currently generating
+  modelOverride: '',        // optional per-generation model slug
+  modelPicker: null,        // mounted lazily
 };
 
 async function loadPortraitConversations() {
@@ -2282,6 +2309,22 @@ function renderPortraitView() {
     btn.onclick = () => generatePortraitOfKind(btn.dataset.kind);
     btn.classList.toggle('busy', portraitState.busyKinds.has(btn.dataset.kind));
   });
+
+  // Mount the per-generation model picker once; subsequent renders just reset
+  // it. Empty value means "use the system default for portrait" (resolved on
+  // the server via modelFor('portrait')).
+  const host = document.getElementById('portrait-model-host');
+  if (host && !portraitState.modelPicker) {
+    portraitState.modelPicker = createModelPicker({
+      value: '',
+      placeholder: '默认（系统分配）',
+      allowCustomSlug: true,
+      onChange: (slug) => { portraitState.modelOverride = slug || ''; },
+    });
+    host.appendChild(portraitState.modelPicker);
+  } else if (portraitState.modelPicker) {
+    portraitState.modelPicker.setValue(portraitState.modelOverride || '');
+  }
 
   // Feed: each existing portrait gets a section (most recent first per kind)
   const feed = document.getElementById('portrait-feed');
@@ -2423,10 +2466,12 @@ async function generatePortraitOfKind(kind) {
   const withImage = !!document.getElementById('portrait-with-image').checked;
 
   try {
+    const body = { kind, withImage };
+    if (portraitState.modelOverride) body.model = portraitState.modelOverride;
     const res = await fetch(`/api/portrait/generate/${state.currentConversationId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, withImage }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.error) {
@@ -2639,7 +2684,63 @@ applyTabView = function() {
 // ──────────────────────────────────────────────────────────────────────────
 
 async function loadMeView() {
-  await Promise.all([loadMyProfile(), loadMyPicks(), loadMeProviderModels()]);
+  await Promise.all([
+    loadMyProfile(),
+    loadMyPicks(),
+    loadMeProviderModels(),
+    loadMeAssignments(),
+  ]);
+}
+
+const ASSIGNMENT_LABELS = {
+  chat:       ['对话回复',     '消息 tab 的常规聊天回复'],
+  debounce:   ['防抖判断',     '判断该等用户继续打字还是立即回复（cheap）'],
+  review:     ['会话内自审',   '消息 tab 的周期性回顾，会话中的自审'],
+  surfing:    ['冲浪',         '冲浪 tab 的 planner / curator'],
+  title:      ['标题生成',     '会话标题（cheap）'],
+  perception: ['广泛感知',     '任务阶段 / 跨会话焦点的轻量推断'],
+  portrait:   ['画像生成',     '画像 tab 的 5 种生成器'],
+};
+
+async function loadMeAssignments() {
+  const root = document.getElementById('me-assignments-list');
+  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:8px 0">加载中…</div>';
+  try {
+    const res = await fetch('/api/me/model-assignments');
+    const map = await res.json();
+    root.innerHTML = '';
+    for (const taskType of Object.keys(ASSIGNMENT_LABELS)) {
+      const [name, hint] = ASSIGNMENT_LABELS[taskType];
+      const row = document.createElement('div');
+      row.className = 'me-assignments-row';
+      const labelEl = document.createElement('div');
+      labelEl.innerHTML = `<label>${esc(name)}<span class="me-assignments-hint">${esc(hint)}</span></label>`;
+      const pickerHolder = document.createElement('div');
+      const picker = createModelPicker({
+        value: map[taskType] ?? '',
+        allowCustomSlug: true,
+        onChange: (slug) => saveAssignment(taskType, slug),
+      });
+      pickerHolder.appendChild(picker);
+      row.appendChild(labelEl);
+      row.appendChild(pickerHolder);
+      root.appendChild(row);
+    }
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:8px 0">${esc(e.message)}</div>`;
+  }
+}
+
+async function saveAssignment(taskType, slug) {
+  try {
+    await fetch('/api/me/model-assignments', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [taskType]: slug }),
+    });
+  } catch (e) {
+    alert('保存失败：' + e.message);
+  }
 }
 
 async function loadMyProfile() {
@@ -2788,7 +2889,9 @@ async function addProviderModel() {
     document.getElementById('me-new-provider').value = '';
     document.getElementById('me-new-slug').value = '';
     document.getElementById('me-new-name').value = '';
+    if (window.invalidateModelCache) window.invalidateModelCache();
     loadMeProviderModels();
+    loadMeAssignments();
   } catch (e) { alert('添加失败：' + e.message); }
 }
 
@@ -2799,6 +2902,7 @@ async function toggleProviderModel(id, enabled) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     });
+    if (window.invalidateModelCache) window.invalidateModelCache();
   } catch (e) { /* ignore */ }
 }
 
@@ -2806,6 +2910,724 @@ async function removeProviderModel(id) {
   if (!confirm('删除这个模型？')) return;
   try {
     await fetch(`/api/me/provider-models/${id}`, { method: 'DELETE' });
+    if (window.invalidateModelCache) window.invalidateModelCache();
     loadMeProviderModels();
+    loadMeAssignments();
   } catch (e) { alert('删除失败：' + e.message); }
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+//  冲浪 (Surf) — each conv = one run. List + create modal + live log view.
+// ──────────────────────────────────────────────────────────────────────────
+
+const surfTabState = {
+  current: null,            // hydrated surf conv (with run record)
+  modalModelHostMounted: false,
+  modalSelectedSource: '',  // optional source message conv id
+  modalModelSlug: '',
+  modelPicker: null,
+};
+
+async function loadSurfConversations() {
+  try {
+    const res = await fetch(`/api/surf/conversations?userId=${encodeURIComponent(state.userId)}`);
+    state.convsByTab.surf = await res.json();
+    if (!Array.isArray(state.convsByTab.surf)) state.convsByTab.surf = [];
+  } catch (e) {
+    console.error('load surf convs:', e);
+    state.convsByTab.surf = [];
+  }
+}
+
+function statusLabel(status, active) {
+  if (active) return '运行中';
+  return ({
+    pending: '待运行',
+    running: '运行中',
+    done: '完成',
+    error: '出错',
+    aborted: '中断',
+  })[status] ?? status;
+}
+
+function renderSurfConvItem(conv) {
+  const el = document.createElement('div');
+  el.className = 'conv-item';
+  el.dataset.convId = conv.id;
+  if (conv.id === state.currentConversationId) el.classList.add('active');
+
+  const isActive = state.activeSurfs.has(conv.id) || conv.active;
+  const status = statusLabel(conv.status, isActive);
+  const dot = isActive ? '<span class="conv-pending-dot"></span>' : '';
+  const subtitle = conv.source_message_conv_id
+    ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
+    : '自由冲浪';
+  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
+
+  el.innerHTML = `
+    <span class="conv-body">
+      <span class="conv-title">${esc(conv.title || '冲浪')}</span>
+      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
+    </span>
+    <span class="conv-actions">
+      <button title="删除" class="danger" data-act="delete">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        </svg>
+      </button>
+    </span>
+  `;
+  el.addEventListener('click', (e) => {
+    const act = e.target.closest('button[data-act]');
+    if (act) {
+      e.stopPropagation();
+      if (act.dataset.act === 'delete') deleteSurfConv(conv.id);
+      return;
+    }
+    selectSurfConv(conv.id);
+  });
+  return el;
+}
+
+async function selectSurfConv(convId) {
+  state.currentConversationId = convId;
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.convId === convId);
+  });
+
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('placeholder-view').style.display = 'none';
+  document.getElementById('me-view').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('debate-view').style.display = 'none';
+  document.getElementById('portrait-view').style.display = 'none';
+  document.getElementById('surf-view').style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/surf/conversations/${convId}`);
+    surfTabState.current = await res.json();
+  } catch { surfTabState.current = null; }
+
+  updateSurfHeader();
+
+  // Load persisted log + result messages
+  try {
+    const res = await fetch(`/api/surf/conversations/${convId}/messages`);
+    const msgs = await res.json();
+    const log = document.getElementById('surf-log');
+    log.innerHTML = '';
+    for (const m of msgs) appendSurfRow(m);
+    scrollSurfToBottom();
+  } catch (e) {
+    console.error('load surf msgs:', e);
+  }
+}
+
+function updateSurfHeader() {
+  const c = surfTabState.current;
+  const title = document.getElementById('surf-title');
+  const meta = document.getElementById('surf-meta');
+  if (!c) {
+    title.textContent = '冲浪';
+    meta.textContent = '';
+    return;
+  }
+  title.textContent = c.title || '冲浪';
+  const isActive = state.activeSurfs.has(c.id) || c.active;
+  const parts = [
+    `模型 ${c.model_slug ?? '—'}`,
+    c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由冲浪',
+    `状态 ${statusLabel(c.status, isActive)}`,
+  ];
+  meta.textContent = parts.join(' · ');
+
+  document.getElementById('surf-stop-btn').style.display = isActive ? '' : 'none';
+  document.getElementById('surf-rerun-btn').style.display = isActive ? 'none' : '';
+}
+
+function appendSurfRow(m) {
+  const log = document.getElementById('surf-log');
+  if (!log) return;
+
+  // surf:surf_result kind → render as a chat-style bubble (the deliverable);
+  // sender_type='bot' rows that didn't carry the type tag are also results.
+  const isResult =
+    (m.sender_type === 'bot') ||
+    (m.sender_id || '').endsWith(':surf_result');
+
+  if (isResult) {
+    const b = document.createElement('div');
+    b.className = 'surf-result-bubble';
+    b.textContent = m.content;
+    log.appendChild(b);
+    return;
+  }
+
+  const row = document.createElement('div');
+  const isError = (m.sender_id || '').endsWith(':error');
+  const isBridges = (m.sender_id || '').endsWith(':surf_bridges');
+  row.className = 'surf-log-line' + (isError ? ' error' : '') + (isBridges ? ' bridges' : '');
+  const ts = m.created_at
+    ? new Date(m.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false })
+    : '';
+  row.innerHTML = `
+    <span class="surf-log-time">${esc(ts)}</span>
+    <span class="surf-log-text">${esc(m.content)}</span>
+  `;
+  log.appendChild(row);
+}
+
+function scrollSurfToBottom() {
+  const log = document.getElementById('surf-log');
+  if (!log) return;
+  const scroller = log.parentElement;
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
+// SSE log/done callbacks invoked from the existing surf SSE listener.
+window.handleSurfSseLog = function (data) {
+  if (!data) return;
+  if (state.currentConversationId !== data.surfConvId) {
+    // Refresh conv list metadata so badges update
+    if (state.currentTab === 'surf') {
+      loadSurfConversations().then(renderConvList);
+    }
+    return;
+  }
+  appendSurfRow({
+    sender_type: 'log',
+    sender_id: `surf:${data.type}`,
+    content: data.content,
+    created_at: Math.floor((data.timestamp ?? Date.now()) / 1000),
+  });
+  scrollSurfToBottom();
+};
+
+window.handleSurfSseDone = function (data) {
+  if (!data) return;
+  if (state.currentConversationId === data.surfConvId) {
+    // Refresh the header (final status) + reload messages to pick up the
+    // bot-message bubble that landed at the very end.
+    selectSurfConv(data.surfConvId);
+  }
+  if (state.currentTab === 'surf') {
+    loadSurfConversations().then(renderConvList);
+  }
+};
+
+async function deleteSurfConv(convId) {
+  if (!confirm('删除这次冲浪？')) return;
+  try {
+    await fetch(`/api/surf/conversations/${convId}`, { method: 'DELETE' });
+    state.convsByTab.surf = state.convsByTab.surf.filter(c => c.id !== convId);
+    if (state.currentConversationId === convId) {
+      state.currentConversationId = null;
+      applyTabView();
+    }
+    renderConvList();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+function deleteCurrentSurf() {
+  if (state.currentConversationId) deleteSurfConv(state.currentConversationId);
+}
+
+async function rerunCurrentSurf() {
+  if (!state.currentConversationId) return;
+  try {
+    await fetch(`/api/surf/run/${state.currentConversationId}`, { method: 'POST' });
+  } catch (e) { alert('启动失败：' + e.message); }
+}
+
+async function stopCurrentSurf() {
+  if (!state.currentConversationId) return;
+  try {
+    await fetch(`/api/surf/stop/${state.currentConversationId}`, { method: 'POST' });
+  } catch (e) { alert('中断失败：' + e.message); }
+}
+
+// ── Surf modal (create new surf) ──
+
+async function openSurfModal() {
+  const host = document.getElementById('surf-modal-model-host');
+  if (!surfTabState.modalModelHostMounted) {
+    surfTabState.modelPicker = createModelPicker({
+      value: '',
+      placeholder: '默认（系统的「冲浪」分配）',
+      allowCustomSlug: true,
+      onChange: (slug) => { surfTabState.modalModelSlug = slug || ''; },
+    });
+    host.appendChild(surfTabState.modelPicker);
+    surfTabState.modalModelHostMounted = true;
+  } else if (surfTabState.modelPicker) {
+    surfTabState.modelPicker.setValue('');
+  }
+  surfTabState.modalSelectedSource = '';
+  surfTabState.modalModelSlug = '';
+  document.getElementById('surf-modal-budget').value = '10';
+
+  // Load source candidates
+  const list = document.getElementById('surf-modal-source-list');
+  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  document.getElementById('surf-modal').style.display = 'flex';
+  try {
+    const res = await fetch(`/api/surf/sources?userId=${encodeURIComponent(state.userId)}`);
+    const sources = await res.json();
+    list.innerHTML = '';
+    const noneRow = document.createElement('div');
+    noneRow.className = 'source-list-row';
+    noneRow.innerHTML = `<span class="sl-title">— 不绑定（自由冲浪） —</span><span class="sl-meta">planner 几乎无上下文</span>`;
+    noneRow.addEventListener('click', () => {
+      surfTabState.modalSelectedSource = '';
+      list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
+      noneRow.classList.add('selected');
+    });
+    noneRow.classList.add('selected');
+    list.appendChild(noneRow);
+    if (Array.isArray(sources)) {
+      for (const conv of sources) {
+        const row = document.createElement('div');
+        row.className = 'source-list-row';
+        row.innerHTML = `
+          <span class="sl-title">${esc(conv.title || '新对话')}</span>
+          <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
+        `;
+        row.addEventListener('click', () => {
+          surfTabState.modalSelectedSource = conv.id;
+          list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
+          row.classList.add('selected');
+        });
+        list.appendChild(row);
+      }
+    }
+  } catch (e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function closeSurfModal(e) {
+  if (e && e.target.id !== 'surf-modal') return;
+  document.getElementById('surf-modal').style.display = 'none';
+}
+
+async function submitSurfModal() {
+  const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
+  const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
+  const body = {
+    userId: state.userId,
+    autoStart: true,
+  };
+  if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
+  if (surfTabState.modalModelSlug) body.modelSlug = surfTabState.modalModelSlug;
+  if (budget) body.budget = budget;
+
+  try {
+    const res = await fetch('/api/surf/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) { alert('创建失败：' + data.error); return; }
+    closeSurfModal();
+    await loadSurfConversations();
+    renderConvList();
+    selectSurfConv(data.id);
+  } catch (e) { alert('创建失败：' + e.message); }
+}
+
+// ── Hooks into the app shell ──
+
+const __origLoadConversations3 = loadConversations;
+loadConversations = async function() {
+  if (state.currentTab === 'surf') { await loadSurfConversations(); return; }
+  return __origLoadConversations3();
+};
+
+const __origRenderConvList3 = renderConvList;
+renderConvList = function() {
+  if (state.currentTab !== 'surf') return __origRenderConvList3();
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+  const convs = state.conversations;
+  if (convs.length === 0) {
+    list.innerHTML = '<div class="conv-empty">还没有冲浪<br>点上面「新对话」开启一次</div>';
+    return;
+  }
+  for (const c of convs) list.appendChild(renderSurfConvItem(c));
+};
+
+const __origOnNewChatClick3 = onNewChatClick;
+onNewChatClick = function(e) {
+  if (state.currentTab === 'surf') {
+    if (e) e.stopPropagation();
+    openSurfModal();
+    return;
+  }
+  return __origOnNewChatClick3(e);
+};
+
+const __origSelectConversation3 = selectConversation;
+selectConversation = function(convId) {
+  if (state.currentTab === 'surf') { selectSurfConv(convId); return; }
+  __origSelectConversation3(convId);
+};
+
+const __origApplyTabView2 = applyTabView;
+applyTabView = function() {
+  if (state.currentTab === 'surf') {
+    document.getElementById('chat-view').style.display = 'none';
+    document.getElementById('debate-view').style.display = 'none';
+    document.getElementById('portrait-view').style.display = 'none';
+    document.getElementById('me-view').style.display = 'none';
+    document.getElementById('placeholder-view').style.display = 'none';
+    if (state.currentConversationId) {
+      document.getElementById('empty-state').style.display = 'none';
+      document.getElementById('surf-view').style.display = 'flex';
+    } else {
+      document.getElementById('surf-view').style.display = 'none';
+      document.getElementById('empty-state').style.display = 'flex';
+      const txt = document.getElementById('empty-state-text');
+      if (txt) txt.textContent = '点「新对话」开启一次冲浪';
+    }
+    return;
+  }
+  document.getElementById('surf-view').style.display = 'none';
+  return __origApplyTabView2();
+};
+
+
+// ──────────────────────────────────────────────────────────────────────────
+//  回顾 (Review) — each conv = one review run. Same shape as 冲浪.
+// ──────────────────────────────────────────────────────────────────────────
+
+const reviewTabState = {
+  current: null,
+  modelPicker: null,
+  modelPickerMounted: false,
+  modalSelectedSource: '',
+  modalModelSlug: '',
+};
+
+async function loadReviewConversations() {
+  try {
+    const res = await fetch(`/api/review/conversations?userId=${encodeURIComponent(state.userId)}`);
+    state.convsByTab.review = await res.json();
+    if (!Array.isArray(state.convsByTab.review)) state.convsByTab.review = [];
+  } catch (e) {
+    console.error('load review convs:', e);
+    state.convsByTab.review = [];
+  }
+}
+
+function renderReviewConvItem(conv) {
+  const el = document.createElement('div');
+  el.className = 'conv-item';
+  el.dataset.convId = conv.id;
+  if (conv.id === state.currentConversationId) el.classList.add('active');
+  const isPending = state.pendingReviews.has(conv.id) || conv.has_pending;
+  const status = statusLabel(conv.status, isPending);
+  const subtitle = conv.source_message_conv_id
+    ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
+    : '自由回顾';
+  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
+  const dot = isPending ? '<span class="conv-pending-dot"></span>' : '';
+  el.innerHTML = `
+    <span class="conv-body">
+      <span class="conv-title">${esc(conv.title || '回顾')}</span>
+      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
+    </span>
+    <span class="conv-actions">
+      <button title="删除" class="danger" data-act="delete">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        </svg>
+      </button>
+    </span>
+  `;
+  el.addEventListener('click', (e) => {
+    const act = e.target.closest('button[data-act]');
+    if (act) {
+      e.stopPropagation();
+      if (act.dataset.act === 'delete') deleteReviewConv(conv.id);
+      return;
+    }
+    selectReviewConv(conv.id);
+  });
+  return el;
+}
+
+async function selectReviewConv(convId) {
+  state.currentConversationId = convId;
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.convId === convId);
+  });
+
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('placeholder-view').style.display = 'none';
+  document.getElementById('me-view').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('debate-view').style.display = 'none';
+  document.getElementById('portrait-view').style.display = 'none';
+  document.getElementById('surf-view').style.display = 'none';
+  document.getElementById('review-view').style.display = 'flex';
+
+  try {
+    const res = await fetch(`/api/review/conversations/${convId}`);
+    reviewTabState.current = await res.json();
+  } catch { reviewTabState.current = null; }
+  updateReviewHeader();
+
+  try {
+    const res = await fetch(`/api/review/conversations/${convId}/messages`);
+    const msgs = await res.json();
+    const log = document.getElementById('review-log');
+    log.innerHTML = '';
+    for (const m of msgs) appendReviewRow(m);
+    scrollReviewToBottom();
+  } catch (e) { console.error('load review msgs:', e); }
+}
+
+function updateReviewHeader() {
+  const c = reviewTabState.current;
+  const title = document.getElementById('review-title');
+  const meta = document.getElementById('review-meta');
+  if (!c) {
+    title.textContent = '回顾';
+    meta.textContent = '';
+    return;
+  }
+  title.textContent = c.title || '回顾';
+  const isPending = state.pendingReviews.has(c.id);
+  const parts = [
+    `模型 ${c.model_slug ?? '—'}`,
+    c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由回顾',
+    `状态 ${statusLabel(c.status, isPending)}`,
+  ];
+  meta.textContent = parts.join(' · ');
+}
+
+function appendReviewRow(m) {
+  const log = document.getElementById('review-log');
+  if (!log) return;
+  const isResult = (m.sender_type === 'bot') || (m.sender_id || '').endsWith(':conclusion');
+  if (isResult && m.sender_type === 'bot') {
+    const b = document.createElement('div');
+    b.className = 'review-result-bubble';
+    b.textContent = m.content;
+    log.appendChild(b);
+    return;
+  }
+  const row = document.createElement('div');
+  const isError = (m.sender_id || '').endsWith(':error');
+  row.className = 'surf-log-line' + (isError ? ' error' : '');
+  const ts = m.created_at
+    ? new Date(m.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false })
+    : '';
+  row.innerHTML = `
+    <span class="surf-log-time">${esc(ts)}</span>
+    <span class="surf-log-text">${esc(m.content)}</span>
+  `;
+  log.appendChild(row);
+}
+
+function scrollReviewToBottom() {
+  const log = document.getElementById('review-log');
+  if (!log) return;
+  const scroller = log.parentElement;
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+}
+
+window.handleReviewSseLog = function (data) {
+  if (!data) return;
+  if (state.currentConversationId !== data.reviewConvId) {
+    if (state.currentTab === 'review') {
+      loadReviewConversations().then(renderConvList);
+    }
+    return;
+  }
+  appendReviewRow({
+    sender_type: 'log',
+    sender_id: `review:${data.kind}`,
+    content: data.content,
+    created_at: Math.floor((data.timestamp ?? Date.now()) / 1000),
+  });
+  scrollReviewToBottom();
+};
+
+window.handleReviewSseDone = function (data) {
+  if (!data) return;
+  if (state.currentConversationId === data.reviewConvId) {
+    selectReviewConv(data.reviewConvId);
+  }
+  if (state.currentTab === 'review') {
+    loadReviewConversations().then(renderConvList);
+  }
+};
+
+async function deleteReviewConv(convId) {
+  if (!confirm('删除这次回顾？')) return;
+  try {
+    await fetch(`/api/review/conversations/${convId}`, { method: 'DELETE' });
+    state.convsByTab.review = state.convsByTab.review.filter(c => c.id !== convId);
+    if (state.currentConversationId === convId) {
+      state.currentConversationId = null;
+      applyTabView();
+    }
+    renderConvList();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+function deleteCurrentReview() {
+  if (state.currentConversationId) deleteReviewConv(state.currentConversationId);
+}
+
+async function rerunCurrentReview() {
+  if (!state.currentConversationId) return;
+  try { await fetch(`/api/review/run/${state.currentConversationId}`, { method: 'POST' }); }
+  catch (e) { alert('启动失败：' + e.message); }
+}
+
+// ── Review modal ──
+
+async function openReviewModal() {
+  const host = document.getElementById('review-modal-model-host');
+  if (!reviewTabState.modelPickerMounted) {
+    reviewTabState.modelPicker = createModelPicker({
+      value: '',
+      placeholder: '默认（系统的「会话内自审」分配）',
+      allowCustomSlug: true,
+      onChange: (slug) => { reviewTabState.modalModelSlug = slug || ''; },
+    });
+    host.appendChild(reviewTabState.modelPicker);
+    reviewTabState.modelPickerMounted = true;
+  } else if (reviewTabState.modelPicker) {
+    reviewTabState.modelPicker.setValue('');
+  }
+  reviewTabState.modalSelectedSource = '';
+  reviewTabState.modalModelSlug = '';
+
+  const list = document.getElementById('review-modal-source-list');
+  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  document.getElementById('review-modal').style.display = 'flex';
+  try {
+    const res = await fetch(`/api/review/sources?userId=${encodeURIComponent(state.userId)}`);
+    const sources = await res.json();
+    list.innerHTML = '';
+    const noneRow = document.createElement('div');
+    noneRow.className = 'source-list-row selected';
+    noneRow.innerHTML = '<span class="sl-title">— 不绑定（自由回顾） —</span><span class="sl-meta">仅基于本回顾会话历史</span>';
+    noneRow.addEventListener('click', () => {
+      reviewTabState.modalSelectedSource = '';
+      list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
+      noneRow.classList.add('selected');
+    });
+    list.appendChild(noneRow);
+    if (Array.isArray(sources)) {
+      for (const conv of sources) {
+        const row = document.createElement('div');
+        row.className = 'source-list-row';
+        row.innerHTML = `
+          <span class="sl-title">${esc(conv.title || '新对话')}</span>
+          <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
+        `;
+        row.addEventListener('click', () => {
+          reviewTabState.modalSelectedSource = conv.id;
+          list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
+          row.classList.add('selected');
+        });
+        list.appendChild(row);
+      }
+    }
+  } catch (e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function closeReviewModal(e) {
+  if (e && e.target.id !== 'review-modal') return;
+  document.getElementById('review-modal').style.display = 'none';
+}
+
+async function submitReviewModal() {
+  const body = { userId: state.userId, autoStart: true };
+  if (reviewTabState.modalSelectedSource) body.sourceMessageConversationId = reviewTabState.modalSelectedSource;
+  if (reviewTabState.modalModelSlug) body.modelSlug = reviewTabState.modalModelSlug;
+  try {
+    const res = await fetch('/api/review/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) { alert('创建失败：' + data.error); return; }
+    closeReviewModal();
+    await loadReviewConversations();
+    renderConvList();
+    selectReviewConv(data.id);
+  } catch (e) { alert('创建失败：' + e.message); }
+}
+
+// ── Hooks ──
+
+const __origLoadConversations4 = loadConversations;
+loadConversations = async function() {
+  if (state.currentTab === 'review') { await loadReviewConversations(); return; }
+  return __origLoadConversations4();
+};
+
+const __origRenderConvList4 = renderConvList;
+renderConvList = function() {
+  if (state.currentTab !== 'review') return __origRenderConvList4();
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+  const convs = state.conversations;
+  if (convs.length === 0) {
+    list.innerHTML = '<div class="conv-empty">还没有回顾<br>点上面「新对话」开启一次</div>';
+    return;
+  }
+  for (const c of convs) list.appendChild(renderReviewConvItem(c));
+};
+
+const __origOnNewChatClick4 = onNewChatClick;
+onNewChatClick = function(e) {
+  if (state.currentTab === 'review') {
+    if (e) e.stopPropagation();
+    openReviewModal();
+    return;
+  }
+  return __origOnNewChatClick4(e);
+};
+
+const __origSelectConversation4 = selectConversation;
+selectConversation = function(convId) {
+  if (state.currentTab === 'review') { selectReviewConv(convId); return; }
+  __origSelectConversation4(convId);
+};
+
+const __origApplyTabView3 = applyTabView;
+applyTabView = function() {
+  if (state.currentTab === 'review') {
+    document.getElementById('chat-view').style.display = 'none';
+    document.getElementById('debate-view').style.display = 'none';
+    document.getElementById('portrait-view').style.display = 'none';
+    document.getElementById('surf-view').style.display = 'none';
+    document.getElementById('me-view').style.display = 'none';
+    document.getElementById('placeholder-view').style.display = 'none';
+    if (state.currentConversationId) {
+      document.getElementById('empty-state').style.display = 'none';
+      document.getElementById('review-view').style.display = 'flex';
+    } else {
+      document.getElementById('review-view').style.display = 'none';
+      document.getElementById('empty-state').style.display = 'flex';
+      const txt = document.getElementById('empty-state-text');
+      if (txt) txt.textContent = '点「新对话」开启一次回顾';
+    }
+    return;
+  }
+  document.getElementById('review-view').style.display = 'none';
+  return __origApplyTabView3();
+};

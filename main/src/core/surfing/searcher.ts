@@ -1,33 +1,77 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { configManager } from '../../config/loader';
-import { findConversationById, insertMessage } from '../../db/queries';
+import {
+  findConversationById, insertMessage, createConversation, createSurfRun,
+  setSurfRunStatus, getSurfRun,
+} from '../../db/queries';
 import { runPlanner } from './planner';
 import { runWanderer } from './wanderer';
 import { runCurator } from './curator';
+import { modelFor } from '../models';
 import type { OutboundMessage } from '../../bus/types';
 
-// Keyed by conversationId — multiple conversations under the same bot can
-// surf concurrently, and each one is cancellable independently.
+// Keyed by **surf** conversation id (the 冲浪 tab conv that owns the run).
+// Multiple surfs can run concurrently; each one is independently cancellable.
 export const surfEvents = new EventEmitter();
 export const activeSurfs = new Map<string, AbortController>();
 
-export type SurfTrigger = 'auto' | 'user';
+// Tracks which message conversations currently have a surf in flight, so the
+// auto-trigger doesn't pile up multiple surfs per chat.
+export const surfsByMessageConv = new Map<string, string>(); // msgConvId → surfConvId
 
-export function stopSurf(conversationId: string): boolean {
-  const controller = activeSurfs.get(conversationId);
+export type SurfTrigger = 'auto' | 'user' | 'panel';
+
+export function stopSurf(surfConvId: string): boolean {
+  const controller = activeSurfs.get(surfConvId);
   if (controller) {
     controller.abort();
-    activeSurfs.delete(conversationId);
+    activeSurfs.delete(surfConvId);
     return true;
   }
   return false;
 }
 
-function makeEmitter(botId: string, conversationId: string) {
+// Create a surf-tab conversation that records this run. botId/userId come
+// from the optional source message conv when given; otherwise the caller
+// must supply them. The new conv's `surf_runs` row pins the model + budget.
+export function createSurfConversation(params: {
+  botId: string;
+  userId: string;
+  sourceMessageConvId: string | null;
+  modelSlug: string;
+  budget: number;
+  title?: string | null;
+}): string {
+  const id = randomUUID();
+  const title = params.title?.trim() || (params.sourceMessageConvId ? '冲浪' : '自由冲浪');
+  createConversation(id, params.botId, params.userId, title, 'surf');
+  createSurfRun({
+    conversationId: id,
+    sourceMessageConvId: params.sourceMessageConvId,
+    modelSlug: params.modelSlug,
+    budget: params.budget,
+  });
+  return id;
+}
+
+function makeEmitter(surfConvId: string) {
+  // Resolve the source message conv (if any) once per emitter so SSE
+  // subscribers can correlate without doing a per-event DB lookup.
+  let sourceMessageConvId: string | null = null;
+  try {
+    sourceMessageConvId = getSurfRun(surfConvId)?.source_message_conv_id ?? null;
+  } catch {}
+
   return (content: string, type: string = 'surf_status') => {
+    try {
+      insertMessage(randomUUID(), surfConvId, 'log', `surf:${type}`, content);
+    } catch {}
     surfEvents.emit('log', {
-      botId, conversationId, type, content, timestamp: Date.now(),
+      surfConvId,
+      conversationId: surfConvId,
+      sourceMessageConvId,
+      type, content, timestamp: Date.now(),
     });
   };
 }
@@ -40,57 +84,73 @@ function checkAborted(signal?: AbortSignal): void {
   }
 }
 
-export async function runSurf(
-  conversationId: string,
-  botId: string,
-  userId: string,
-  replyFn: (msg: OutboundMessage) => void,
-  signal?: AbortSignal,
-  trigger: SurfTrigger = 'auto',
-): Promise<void> {
-  const emit = makeEmitter(botId, conversationId);
+export interface RunSurfParams {
+  surfConvId: string;             // the 冲浪 tab conv that owns this run
+  sourceConvId?: string | null;   // optional message conv that provides planner context
+  replyFn: (msg: OutboundMessage) => void;
+  signal?: AbortSignal;
+  trigger?: SurfTrigger;
+}
+
+export async function runSurf(params: RunSurfParams): Promise<void> {
+  const { surfConvId, sourceConvId, replyFn, signal, trigger = 'user' } = params;
+  const emit = makeEmitter(surfConvId);
+  setSurfRunStatus(surfConvId, 'running');
 
   try {
     emit(`Surfing triggered (${trigger})`);
 
-    const conv = findConversationById(conversationId);
-    if (!conv) {
-      emit('会话不存在，退出');
+    const surfConv = findConversationById(surfConvId);
+    if (!surfConv) {
+      emit('冲浪会话不存在，退出');
+      setSurfRunStatus(surfConvId, 'error');
+      return;
+    }
+    const surfRun = getSurfRun(surfConvId);
+    if (!surfRun) {
+      emit('冲浪 run 设置缺失，退出');
+      setSurfRunStatus(surfConvId, 'error');
       return;
     }
 
-    const botConfig = configManager.getBotConfig(botId);
-    if (!botConfig.surfing.enabled) {
-      emit('该 bot 未启用 surfing，退出');
-      return;
-    }
+    const botId = surfConv.bot_id;
+    const userId = surfConv.user_id;
 
-    const model = configManager.get().openrouter.surfingModel ?? botConfig.model;
-    const totalBudget = botConfig.surfing.maxRequests;
+    // Source conversation provides planner context (known_profile etc).
+    // For free-standing surfs, planner gets minimal context and leans heavily
+    // on wanderer.
+    const effectiveSourceId = sourceConvId ?? surfRun.source_message_conv_id;
+    const sourceConv = effectiveSourceId ? findConversationById(effectiveSourceId) : null;
+
+    const model = surfRun.model_slug || modelFor('surfing');
+    const totalBudget = surfRun.budget;
 
     // Reserve budget for curator: at least 2, or up to 25% of total, whichever is larger.
-    // Wanderer gets the remainder; curator gets whatever wanderer doesn't spend + its reserve.
     const curatorReserve = Math.max(2, Math.floor(totalBudget * 0.25));
     const wandererBudget = Math.max(1, totalBudget - curatorReserve);
 
     emit(`预算：总 ${totalBudget}，wanderer 上限 ${wandererBudget}，curator 保底 ≥${curatorReserve}`);
+    emit(`模型：${model}${sourceConv ? ` · 源会话：${sourceConv.title?.trim() || sourceConv.id.slice(0, 8)}` : ' · 自由冲浪（无源会话）'}`);
 
-    // Phase 1+2: planner and wanderer run in parallel.
-    //   - planner reads user's long history to extract known_profile / blind_spots
-    //   - wanderer roams the internet with NO user context (aimless serendipity)
+    // Phase 1+2: planner + wanderer in parallel.
     checkAborted(signal);
     emit('启动 planner 和 wanderer（并行）');
 
+    // Planner needs a conversation to read history from. If source is set we
+    // use it; for free-standing surfs we still pass surfConvId — planner will
+    // see only meta-messages but the wanderer carries the load.
+    const plannerConvId = effectiveSourceId ?? surfConvId;
+
     const [plan, wanderResult] = await Promise.all([
       runPlanner({
-        conversationId, botId, userId, model,
+        conversationId: plannerConvId, botId, userId, model,
         emitLog: (c) => emit(`[planner] ${c}`),
         signal,
       }),
       runWanderer({
-        conversationId, model,
+        conversationId: surfConvId, model,
         budget: wandererBudget,
-        emitLog: (c) => emit(c),  // wanderer already prefixes its logs
+        emitLog: (c) => emit(c),
         signal,
       }),
     ]);
@@ -110,27 +170,28 @@ export async function runSurf(
       emit(`[wanderer] raw_findings:\n${list}`);
     }
 
-    if (!plan.blind_spots && kp.topics_covered.length === 0) {
-      emit('⚠️ planner 输出不足，放弃本次冲浪');
+    if (!plan.blind_spots && kp.topics_covered.length === 0 && wanderResult.findings.length === 0) {
+      emit('⚠️ planner 输出不足、wanderer 也没收获，放弃本次冲浪');
+      setSurfRunStatus(surfConvId, 'done');
       return;
     }
 
-    // Phase 3: curator — has user context, filters wanderer's haul, synthesizes message
+    // Phase 3: curator
     checkAborted(signal);
     const curatorBudget = Math.max(curatorReserve, totalBudget - wanderResult.toolCallsUsed);
     emit(`启动 curator，预算 ${curatorBudget} 次`);
 
     const curatorResult = await runCurator({
-      conversationId, model,
+      conversationId: surfConvId, model,
       plan, rawFindings: wanderResult.findings,
       budget: curatorBudget,
-      emitLog: (c) => emit(c),  // curator prefixes its logs
+      emitLog: (c) => emit(c),
       signal,
     });
 
     emit(`[curator] 完成：${curatorResult.turns} 轮，${curatorResult.toolCallsUsed}/${curatorBudget} 次工具`);
 
-    // Bridges — the headline deliverable
+    // Bridges
     if (curatorResult.bridges.length > 0) {
       const bridgesText = curatorResult.bridges.map((b, i) =>
         `  ${i + 1}. "${b.finding}" ↔ "${b.user_interest}"\n     → ${b.connection}`,
@@ -153,30 +214,63 @@ export async function runSurf(
     // Delivery
     const finalMsg = curatorResult.finalMessage;
     if (!finalMsg) {
-      emit('⚠️ curator 未产出最终消息，放弃交付');
+      emit('⚠️ curator 未产出最终消息');
+      setSurfRunStatus(surfConvId, 'done');
       return;
     }
 
-    // Persist as a bot message so it shows up in the conversation transcript
-    // and survives reloads, same as review.ts does for corrections.
-    const msgId = randomUUID();
-    insertMessage(msgId, conversationId, 'bot', botId, finalMsg);
+    // 1) Always record the final message in the surf conversation.
+    const surfMsgId = randomUUID();
+    insertMessage(surfMsgId, surfConvId, 'bot', botId, finalMsg);
+    emit(finalMsg, 'surf_result');
+
+    // 2) If a source message conv was provided, also deliver into it as a
+    // bot message (preserves the "bot proactively shares" UX in chat).
+    if (sourceConv) {
+      const deliveredId = randomUUID();
+      insertMessage(deliveredId, sourceConv.id, 'bot', botId, finalMsg);
+      replyFn({
+        type: 'message',
+        conversationId: sourceConv.id,
+        messageId: deliveredId,
+        content: finalMsg,
+      });
+    }
+
+    // Always echo to the surf conv channel so the surf-tab view updates live.
     replyFn({
       type: 'message',
-      conversationId,
-      messageId: msgId,
+      conversationId: surfConvId,
+      messageId: surfMsgId,
       content: finalMsg,
+      metadata: { sender_kind: 'surf_result' },
     });
-    // Also keep a surf_result log on the monitor panel's SSE stream.
-    emit(finalMsg, 'surf_result');
+
+    setSurfRunStatus(surfConvId, 'done');
   } catch (e: any) {
     if (e?.name === 'AbortError') {
       emit('已中断');
+      setSurfRunStatus(surfConvId, 'aborted');
       return;
     }
+    emit(`⚠️ 出错：${e?.message ?? e}`, 'error');
+    setSurfRunStatus(surfConvId, 'error');
     throw e;
   } finally {
-    activeSurfs.delete(conversationId);
-    surfEvents.emit('done', { botId, conversationId, timestamp: Date.now() });
+    activeSurfs.delete(surfConvId);
+    // Clean up the per-message-conv guard if this surf was bound to one.
+    let sourceMessageConvId: string | null = null;
+    for (const [msgConv, sConv] of surfsByMessageConv) {
+      if (sConv === surfConvId) {
+        sourceMessageConvId = msgConv;
+        surfsByMessageConv.delete(msgConv);
+      }
+    }
+    surfEvents.emit('done', {
+      surfConvId,
+      conversationId: surfConvId,
+      sourceMessageConvId,
+      timestamp: Date.now(),
+    });
   }
 }

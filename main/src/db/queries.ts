@@ -320,6 +320,129 @@ export function getAttachmentsForMessages(messageIds: string[]): Record<string, 
   return map;
 }
 
+// ---------- Surf runs / Review runs (standalone tabs) ----------
+
+export interface SurfRunRow {
+  conversation_id: string;
+  source_message_conv_id: string | null;
+  model_slug: string;
+  status: string;
+  started_at: number | null;
+  ended_at: number | null;
+  budget: number;
+  created_at: number;
+}
+
+export function createSurfRun(params: {
+  conversationId: string;
+  sourceMessageConvId: string | null;
+  modelSlug: string;
+  budget: number;
+}): void {
+  getDb().query(
+    `INSERT INTO surf_runs (conversation_id, source_message_conv_id, model_slug, budget)
+     VALUES (?, ?, ?, ?)`
+  ).run(params.conversationId, params.sourceMessageConvId,
+        params.modelSlug, params.budget);
+}
+
+export function getSurfRun(conversationId: string): SurfRunRow | null {
+  return getDb().query<SurfRunRow, [string]>(
+    'SELECT * FROM surf_runs WHERE conversation_id = ?'
+  ).get(conversationId);
+}
+
+export function setSurfRunStatus(
+  conversationId: string, status: string,
+): void {
+  const isFinal = ['done', 'error', 'aborted'].includes(status);
+  getDb().query(
+    isFinal
+      ? `UPDATE surf_runs SET status = ?, ended_at = unixepoch() WHERE conversation_id = ?`
+      : `UPDATE surf_runs SET status = ?, started_at = COALESCE(started_at, unixepoch()) WHERE conversation_id = ?`
+  ).run(status, conversationId);
+}
+
+export interface ReviewRunRow {
+  conversation_id: string;
+  source_message_conv_id: string | null;
+  model_slug: string;
+  status: string;
+  started_at: number | null;
+  ended_at: number | null;
+  created_at: number;
+}
+
+export function createReviewRun(params: {
+  conversationId: string;
+  sourceMessageConvId: string | null;
+  modelSlug: string;
+}): void {
+  getDb().query(
+    `INSERT INTO review_runs (conversation_id, source_message_conv_id, model_slug)
+     VALUES (?, ?, ?)`
+  ).run(params.conversationId, params.sourceMessageConvId, params.modelSlug);
+}
+
+export function getReviewRun(conversationId: string): ReviewRunRow | null {
+  return getDb().query<ReviewRunRow, [string]>(
+    'SELECT * FROM review_runs WHERE conversation_id = ?'
+  ).get(conversationId);
+}
+
+export function setReviewRunStatus(
+  conversationId: string, status: string,
+): void {
+  const isFinal = ['done', 'error', 'aborted'].includes(status);
+  getDb().query(
+    isFinal
+      ? `UPDATE review_runs SET status = ?, ended_at = unixepoch() WHERE conversation_id = ?`
+      : `UPDATE review_runs SET status = ?, started_at = COALESCE(started_at, unixepoch()) WHERE conversation_id = ?`
+  ).run(status, conversationId);
+}
+
+// ---------- Model assignments (UI-managed per-task model picks) ----------
+
+export type ModelTaskType =
+  | 'chat'      // default chat reply
+  | 'debounce'  // debounce judge
+  | 'review'    // self-review
+  | 'surfing'   // surfing planner / curator
+  | 'title'     // title generation
+  | 'perception'// task-phase + cross-focus signals
+  | 'portrait'  // portrait generators
+  ;
+
+export const MODEL_TASK_TYPES: readonly ModelTaskType[] = [
+  'chat', 'debounce', 'review', 'surfing', 'title', 'perception', 'portrait',
+];
+
+export interface ModelAssignmentRow {
+  task_type: ModelTaskType;
+  slug: string;
+  updated_at: number;
+}
+
+export function listModelAssignments(): ModelAssignmentRow[] {
+  return getDb().query<ModelAssignmentRow, []>(
+    `SELECT * FROM model_assignments`
+  ).all();
+}
+
+export function getModelAssignment(taskType: ModelTaskType): string | null {
+  const row = getDb().query<{ slug: string }, [string]>(
+    `SELECT slug FROM model_assignments WHERE task_type = ?`
+  ).get(taskType);
+  return row?.slug ?? null;
+}
+
+export function upsertModelAssignment(taskType: ModelTaskType, slug: string): void {
+  getDb().query(
+    `INSERT INTO model_assignments (task_type, slug, updated_at) VALUES (?, ?, unixepoch())
+     ON CONFLICT(task_type) DO UPDATE SET slug = excluded.slug, updated_at = unixepoch()`
+  ).run(taskType, slug);
+}
+
 // ---------- Debate / Provider models ----------
 
 export interface ProviderModelRow {

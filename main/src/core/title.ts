@@ -4,6 +4,7 @@ import { logAudit } from '../llm/audit';
 import {
   findConversationById, getMessages, updateConversationTitle,
 } from '../db/queries';
+import { modelFor } from './models';
 import type { OutboundMessage } from '../bus/types';
 
 // Generate (or regenerate) a short title for a conversation by summarizing
@@ -29,8 +30,7 @@ export async function generateTitle(
     const history = getMessages(conversationId, historyLimit);
     if (history.length < 2) return; // need at least one exchange
 
-    const cfg = configManager.get();
-    const model = cfg.openrouter.titleModel ?? cfg.openrouter.debounceModel;
+    const model = modelFor('title');
 
     const promptText = await configManager.readPrompt('title.md');
 

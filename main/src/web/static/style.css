@@ -460,11 +460,82 @@ main {
 
 #chat-view,
 #debate-view,
-#portrait-view {
+#portrait-view,
+#surf-view,
+#review-view {
   flex: 1;
   display: none;
   flex-direction: column;
   min-height: 0;
+}
+
+/* ── Surf / Review view (live log + final bot bubble) ── */
+#surf-header,
+#review-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#surf-title-wrap, #review-title-wrap {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#surf-title, #review-title { font-size: 14px; font-weight: 600; color: var(--text-1); }
+#surf-meta, #review-meta { font-size: 11px; color: var(--text-4); }
+
+#surf-log,
+#review-log {
+  display: flex; flex-direction: column;
+  gap: 4px;
+  padding: 16px 24px 22px;
+  font-family: "SF Mono", "Fira Code", ui-monospace, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.surf-log-line {
+  display: flex; gap: 12px;
+  color: var(--text-2);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.surf-log-line.error { color: var(--red, #dc2626); }
+.surf-log-line.bridges { color: var(--accent); font-weight: 500; }
+.surf-log-line .surf-log-time {
+  color: var(--text-4);
+  font-size: 10.5px;
+  flex-shrink: 0;
+  min-width: 56px;
+  padding-top: 1px;
+}
+.surf-log-line .surf-log-text { flex: 1; }
+
+.surf-result-bubble,
+.review-result-bubble {
+  align-self: flex-start;
+  margin-top: 14px;
+  max-width: 88%;
+  padding: 12px 16px;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-muted);
+  color: var(--text-1);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.surf-result-bubble::before { content: "🌊 冲浪结果"; }
+.review-result-bubble::before { content: "🪞 回顾结论"; }
+.surf-result-bubble::before,
+.review-result-bubble::before {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  color: var(--accent);
 }
 
 /* ── Debate view ── */
@@ -766,6 +837,29 @@ main {
   gap: 8px;
   margin-top: 6px;
 }
+
+.me-assignments-list {
+  display: flex; flex-direction: column;
+  gap: 12px;
+}
+.me-assignments-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.me-assignments-row label {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.me-assignments-row .me-assignments-hint {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-4);
+  margin-top: 2px;
+  font-weight: 400;
+}
 .me-add-model input {
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -875,6 +969,25 @@ main {
   padding: 0 6px;
 }
 .portrait-with-image input { accent-color: var(--accent); }
+
+.portrait-model-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border-light);
+}
+.portrait-model-row .portrait-model-label {
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.portrait-model-row > div { flex: 1; min-width: 0; max-width: 360px; }
+.portrait-model-row .portrait-model-hint {
+  font-size: 10.5px;
+  color: var(--text-4);
+  flex-shrink: 0;
+}
 
 .portrait-feed {
   display: flex;
@@ -1104,6 +1217,100 @@ main {
 .source-list-row:hover { background: var(--bg-hover); }
 .source-list-row .sl-title { flex: 1; font-size: 13px; color: var(--text-1); }
 .source-list-row .sl-meta { font-size: 11px; color: var(--text-4); }
+
+/* ── Reusable searchable model picker (model-picker.js) ── */
+
+.model-picker-wrap {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.model-picker-trigger {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  background: var(--bg-panel);
+  color: var(--text-1);
+  font: inherit; font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-picker-trigger:hover { border-color: var(--accent-muted); }
+.model-picker-trigger.empty { color: var(--text-4); }
+
+.model-picker-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+  background: var(--bg-panel);
+  box-shadow: 0 10px 30px -8px rgba(0,0,0,0.18);
+  max-height: 320px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+.model-picker-search {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border-light);
+  padding: 9px 12px;
+  font: inherit; font-size: 13px;
+  background: var(--bg);
+  color: var(--text-1);
+  outline: none;
+}
+.model-picker-search::placeholder { color: var(--text-4); }
+
+.model-picker-list {
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.model-picker-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-4);
+}
+.model-picker-empty .link {
+  background: none; border: none;
+  color: var(--accent); cursor: pointer;
+  text-decoration: underline;
+  font: inherit;
+}
+
+.model-picker-list .model-picker-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  font-size: 13px;
+}
+.model-picker-list .model-picker-row:last-child { border-bottom: none; }
+.model-picker-list .model-picker-row:hover { background: var(--bg-hover); }
+.model-picker-list .model-picker-row.selected {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.model-picker-list .mp-name { flex: 1; }
+.model-picker-list .mp-slug {
+  font-size: 11px; color: var(--text-4);
+  font-family: ui-monospace, monospace;
+}
+.model-picker-list .mp-provider {
+  font-size: 10px; color: var(--text-4);
+  background: var(--bg-soft);
+  padding: 1px 6px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
 
 /* Model picker (toggleable list of provider_models) */
 .model-picker {

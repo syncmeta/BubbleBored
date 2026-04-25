@@ -24,6 +24,7 @@ import { cancelPendingReview } from './core/review';
 import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
+import { ensureModelAssignmentsSeeded } from './core/models';
 import type { OutboundMessage } from './bus/types';
 
 // Initialize
@@ -32,6 +33,8 @@ console.log('[init] config loaded');
 
 getDb();
 console.log('[init] database ready');
+
+ensureModelAssignmentsSeeded();
 
 syncBots();
 console.log('[init] bots synced');
@@ -51,12 +54,22 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // Signal any running generation to stop after 2s grace period
   signalNewMessage(conversationId);
 
-  // Handle /surf command
+  // Handle /surf command — creates a 冲浪 tab conversation pinned to the
+  // current message conv, runs the surf, and delivers the final message back
+  // into this chat (preserves the "bot proactively shares" UX). The full run
+  // record lives in the new surf conv for inspection.
   if (content === '/surf') {
-    import('./core/surfing/searcher').then(({ runSurf }) => {
-      runSurf(conversationId, botId, userId, replyFn, undefined, 'user').catch(e =>
-        console.error('[surf] error:', e)
-      );
+    import('./core/surfing/searcher').then(({ runSurf, createSurfConversation }) => {
+      import('./core/models').then(({ modelFor }) => {
+        const surfConvId = createSurfConversation({
+          botId, userId,
+          sourceMessageConvId: conversationId,
+          modelSlug: modelFor('surfing'),
+          budget: configManager.getBotConfig(botId).surfing.maxRequests,
+        });
+        runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })
+          .catch(e => console.error('[surf] error:', e));
+      });
     });
     return;
   }

@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
 import {
-  findUserByChannel, createUser, findUserById,
+  findUserByChannel, createUser,
   getUserDashboardProfile, upsertUserDashboardProfile, setUserDisplayName,
   listAiPicks, createAiPick, softDeleteAiPick, hardDeleteAiPick,
   listProviderModels, createProviderModel, updateProviderModelEnabled,
   deleteProviderModel,
   findProviderModelBySlug,
+  listModelAssignments, upsertModelAssignment, MODEL_TASK_TYPES,
+  type ModelTaskType,
 } from '../db/queries';
+import { modelFor } from '../core/models';
 
 export const meRoutes = new Hono();
 
@@ -141,6 +144,34 @@ meRoutes.patch('/provider-models/:id', async (c) => {
 
 meRoutes.delete('/provider-models/:id', (c) => {
   deleteProviderModel(c.req.param('id'));
+  return c.json({ ok: true });
+});
+
+// ── Model assignments (one slug per task type) ──
+
+meRoutes.get('/model-assignments', (c) => {
+  const rows = listModelAssignments();
+  const map: Record<string, string> = {};
+  for (const t of MODEL_TASK_TYPES) {
+    // modelFor() falls back to config.yaml if the row is missing. The UI
+    // sees a fully-populated map either way, so the user always knows what
+    // model is in effect.
+    map[t] = rows.find(r => r.task_type === t)?.slug ?? modelFor(t);
+  }
+  return c.json(map);
+});
+
+meRoutes.patch('/model-assignments', async (c) => {
+  const body = await c.req.json<Partial<Record<ModelTaskType, string>>>();
+  for (const taskType of MODEL_TASK_TYPES) {
+    const slug = body[taskType];
+    if (typeof slug === 'string' && slug.trim()) {
+      // We don't insist the slug exists in provider_models — that lets the
+      // user point at a model that's not in their library yet, and the
+      // picker UI will offer to add it. But strip whitespace.
+      upsertModelAssignment(taskType, slug.trim());
+    }
+  }
   return c.json({ ok: true });
 });
 
