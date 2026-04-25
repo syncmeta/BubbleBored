@@ -5,8 +5,6 @@ import {
   createConversation, findConversationById, deleteConversation,
   getMessages, listConversationsByUser,
   createDebateSettings, getDebateSettings,
-  listProviderModels, createProviderModel, updateProviderModelEnabled,
-  deleteProviderModel,
 } from '../db/queries';
 import { runDebateRound, injectClarification, debateEvents } from '../core/debate/orchestrator';
 import { messageBus } from '../bus/router';
@@ -32,40 +30,6 @@ function makeWebReplyFn(conv: { id: string; user_id: string }) {
     }
   };
 }
-
-// ── Provider models library (used by debate model picker; user-managed) ──
-
-debateRoutes.get('/provider-models', (c) => {
-  const onlyEnabled = c.req.query('enabled') === '1';
-  return c.json(listProviderModels(onlyEnabled));
-});
-
-debateRoutes.post('/provider-models', async (c) => {
-  const body = await c.req.json<{ provider: string; slug: string; displayName: string }>();
-  if (!body.slug || !body.displayName) {
-    return c.json({ error: 'slug + displayName required' }, 400);
-  }
-  const id = `pm_${body.slug.replace(/[^a-z0-9]/gi, '_')}_${randomUUID().slice(0, 6)}`;
-  try {
-    createProviderModel(id, body.provider || 'custom', body.slug, body.displayName);
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? 'create failed' }, 400);
-  }
-  return c.json({ id });
-});
-
-debateRoutes.patch('/provider-models/:id', async (c) => {
-  const body = await c.req.json<{ enabled?: boolean }>();
-  if (typeof body.enabled === 'boolean') {
-    updateProviderModelEnabled(c.req.param('id'), body.enabled);
-  }
-  return c.json({ ok: true });
-});
-
-debateRoutes.delete('/provider-models/:id', (c) => {
-  deleteProviderModel(c.req.param('id'));
-  return c.json({ ok: true });
-});
 
 // ── Debate conversations ──
 

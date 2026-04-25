@@ -15,6 +15,13 @@ export const SurfingConfigSchema = z.object({
   maxIntervalSec: z.number().int().default(86400),
   idleStopSec: z.number().int().default(172800),
   maxRequests: z.number().int().default(10),
+  // Burn one serendipity slot (legacy blind wanderer + curator + bridges)
+  // every N successful runs. 0 disables the slot. The vector path is the
+  // default; this just keeps cross-domain surprise alive at low frequency.
+  serendipityEveryN: z.number().int().min(0).default(5),
+  // Days within which a (topic, mode) vector is treated as "recently dug"
+  // and skipped by the picker. Surfaced in the 你 tab.
+  dedupWindowDays: z.number().int().min(0).default(14),
 });
 
 export const DebounceConfigSchema = z.object({

@@ -3,10 +3,14 @@ import { randomUUID } from 'crypto';
 import { configManager } from '../../config/loader';
 import {
   findConversationById, insertMessage, createConversation, createSurfRun,
-  setSurfRunStatus, getSurfRun,
+  setSurfRunStatus, setSurfRunKind, setSurfRunVectorJson, getSurfRun,
+  recordSurfVector, runsSinceLastSerendipity,
 } from '../../db/queries';
-import { runPlanner } from './planner';
+import { runVectorPicker, vectorHash, type DiggingVector } from './vector-picker';
+import { runDigger } from './digger';
+import { runSynthesizer } from './synthesizer';
 import { runWanderer } from './wanderer';
+import { runPlanner } from './planner';
 import { runCurator } from './curator';
 import { modelFor } from '../models';
 import type { OutboundMessage } from '../../bus/types';
@@ -21,6 +25,12 @@ export const activeSurfs = new Map<string, AbortController>();
 export const surfsByMessageConv = new Map<string, string>(); // msgConvId → surfConvId
 
 export type SurfTrigger = 'auto' | 'user' | 'panel';
+
+export interface VectorOverride {
+  topic: string;
+  mode: DiggingVector['mode'];
+  freshness_window?: string;
+}
 
 export function stopSurf(surfConvId: string): boolean {
   const controller = activeSurfs.get(surfConvId);
@@ -86,14 +96,21 @@ function checkAborted(signal?: AbortSignal): void {
 
 export interface RunSurfParams {
   surfConvId: string;             // the 冲浪 tab conv that owns this run
-  sourceConvId?: string | null;   // optional message conv that provides planner context
+  sourceConvId?: string | null;   // optional message conv that provides picker context
   replyFn: (msg: OutboundMessage) => void;
   signal?: AbortSignal;
   trigger?: SurfTrigger;
+  // User-specified vector override (skips picker entirely).
+  vectorOverride?: VectorOverride | null;
+  // Force this run to burn a serendipity slot regardless of counter state.
+  forceSerendipity?: boolean;
 }
 
 export async function runSurf(params: RunSurfParams): Promise<void> {
-  const { surfConvId, sourceConvId, replyFn, signal, trigger = 'user' } = params;
+  const {
+    surfConvId, sourceConvId, replyFn, signal, trigger = 'user',
+    vectorOverride = null, forceSerendipity = false,
+  } = params;
   const emit = makeEmitter(surfConvId);
   setSurfRunStatus(surfConvId, 'running');
 
@@ -116,134 +133,137 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
     const botId = surfConv.bot_id;
     const userId = surfConv.user_id;
 
-    // Source conversation provides planner context (known_profile etc).
-    // For free-standing surfs, planner gets minimal context and leans heavily
-    // on wanderer.
     const effectiveSourceId = sourceConvId ?? surfRun.source_message_conv_id;
     const sourceConv = effectiveSourceId ? findConversationById(effectiveSourceId) : null;
 
     const model = surfRun.model_slug || modelFor('surfing');
     const totalBudget = surfRun.budget;
 
-    // Reserve budget for curator: at least 2, or up to 25% of total, whichever is larger.
-    const curatorReserve = Math.max(2, Math.floor(totalBudget * 0.25));
-    const wandererBudget = Math.max(1, totalBudget - curatorReserve);
-
-    emit(`预算：总 ${totalBudget}，wanderer 上限 ${wandererBudget}，curator 保底 ≥${curatorReserve}`);
     emit(`模型：${model}${sourceConv ? ` · 源会话：${sourceConv.title?.trim() || sourceConv.id.slice(0, 8)}` : ' · 自由冲浪（无源会话）'}`);
+    emit(`总预算：${totalBudget}`);
 
-    // Phase 1+2: planner + wanderer in parallel.
-    checkAborted(signal);
-    emit('启动 planner 和 wanderer（并行）');
-
-    // Planner needs a conversation to read history from. If source is set we
-    // use it; for free-standing surfs we still pass surfConvId — planner will
-    // see only meta-messages but the wanderer carries the load.
-    const plannerConvId = effectiveSourceId ?? surfConvId;
-
-    const [plan, wanderResult] = await Promise.all([
-      runPlanner({
-        conversationId: plannerConvId, botId, userId, model,
-        emitLog: (c) => emit(`[planner] ${c}`),
-        signal,
-      }),
-      runWanderer({
-        conversationId: surfConvId, model,
-        budget: wandererBudget,
-        emitLog: (c) => emit(c),
-        signal,
-      }),
-    ]);
-
-    // Planner summary
-    if (plan.blind_spots) emit(`[planner] 盲区：${plan.blind_spots}`);
-    if (plan.needs) emit(`[planner] 需要：${plan.needs}`);
-    const kp = plan.known_profile;
-    if (kp.topics_covered.length > 0) emit(`[planner] 已聊主题：${kp.topics_covered.join('、')}`);
-    if (kp.open_questions.length > 0) emit(`[planner] 未解问题：${kp.open_questions.join('、')}`);
-    if (kp.interests.length > 0) emit(`[planner] 长期兴趣：${kp.interests.join('、')}`);
-
-    // Wanderer summary
-    emit(`[wanderer] 完成：${wanderResult.findings.length} 条发现，${wanderResult.toolCallsUsed}/${wandererBudget} 次工具（${wanderResult.turns} 轮）`);
-    if (wanderResult.findings.length > 0) {
-      const list = wanderResult.findings.map((f, i) => `  ${i + 1}. ${f.title}`).join('\n');
-      emit(`[wanderer] raw_findings:\n${list}`);
+    // ── Decide kind: serendipity slot vs. vector run ──
+    let useSerendipity = forceSerendipity;
+    if (!useSerendipity && !vectorOverride) {
+      const everyN = configManager.getBotConfig(botId).surfing.serendipityEveryN ?? 5;
+      if (everyN > 0) {
+        const since = runsSinceLastSerendipity(userId, botId);
+        if (since >= everyN) {
+          useSerendipity = true;
+          emit(`🎲 serendipity slot 触发（距上次 ${since === Number.MAX_SAFE_INTEGER ? '从未' : since} 次运行 ≥ ${everyN}）`);
+        }
+      }
     }
 
-    if (!plan.blind_spots && kp.topics_covered.length === 0 && wanderResult.findings.length === 0) {
-      emit('⚠️ planner 输出不足、wanderer 也没收获，放弃本次冲浪');
-      setSurfRunStatus(surfConvId, 'done');
+    if (useSerendipity) {
+      setSurfRunKind(surfConvId, 'serendipity');
+      await runSerendipityPath({
+        surfConvId, sourceConv, botId, userId,
+        model, totalBudget, signal, emit, replyFn,
+      });
       return;
     }
 
-    // Phase 3: curator
-    checkAborted(signal);
-    const curatorBudget = Math.max(curatorReserve, totalBudget - wanderResult.toolCallsUsed);
-    emit(`启动 curator，预算 ${curatorBudget} 次`);
+    setSurfRunKind(surfConvId, 'vector');
 
-    const curatorResult = await runCurator({
+    // ── Vector path ──
+    checkAborted(signal);
+
+    const picker = await runVectorPicker({
+      surfConvId, sourceConvId: effectiveSourceId ?? null,
+      botId, userId, model,
+      budgetHint: totalBudget,
+      emitLog: (c) => emit(c),
+      signal,
+      override: vectorOverride,
+    });
+
+    if (picker.candidates.length > 0) {
+      const lines = picker.candidates.map((c, i) => {
+        const sel = picker.picked.includes(c) ? '✓' : ' ';
+        const score = c.score_hint != null ? ` (s=${c.score_hint.toFixed(2)})` : '';
+        const fresh = c.freshness_window ? ` [${c.freshness_window}]` : '';
+        return `  ${sel} ${i + 1}. [${c.mode}]${fresh} ${c.topic}${score} — ${c.why_now}`;
+      }).join('\n');
+      emit(`[picker] 候选向量：\n${lines}`);
+    }
+
+    if (picker.picked.length === 0) {
+      emit('⚠️ picker 没产出任何可用向量，退化到 serendipity');
+      setSurfRunKind(surfConvId, 'serendipity');
+      await runSerendipityPath({
+        surfConvId, sourceConv, botId, userId,
+        model, totalBudget, signal, emit, replyFn,
+      });
+      return;
+    }
+
+    if (picker.blindSpotsNote) {
+      emit(`[picker] blind_spots note：${picker.blindSpotsNote}`);
+    }
+
+    setSurfRunVectorJson(surfConvId, JSON.stringify(picker.picked));
+
+    // Record one row per picked vector for dedup.
+    for (const v of picker.picked) {
+      try {
+        recordSurfVector({
+          id: randomUUID(),
+          userId, botId, surfConvId,
+          vectorHash: vectorHash(v.topic, v.mode),
+          topic: v.topic, mode: v.mode,
+          whyNow: v.why_now,
+          freshnessWindow: v.freshness_window,
+          wasOverride: !!vectorOverride,
+        });
+      } catch (e: any) {
+        console.warn('[surf] recordSurfVector failed:', e?.message ?? e);
+      }
+    }
+
+    // Split budget across pickers: synthesizer gets a small fixed reserve;
+    // diggers split the rest evenly.
+    const synthReserve = 0; // synthesizer doesn't use search tools
+    const diggerBudgetTotal = Math.max(1, totalBudget - synthReserve);
+    const perDigger = Math.max(2, Math.floor(diggerBudgetTotal / picker.picked.length));
+    emit(`启动 digger × ${picker.picked.length}（每个预算 ${perDigger}）`);
+
+    checkAborted(signal);
+
+    const diggerResults = await Promise.all(picker.picked.map(v =>
+      runDigger({
+        conversationId: surfConvId, model,
+        vector: v, knownProfile: picker.knownProfile,
+        budget: perDigger,
+        emitLog: (c) => emit(c),
+        signal,
+      })
+    ));
+
+    const totalFindings = diggerResults.reduce((n, r) => n + r.findings.length, 0);
+    emit(`所有 digger 完成：${totalFindings} 条 finding（共 ${diggerResults.reduce((n, r) => n + r.toolCallsUsed, 0)} 次工具调用）`);
+
+    if (totalFindings === 0) {
+      emit('⚠️ 所有 digger 都空手而归，跳过 synthesizer');
+    }
+
+    checkAborted(signal);
+
+    const synth = await runSynthesizer({
       conversationId: surfConvId, model,
-      plan, rawFindings: wanderResult.findings,
-      budget: curatorBudget,
+      diggerResults, knownProfile: picker.knownProfile,
       emitLog: (c) => emit(c),
       signal,
     });
 
-    emit(`[curator] 完成：${curatorResult.turns} 轮，${curatorResult.toolCallsUsed}/${curatorBudget} 次工具`);
-
-    // Bridges
-    if (curatorResult.bridges.length > 0) {
-      const bridgesText = curatorResult.bridges.map((b, i) =>
-        `  ${i + 1}. "${b.finding}" ↔ "${b.user_interest}"\n     → ${b.connection}`,
-      ).join('\n');
-      emit(`🌉 bridges (${curatorResult.bridges.length}):\n${bridgesText}`, 'surf_bridges');
-    } else {
-      emit('🌉 bridges: (无——wanderer 捡回来的东西都太直白或太偏离)');
+    if (synth.droppedIndices.length > 0) {
+      const list = synth.droppedIndices.map(d => `  ${d.index}: ${d.reason}`).join('\n');
+      emit(`[synth] dropped:\n${list}`);
     }
 
-    if (curatorResult.novelFindings.length > 0) {
-      emit(`✨ novel:\n${curatorResult.novelFindings.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
-    }
-    if (curatorResult.discardedAsKnown.length > 0) {
-      emit(`♻️  已知淘汰:\n${curatorResult.discardedAsKnown.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
-    }
-    if (curatorResult.discardedIrrelevant.length > 0) {
-      emit(`🗑️  无关淘汰:\n${curatorResult.discardedIrrelevant.map((x, i) => `  ${i + 1}. ${x}`).join('\n')}`);
-    }
-
-    // Delivery
-    const finalMsg = curatorResult.finalMessage;
-    if (!finalMsg) {
-      emit('⚠️ curator 未产出最终消息');
-      setSurfRunStatus(surfConvId, 'done');
-      return;
-    }
-
-    // 1) Always record the final message in the surf conversation.
-    const surfMsgId = randomUUID();
-    insertMessage(surfMsgId, surfConvId, 'bot', botId, finalMsg);
-    emit(finalMsg, 'surf_result');
-
-    // 2) If a source message conv was provided, also deliver into it as a
-    // bot message (preserves the "bot proactively shares" UX in chat).
-    if (sourceConv) {
-      const deliveredId = randomUUID();
-      insertMessage(deliveredId, sourceConv.id, 'bot', botId, finalMsg);
-      replyFn({
-        type: 'message',
-        conversationId: sourceConv.id,
-        messageId: deliveredId,
-        content: finalMsg,
-      });
-    }
-
-    // Always echo to the surf conv channel so the surf-tab view updates live.
-    replyFn({
-      type: 'message',
-      conversationId: surfConvId,
-      messageId: surfMsgId,
-      content: finalMsg,
-      metadata: { sender_kind: 'surf_result' },
+    await deliverFinalMessage({
+      surfConvId, surfConv, sourceConv,
+      finalMsg: synth.finalMessage, replyFn, emit,
     });
 
     setSurfRunStatus(surfConvId, 'done');
@@ -258,7 +278,6 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
     throw e;
   } finally {
     activeSurfs.delete(surfConvId);
-    // Clean up the per-message-conv guard if this surf was bound to one.
     let sourceMessageConvId: string | null = null;
     for (const [msgConv, sConv] of surfsByMessageConv) {
       if (sConv === surfConvId) {
@@ -273,4 +292,120 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
       timestamp: Date.now(),
     });
   }
+}
+
+// Periodic blind-wander slot. Mirrors the original planner+wanderer+curator
+// pipeline so we keep the cross-domain bridge style alive at low frequency.
+async function runSerendipityPath(params: {
+  surfConvId: string;
+  sourceConv: any | null;
+  botId: string;
+  userId: string;
+  model: string;
+  totalBudget: number;
+  signal: AbortSignal | undefined;
+  emit: (c: string, type?: string) => void;
+  replyFn: (msg: OutboundMessage) => void;
+}): Promise<void> {
+  const { surfConvId, sourceConv, botId, userId, model, totalBudget, signal, emit, replyFn } = params;
+
+  const curatorReserve = Math.max(2, Math.floor(totalBudget * 0.25));
+  const wandererBudget = Math.max(1, totalBudget - curatorReserve);
+  emit(`[serendipity] wanderer 预算 ${wandererBudget}，curator 保底 ≥${curatorReserve}`);
+
+  const plannerConvId = sourceConv?.id ?? surfConvId;
+  const [plan, wanderResult] = await Promise.all([
+    runPlanner({
+      conversationId: plannerConvId, botId, userId, model,
+      emitLog: (c) => emit(`[planner] ${c}`),
+      signal,
+    }),
+    runWanderer({
+      conversationId: surfConvId, model,
+      budget: wandererBudget,
+      emitLog: (c) => emit(c),
+      signal,
+    }),
+  ]);
+
+  if (plan.blind_spots) emit(`[planner] 盲区：${plan.blind_spots}`);
+  if (plan.needs) emit(`[planner] 需要：${plan.needs}`);
+  const kp = plan.known_profile;
+  if (kp.topics_covered.length > 0) emit(`[planner] 已聊主题：${kp.topics_covered.join('、')}`);
+  if (kp.open_questions.length > 0) emit(`[planner] 未解问题：${kp.open_questions.join('、')}`);
+
+  emit(`[wanderer] 完成：${wanderResult.findings.length} 条`);
+
+  if (!plan.blind_spots && kp.topics_covered.length === 0 && wanderResult.findings.length === 0) {
+    emit('⚠️ planner 输出不足、wanderer 也没收获，放弃本次冲浪');
+    setSurfRunStatus(surfConvId, 'done');
+    return;
+  }
+
+  checkAborted(signal);
+  const curatorBudget = Math.max(curatorReserve, totalBudget - wanderResult.toolCallsUsed);
+  const curatorResult = await runCurator({
+    conversationId: surfConvId, model,
+    plan, rawFindings: wanderResult.findings,
+    budget: curatorBudget,
+    emitLog: (c) => emit(c),
+    signal,
+  });
+
+  if (curatorResult.bridges.length > 0) {
+    const bridgesText = curatorResult.bridges.map((b, i) =>
+      `  ${i + 1}. "${b.finding}" ↔ "${b.user_interest}"\n     → ${b.connection}`,
+    ).join('\n');
+    emit(`🌉 bridges (${curatorResult.bridges.length}):\n${bridgesText}`, 'surf_bridges');
+  }
+
+  await deliverFinalMessage({
+    surfConvId,
+    surfConv: findConversationById(surfConvId),
+    sourceConv,
+    finalMsg: curatorResult.finalMessage,
+    replyFn, emit,
+  });
+
+  setSurfRunStatus(surfConvId, 'done');
+}
+
+async function deliverFinalMessage(params: {
+  surfConvId: string;
+  surfConv: any;
+  sourceConv: any | null;
+  finalMsg: string;
+  replyFn: (msg: OutboundMessage) => void;
+  emit: (c: string, type?: string) => void;
+}): Promise<void> {
+  const { surfConvId, surfConv, sourceConv, finalMsg, replyFn, emit } = params;
+  if (!finalMsg) {
+    emit('⚠️ 未产出最终消息');
+    return;
+  }
+  const botId = surfConv?.bot_id;
+  if (!botId) return;
+
+  const surfMsgId = randomUUID();
+  insertMessage(surfMsgId, surfConvId, 'bot', botId, finalMsg);
+  emit(finalMsg, 'surf_result');
+
+  if (sourceConv) {
+    const deliveredId = randomUUID();
+    insertMessage(deliveredId, sourceConv.id, 'bot', botId, finalMsg);
+    replyFn({
+      type: 'message',
+      conversationId: sourceConv.id,
+      messageId: deliveredId,
+      content: finalMsg,
+    });
+  }
+
+  replyFn({
+    type: 'message',
+    conversationId: surfConvId,
+    messageId: surfMsgId,
+    content: finalMsg,
+    metadata: { sender_kind: 'surf_result' },
+  });
 }

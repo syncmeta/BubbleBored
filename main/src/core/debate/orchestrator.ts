@@ -5,7 +5,7 @@ import { logAudit } from '../../llm/audit';
 import { configManager } from '../../config/loader';
 import {
   findConversationById, getMessages, insertMessage, updateConversationActivity,
-  getDebateSettings, bumpDebateRound, findProviderModelBySlug,
+  getDebateSettings, bumpDebateRound,
 } from '../../db/queries';
 import type { OutboundMessage } from '../../bus/types';
 
@@ -145,21 +145,15 @@ export async function runDebateRound(
   const sourceContext = await loadSourceContext(conv);
   const systemPrompt = await loadPrompt();
 
-  // Resolve display names from the provider library (fallback to slug if
-  // the slug isn't registered for some reason).
-  const displayMap = new Map<string, string>();
-  for (const slug of slugs) {
-    const row = findProviderModelBySlug(slug);
-    displayMap.set(slug, row?.display_name ?? slug);
-  }
-
   // Fan out — each model sees the same transcript, doesn't see the others'
   // *current* round (they speak simultaneously). Next round they'll catch up.
+  // displayName falls back to the slug itself; the UI can map to a friendly
+  // label using its OpenRouter cache when rendering.
   const debaters = await Promise.allSettled(slugs.map(slug =>
     runOneDebater({
       conversationId,
       slug,
-      displayName: displayMap.get(slug) ?? slug,
+      displayName: slug,
       topic: settings.topic,
       sourceContext,
       transcript: renderTranscript(history, slug),

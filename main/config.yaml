@@ -4,11 +4,11 @@ server:
 
 openrouter:
   defaultModel: "anthropic/claude-opus-4.6"
-  debounceModel: "openrouter/free"
+  debounceModel: "tencent/hy3-preview:free"
   reviewModel: "x-ai/grok-4.20"
   surfingModel: "x-ai/grok-4.20"
 
-  titleModel: "openrouter/free" # 不填则用 debounceModel
+  titleModel: "deepseek/deepseek-v4-flash" # 不填则用 debounceModel
 
 defaults:
   accessMode: "open"

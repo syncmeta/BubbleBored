@@ -16,6 +16,7 @@ import { reviewRoutes } from './api/review';
 import { debateRoutes } from './api/debate';
 import { portraitRoutes } from './api/portrait';
 import { meRoutes } from './api/me';
+import { openrouterRoutes } from './api/openrouter';
 import { mobileApiRoutes } from './api/mobile';
 import { uploadRoutes } from './api/upload';
 import { addMessage as debounceAdd } from './core/debounce';
@@ -150,6 +151,7 @@ app.route('/api/review', reviewRoutes);
 app.route('/api/debate', debateRoutes);
 app.route('/api/portrait', portraitRoutes);
 app.route('/api/me', meRoutes);
+app.route('/api/openrouter', openrouterRoutes);
 app.route('/api/mobile', mobileApiRoutes);
 app.route('/api/upload', uploadRoutes);
 

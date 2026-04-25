@@ -9,6 +9,7 @@ import {
 import {
   surfEvents, activeSurfs, surfsByMessageConv,
   stopSurf, runSurf, createSurfConversation,
+  type VectorOverride,
 } from '../core/surfing/searcher';
 import { modelFor } from '../core/models';
 import { messageBus } from '../bus/router';
@@ -98,6 +99,8 @@ surfRoutes.post('/conversations', async (c) => {
     budget?: number;
     title?: string;
     autoStart?: boolean;
+    vectorOverride?: { topic: string; mode: string; freshness_window?: string };
+    forceSerendipity?: boolean;
   }>();
   if (!body.userId) return c.json({ error: 'userId required' }, 400);
 
@@ -144,13 +147,31 @@ surfRoutes.post('/conversations', async (c) => {
   const surfConv = findConversationById(surfConvId);
   if (!surfConv) return c.json({ error: 'create failed' }, 500);
 
+  // Validate optional vector override; bad shape just falls through to picker.
+  let vectorOverride: VectorOverride | null = null;
+  if (body.vectorOverride && typeof body.vectorOverride.topic === 'string'
+      && body.vectorOverride.topic.trim()) {
+    const m = body.vectorOverride.mode;
+    if (m === 'depth' || m === 'granular' || m === 'fresh') {
+      vectorOverride = {
+        topic: body.vectorOverride.topic.trim(),
+        mode: m,
+        freshness_window: body.vectorOverride.freshness_window?.trim() || undefined,
+      };
+    }
+  }
+  const forceSerendipity = body.forceSerendipity === true;
+
   if (body.autoStart !== false) {
     const replyFn = makeReplyFn({ id: surfConvId, user_id: user.id });
     const controller = new AbortController();
     activeSurfs.set(surfConvId, controller);
     if (sourceConvId) surfsByMessageConv.set(sourceConvId, surfConvId);
-    runSurf({ surfConvId, sourceConvId, replyFn, signal: controller.signal, trigger: 'panel' })
-      .catch(e => console.error('[surf-api] error:', e));
+    runSurf({
+      surfConvId, sourceConvId, replyFn,
+      signal: controller.signal, trigger: 'panel',
+      vectorOverride, forceSerendipity,
+    }).catch(e => console.error('[surf-api] error:', e));
   }
 
   return c.json({

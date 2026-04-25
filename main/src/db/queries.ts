@@ -322,6 +322,8 @@ export function getAttachmentsForMessages(messageIds: string[]): Record<string, 
 
 // ---------- Surf runs / Review runs (standalone tabs) ----------
 
+export type SurfRunKind = 'vector' | 'serendipity';
+
 export interface SurfRunRow {
   conversation_id: string;
   source_message_conv_id: string | null;
@@ -331,6 +333,8 @@ export interface SurfRunRow {
   ended_at: number | null;
   budget: number;
   created_at: number;
+  kind: SurfRunKind;
+  vector_json: string | null;
 }
 
 export function createSurfRun(params: {
@@ -338,12 +342,13 @@ export function createSurfRun(params: {
   sourceMessageConvId: string | null;
   modelSlug: string;
   budget: number;
+  kind?: SurfRunKind;
 }): void {
   getDb().query(
-    `INSERT INTO surf_runs (conversation_id, source_message_conv_id, model_slug, budget)
-     VALUES (?, ?, ?, ?)`
+    `INSERT INTO surf_runs (conversation_id, source_message_conv_id, model_slug, budget, kind)
+     VALUES (?, ?, ?, ?, ?)`
   ).run(params.conversationId, params.sourceMessageConvId,
-        params.modelSlug, params.budget);
+        params.modelSlug, params.budget, params.kind ?? 'vector');
 }
 
 export function getSurfRun(conversationId: string): SurfRunRow | null {
@@ -361,6 +366,113 @@ export function setSurfRunStatus(
       ? `UPDATE surf_runs SET status = ?, ended_at = unixepoch() WHERE conversation_id = ?`
       : `UPDATE surf_runs SET status = ?, started_at = COALESCE(started_at, unixepoch()) WHERE conversation_id = ?`
   ).run(status, conversationId);
+}
+
+export function setSurfRunKind(conversationId: string, kind: SurfRunKind): void {
+  getDb().query(
+    `UPDATE surf_runs SET kind = ? WHERE conversation_id = ?`
+  ).run(kind, conversationId);
+}
+
+export function setSurfRunVectorJson(
+  conversationId: string, vectorJson: string,
+): void {
+  getDb().query(
+    `UPDATE surf_runs SET vector_json = ? WHERE conversation_id = ?`
+  ).run(vectorJson, conversationId);
+}
+
+// ---------- Surf vectors (per-vector dedup + serendipity counter) ----------
+
+export type SurfMode = 'depth' | 'granular' | 'fresh' | 'serendipity';
+
+export interface SurfVectorRow {
+  id: string;
+  user_id: string;
+  bot_id: string;
+  surf_conv_id: string;
+  vector_hash: string;
+  topic: string;
+  mode: SurfMode;
+  why_now: string | null;
+  freshness_window: string | null;
+  was_override: number;
+  created_at: number;
+}
+
+export function recordSurfVector(params: {
+  id: string;
+  userId: string;
+  botId: string;
+  surfConvId: string;
+  vectorHash: string;
+  topic: string;
+  mode: SurfMode;
+  whyNow?: string | null;
+  freshnessWindow?: string | null;
+  wasOverride?: boolean;
+}): void {
+  getDb().query(
+    `INSERT INTO surf_vectors
+       (id, user_id, bot_id, surf_conv_id, vector_hash, topic, mode,
+        why_now, freshness_window, was_override)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.userId, params.botId, params.surfConvId,
+    params.vectorHash, params.topic, params.mode,
+    params.whyNow ?? null, params.freshnessWindow ?? null,
+    params.wasOverride ? 1 : 0,
+  );
+}
+
+export function recentSurfVectors(
+  userId: string, botId: string, days: number,
+): SurfVectorRow[] {
+  const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+  return getDb().query<SurfVectorRow, [string, string, number]>(
+    `SELECT * FROM surf_vectors
+     WHERE user_id = ? AND bot_id = ? AND created_at >= ?
+     ORDER BY created_at DESC`
+  ).all(userId, botId, cutoff);
+}
+
+// Counts surf runs in the recent past — used to decide whether the next
+// auto/panel surf should burn a serendipity slot. Counts both vector and
+// serendipity runs; the picker compares against `serendipityEveryN`.
+export function countRecentSurfRuns(
+  userId: string, botId: string, sinceUnixSec: number,
+): number {
+  const row = getDb().query<{ n: number }, [string, string, number]>(
+    `SELECT COUNT(*) as n FROM surf_runs sr
+       JOIN conversations c ON sr.conversation_id = c.id
+     WHERE c.user_id = ? AND c.bot_id = ? AND sr.created_at >= ?
+       AND sr.status IN ('done', 'running')`
+  ).get(userId, botId, sinceUnixSec);
+  return row?.n ?? 0;
+}
+
+// Counts how many runs since the last serendipity-kind run for this user/bot.
+// Used by the picker to decide whether it's time for another serendipity.
+// Returns Number.MAX_SAFE_INTEGER if no serendipity has ever fired (so the
+// first qualifying run after install can still trigger one).
+export function runsSinceLastSerendipity(
+  userId: string, botId: string,
+): number {
+  const db = getDb();
+  const last = db.query<{ created_at: number }, [string, string]>(
+    `SELECT sr.created_at FROM surf_runs sr
+       JOIN conversations c ON sr.conversation_id = c.id
+     WHERE c.user_id = ? AND c.bot_id = ? AND sr.kind = 'serendipity'
+     ORDER BY sr.created_at DESC LIMIT 1`
+  ).get(userId, botId);
+  if (!last) return Number.MAX_SAFE_INTEGER;
+  const row = db.query<{ n: number }, [string, string, number]>(
+    `SELECT COUNT(*) as n FROM surf_runs sr
+       JOIN conversations c ON sr.conversation_id = c.id
+     WHERE c.user_id = ? AND c.bot_id = ? AND sr.created_at > ?
+       AND sr.status IN ('done', 'running')`
+  ).get(userId, botId, last.created_at);
+  return row?.n ?? 0;
 }
 
 export interface ReviewRunRow {
@@ -443,46 +555,7 @@ export function upsertModelAssignment(taskType: ModelTaskType, slug: string): vo
   ).run(taskType, slug);
 }
 
-// ---------- Debate / Provider models ----------
-
-export interface ProviderModelRow {
-  id: string;
-  provider: string;
-  slug: string;
-  display_name: string;
-  enabled: number;
-  created_at: number;
-}
-
-export function listProviderModels(enabledOnly = false): ProviderModelRow[] {
-  const sql = enabledOnly
-    ? 'SELECT * FROM provider_models WHERE enabled = 1 ORDER BY provider, display_name'
-    : 'SELECT * FROM provider_models ORDER BY provider, display_name';
-  return getDb().query<ProviderModelRow, []>(sql).all();
-}
-
-export function findProviderModelBySlug(slug: string): ProviderModelRow | null {
-  return getDb().query<ProviderModelRow, [string]>(
-    'SELECT * FROM provider_models WHERE slug = ?'
-  ).get(slug);
-}
-
-export function createProviderModel(
-  id: string, provider: string, slug: string, displayName: string,
-): void {
-  getDb().query(
-    `INSERT INTO provider_models (id, provider, slug, display_name) VALUES (?, ?, ?, ?)`
-  ).run(id, provider, slug, displayName);
-}
-
-export function updateProviderModelEnabled(id: string, enabled: boolean): void {
-  getDb().query('UPDATE provider_models SET enabled = ? WHERE id = ?')
-    .run(enabled ? 1 : 0, id);
-}
-
-export function deleteProviderModel(id: string): void {
-  getDb().query('DELETE FROM provider_models WHERE id = ?').run(id);
-}
+// ---------- Debate ----------
 
 export interface DebateSettingsRow {
   conversation_id: string;

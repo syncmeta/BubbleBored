@@ -6,7 +6,6 @@
 
 import {
   getModelAssignment, upsertModelAssignment,
-  listProviderModels, findProviderModelBySlug, createProviderModel,
   type ModelTaskType,
 } from '../db/queries';
 import { configManager } from '../config/loader';
@@ -31,8 +30,8 @@ export function modelFor(taskType: ModelTaskType): string {
 }
 
 // One-time seed: ensure each task type has an assignment, defaulting to the
-// config.yaml value, and ensure the slugs being assigned exist in the
-// provider_models library so the UI picker shows them.
+// config.yaml value. Picker pulls the searchable list from OpenRouter, so we
+// don't need to register the slug anywhere local.
 export function ensureModelAssignmentsSeeded(): void {
   const taskTypes: ModelTaskType[] = [
     'chat', 'debounce', 'review', 'surfing', 'title', 'perception', 'portrait',
@@ -41,18 +40,6 @@ export function ensureModelAssignmentsSeeded(): void {
     if (getModelAssignment(t)) continue;
     const slug = configFallback(t);
     if (!slug) continue;
-    if (!findProviderModelBySlug(slug)) {
-      // Auto-register the slug with a friendly name derived from the slug
-      // so the picker has it available.
-      const id = `pm_${slug.replace(/[^a-z0-9]/gi, '_')}`;
-      const provider = slug.split('/')[0] ?? 'custom';
-      const displayName = slug.split('/').slice(1).join('/') || slug;
-      try {
-        createProviderModel(id, provider, slug, displayName);
-      } catch {
-        // Already exists from a race — ignore.
-      }
-    }
     upsertModelAssignment(t, slug);
   }
 }

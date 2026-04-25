@@ -1755,8 +1755,19 @@ function esc(s) {
 //  议论 (Debate) — multi-agent group chat, user can only inject 辟谣
 // ──────────────────────────────────────────────────────────────────────────
 
+// Default debate line-up — the 5 mainstream slugs we suggest when the user
+// opens the modal without an existing debate to clone from. Edits go straight
+// to model_slugs in debate_settings; the picker can swap in anything else
+// from OpenRouter's full list.
+const DEFAULT_DEBATE_SLUGS = [
+  'anthropic/claude-opus-4.6',
+  'z-ai/glm-5.1',
+  'deepseek/deepseek-v4-flash',
+  'tencent/hy3-preview:free',
+  'x-ai/grok-4.20',
+];
+
 const debateState = {
-  providerModels: [],            // [{ id, provider, slug, display_name, enabled }]
   currentDebate: null,           // hydrated debate conv (with topic + model_slugs)
   pickedModelSlugs: new Set(),   // for the modal
   busyConvIds: new Set(),
@@ -1770,21 +1781,6 @@ function modelColor(slug) {
   for (let i = 0; i < (slug || '').length; i++) h = (h * 31 + slug.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
   return `hsl(${hue}, 60%, 55%)`;
-}
-
-function modelDisplayName(slug) {
-  const found = debateState.providerModels.find(m => m.slug === slug);
-  return found?.display_name ?? slug;
-}
-
-async function loadProviderModels() {
-  try {
-    const res = await fetch('/api/debate/provider-models');
-    debateState.providerModels = await res.json();
-  } catch (e) {
-    console.error('load provider models error:', e);
-    debateState.providerModels = [];
-  }
 }
 
 // Hook into loadConversations: when on the debate tab, hit the debate-specific
@@ -1883,7 +1879,7 @@ function updateDebateHeader() {
     return;
   }
   title.textContent = d.topic || d.title || '议论';
-  const modelNames = (d.model_slugs ?? []).map(modelDisplayName).join(' · ');
+  const modelNames = (d.model_slugs ?? []).join(' · ');
   meta.textContent = `${(d.model_slugs ?? []).length} 个模型 · ${d.round_count_debate ?? 0} 轮 · ${modelNames}`;
 }
 
@@ -1900,7 +1896,7 @@ function appendDebateMessage(m) {
     el.textContent = m.content;
   } else {
     const slug = m.sender_id || m.metadata?.slug || '';
-    const name = m.metadata?.display_name || modelDisplayName(slug);
+    const name = m.metadata?.display_name || slug;
     el.className = 'debate-msg debater';
     el.innerHTML = `
       <div class="debate-who">
@@ -1989,7 +1985,6 @@ function deleteCurrentDebate() {
 // ── Modal: create / edit debate ──
 
 async function openDebateModal(mode = 'create', existingDebate = null) {
-  await loadProviderModels();
   debateState.modalMode = mode;
   const title = document.getElementById('debate-modal-title');
   const submitBtn = document.getElementById('debate-modal-submit');
@@ -2004,10 +1999,8 @@ async function openDebateModal(mode = 'create', existingDebate = null) {
     title.textContent = '新议论';
     submitBtn.textContent = '创建议论';
     topicEl.value = '';
-    // Pre-pick all enabled models for first-run convenience
-    debateState.pickedModelSlugs = new Set(
-      debateState.providerModels.filter(m => m.enabled).map(m => m.slug)
-    );
+    // Pre-pick a curated 5-model line-up so debate is usable in one click.
+    debateState.pickedModelSlugs = new Set(DEFAULT_DEBATE_SLUGS);
   }
 
   renderDebateModalModels();
@@ -2680,14 +2673,13 @@ applyTabView = function() {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-//  「你」 tab — basic info + AI picks + provider models
+//  「你」 tab — basic info + AI picks + per-task model assignments
 // ──────────────────────────────────────────────────────────────────────────
 
 async function loadMeView() {
   await Promise.all([
     loadMyProfile(),
     loadMyPicks(),
-    loadMeProviderModels(),
     loadMeAssignments(),
   ]);
 }
@@ -2834,88 +2826,6 @@ async function removePick(id) {
     loadMyPicks();
   } catch (e) { alert('删除失败：' + e.message); }
 }
-
-async function loadMeProviderModels() {
-  const root = document.getElementById('me-provider-models');
-  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px;text-align:center">加载中…</div>';
-  try {
-    const res = await fetch('/api/me/provider-models');
-    const list = await res.json();
-    debateState.providerModels = list;
-    if (!Array.isArray(list) || list.length === 0) {
-      root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px;text-align:center">还没添加任何模型</div>';
-      return;
-    }
-    root.innerHTML = '';
-    for (const m of list) {
-      const row = document.createElement('div');
-      row.className = 'model-picker-row';
-      row.innerHTML = `
-        <input type="checkbox" data-id="${esc(m.id)}" ${m.enabled ? 'checked' : ''}>
-        <span class="mp-name">${esc(m.display_name)}</span>
-        <span class="mp-slug">${esc(m.slug)}</span>
-        <span class="mp-provider">${esc(m.provider)}</span>
-        <button class="pick-remove" data-id="${esc(m.id)}" title="删除">×</button>
-      `;
-      row.querySelector('input').addEventListener('change', (e) => {
-        toggleProviderModel(m.id, e.target.checked);
-      });
-      row.querySelector('button.pick-remove').addEventListener('click', () => {
-        removeProviderModel(m.id);
-      });
-      root.appendChild(row);
-    }
-  } catch (e) {
-    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${esc(e.message)}</div>`;
-  }
-}
-
-async function addProviderModel() {
-  const provider = document.getElementById('me-new-provider').value.trim();
-  const slug = document.getElementById('me-new-slug').value.trim();
-  const displayName = document.getElementById('me-new-name').value.trim();
-  if (!slug || !displayName) {
-    alert('slug 和显示名都要填');
-    return;
-  }
-  try {
-    const res = await fetch('/api/me/provider-models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, slug, displayName }),
-    });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    document.getElementById('me-new-provider').value = '';
-    document.getElementById('me-new-slug').value = '';
-    document.getElementById('me-new-name').value = '';
-    if (window.invalidateModelCache) window.invalidateModelCache();
-    loadMeProviderModels();
-    loadMeAssignments();
-  } catch (e) { alert('添加失败：' + e.message); }
-}
-
-async function toggleProviderModel(id, enabled) {
-  try {
-    await fetch(`/api/me/provider-models/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-    if (window.invalidateModelCache) window.invalidateModelCache();
-  } catch (e) { /* ignore */ }
-}
-
-async function removeProviderModel(id) {
-  if (!confirm('删除这个模型？')) return;
-  try {
-    await fetch(`/api/me/provider-models/${id}`, { method: 'DELETE' });
-    if (window.invalidateModelCache) window.invalidateModelCache();
-    loadMeProviderModels();
-    loadMeAssignments();
-  } catch (e) { alert('删除失败：' + e.message); }
-}
-
 
 // ──────────────────────────────────────────────────────────────────────────
 //  冲浪 (Surf) — each conv = one run. List + create modal + live log view.
@@ -3168,6 +3078,15 @@ async function openSurfModal() {
   surfTabState.modalModelSlug = '';
   document.getElementById('surf-modal-budget').value = '10';
 
+  // Reset vector-direction controls each time the modal opens.
+  const autoRadio = document.querySelector('input[name="surf-direction"][value="auto"]');
+  if (autoRadio) autoRadio.checked = true;
+  document.getElementById('surf-manual-fields').style.display = 'none';
+  document.getElementById('surf-modal-vector-topic').value = '';
+  document.getElementById('surf-modal-vector-mode').value = 'depth';
+  document.getElementById('surf-modal-vector-fresh').value = '';
+  document.getElementById('surf-modal-vector-fresh').style.display = 'none';
+
   // Load source candidates
   const list = document.getElementById('surf-modal-source-list');
   list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
@@ -3212,6 +3131,17 @@ function closeSurfModal(e) {
   document.getElementById('surf-modal').style.display = 'none';
 }
 
+function onSurfDirectionChange() {
+  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
+  document.getElementById('surf-manual-fields').style.display = dir === 'manual' ? 'flex' : 'none';
+  if (dir === 'manual') onSurfModeChange();
+}
+
+function onSurfModeChange() {
+  const mode = document.getElementById('surf-modal-vector-mode').value;
+  document.getElementById('surf-modal-vector-fresh').style.display = mode === 'fresh' ? 'block' : 'none';
+}
+
 async function submitSurfModal() {
   const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
   const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
@@ -3222,6 +3152,21 @@ async function submitSurfModal() {
   if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
   if (surfTabState.modalModelSlug) body.modelSlug = surfTabState.modalModelSlug;
   if (budget) body.budget = budget;
+
+  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
+  if (dir === 'manual') {
+    const topic = document.getElementById('surf-modal-vector-topic').value.trim();
+    if (!topic) { alert('请填 topic 或切回自动选'); return; }
+    const mode = document.getElementById('surf-modal-vector-mode').value;
+    const override = { topic, mode };
+    if (mode === 'fresh') {
+      const fresh = document.getElementById('surf-modal-vector-fresh').value.trim();
+      if (fresh) override.freshness_window = fresh;
+    }
+    body.vectorOverride = override;
+  } else if (dir === 'serendipity') {
+    body.forceSerendipity = true;
+  }
 
   try {
     const res = await fetch('/api/surf/conversations', {

@@ -4,9 +4,6 @@ import {
   findUserByChannel, createUser,
   getUserDashboardProfile, upsertUserDashboardProfile, setUserDisplayName,
   listAiPicks, createAiPick, softDeleteAiPick, hardDeleteAiPick,
-  listProviderModels, createProviderModel, updateProviderModelEnabled,
-  deleteProviderModel,
-  findProviderModelBySlug,
   listModelAssignments, upsertModelAssignment, MODEL_TASK_TYPES,
   type ModelTaskType,
 } from '../db/queries';
@@ -115,38 +112,6 @@ meRoutes.delete('/picks/:id', (c) => {
   return c.json({ ok: true });
 });
 
-// ── Provider models (mirrors /api/debate/provider-models so the 你 tab
-//    can manage the same library standalone).
-meRoutes.get('/provider-models', (c) => {
-  return c.json(listProviderModels(false));
-});
-
-meRoutes.post('/provider-models', async (c) => {
-  const body = await c.req.json<{ provider: string; slug: string; displayName: string }>();
-  if (!body.slug || !body.displayName) {
-    return c.json({ error: 'slug + displayName required' }, 400);
-  }
-  if (findProviderModelBySlug(body.slug)) {
-    return c.json({ error: '该 slug 已存在' }, 400);
-  }
-  const id = `pm_${body.slug.replace(/[^a-z0-9]/gi, '_')}_${randomUUID().slice(0, 6)}`;
-  createProviderModel(id, body.provider || 'custom', body.slug, body.displayName);
-  return c.json({ id });
-});
-
-meRoutes.patch('/provider-models/:id', async (c) => {
-  const body = await c.req.json<{ enabled?: boolean }>();
-  if (typeof body.enabled === 'boolean') {
-    updateProviderModelEnabled(c.req.param('id'), body.enabled);
-  }
-  return c.json({ ok: true });
-});
-
-meRoutes.delete('/provider-models/:id', (c) => {
-  deleteProviderModel(c.req.param('id'));
-  return c.json({ ok: true });
-});
-
 // ── Model assignments (one slug per task type) ──
 
 meRoutes.get('/model-assignments', (c) => {
@@ -166,9 +131,6 @@ meRoutes.patch('/model-assignments', async (c) => {
   for (const taskType of MODEL_TASK_TYPES) {
     const slug = body[taskType];
     if (typeof slug === 'string' && slug.trim()) {
-      // We don't insist the slug exists in provider_models — that lets the
-      // user point at a model that's not in their library yet, and the
-      // picker UI will offer to add it. But strip whitespace.
       upsertModelAssignment(taskType, slug.trim());
     }
   }

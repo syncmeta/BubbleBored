@@ -118,6 +118,36 @@
             <div id="surf-modal-source-list" class="source-list"></div>
             <label class="modal-label">预算（搜索 + 阅读次数上限）</label>
             <input type="text" id="surf-modal-budget" placeholder="10">
+            <label class="modal-label">冲浪方向</label>
+            <div id="surf-modal-direction" class="surf-direction">
+              <label class="surf-dir-row">
+                <input type="radio" name="surf-direction" value="auto" checked
+                       onchange="onSurfDirectionChange()">
+                <span>自动选向量（按你的兴趣 / 保存文章 / 最近聊的来挑）</span>
+              </label>
+              <label class="surf-dir-row">
+                <input type="radio" name="surf-direction" value="manual"
+                       onchange="onSurfDirectionChange()">
+                <span>指定向量</span>
+              </label>
+              <div id="surf-manual-fields" class="surf-manual-fields" style="display:none">
+                <input type="text" id="surf-modal-vector-topic"
+                       placeholder="topic（具体到能搜的兴趣点，如：serendipity 引擎的 evaluation）">
+                <select id="surf-modal-vector-mode" onchange="onSurfModeChange()">
+                  <option value="depth">挖深（追机制 / 原理 / 一手资料）</option>
+                  <option value="granular">挖细（子分支 / 边角案例 / 具体例子）</option>
+                  <option value="fresh">挖新（最近进展 / 论文 / 发布）</option>
+                </select>
+                <input type="text" id="surf-modal-vector-fresh"
+                       placeholder="freshness window（仅挖新用，如 past 90 days）"
+                       style="display:none">
+              </div>
+              <label class="surf-dir-row">
+                <input type="radio" name="surf-direction" value="serendipity"
+                       onchange="onSurfDirectionChange()">
+                <span>挖远（serendipity）—— 跨域瞎逛模式</span>
+              </label>
+            </div>
           </div>
           <div class="modal-foot">
             <button class="btn-ghost" onclick="closeSurfModal()">取消</button>
@@ -308,19 +338,8 @@
             </div>
           </section>
 
-          <section class="me-section" id="me-models">
-            <h3>模型提供商 <span class="me-section-hint">参与「议论」、用于各处 picker；总开关控制是否启用</span></h3>
-            <div id="me-provider-models" class="model-picker"></div>
-            <div class="me-add-model">
-              <input type="text" id="me-new-provider" placeholder="provider（anthropic / openai / ...）">
-              <input type="text" id="me-new-slug" placeholder="OpenRouter slug">
-              <input type="text" id="me-new-name" placeholder="显示名">
-              <button class="btn-soft" onclick="addProviderModel()">添加</button>
-            </div>
-          </section>
-
           <section class="me-section" id="me-assignments">
-            <h3>系统模型分配 <span class="me-section-hint">每种任务用哪个模型；任意一项都可在「模型库」里搜索切换</span></h3>
+            <h3>系统模型分配 <span class="me-section-hint">每种任务用哪个模型；下拉框直接搜索 OpenRouter 全表</span></h3>
             <div id="me-assignments-list" class="me-assignments-list"></div>
           </section>
 

@@ -178,9 +178,9 @@ function runMigrations(db: Database): void {
   }
 
   // v7: debate (multi-agent) tables. debate_settings holds the configured
-  // model line-up and topic per debate conversation; provider_models is the
-  // user's library of OpenRouter slugs that can participate. Seeded on first
-  // run with a default line-up so the feature is usable out of the box.
+  // model line-up and topic per debate conversation. (A provider_models
+  // library table existed here historically; dropped in v12 — picker now
+  // reads OpenRouter's /models list directly.)
   if (userVersion < 7) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS debate_settings (
@@ -191,34 +191,7 @@ function runMigrations(db: Database): void {
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
-
-      CREATE TABLE IF NOT EXISTS provider_models (
-        id TEXT PRIMARY KEY,
-        provider TEXT NOT NULL,
-        slug TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_models_slug ON provider_models(slug);
     `);
-
-    // Seed defaults — covers four major providers + grok so debate has
-    // distinct voices on first launch. User can edit list in 「你」tab.
-    const seed = [
-      ['anthropic', 'anthropic/claude-sonnet-4.5', 'Claude Sonnet 4.5'],
-      ['openai',    'openai/gpt-5',                'GPT-5'],
-      ['google',    'google/gemini-2.5-pro',       'Gemini 2.5 Pro'],
-      ['xai',       'x-ai/grok-4',                 'Grok-4'],
-      ['deepseek',  'deepseek/deepseek-chat',      'DeepSeek-V3'],
-    ] as const;
-    const insert = db.query(
-      `INSERT OR IGNORE INTO provider_models (id, provider, slug, display_name) VALUES (?, ?, ?, ?)`
-    );
-    for (const [provider, slug, name] of seed) {
-      insert.run(`pm_${slug.replace(/[^a-z0-9]/gi, '_')}`, provider, slug, name);
-    }
-
     db.exec('PRAGMA user_version = 7');
   }
 
@@ -317,5 +290,53 @@ function runMigrations(db: Database): void {
       );
     `);
     db.exec('PRAGMA user_version = 11');
+  }
+
+  // v12: vector-driven surfing.
+  // surf_vectors records every digging vector used by a surf run (one row per
+  // vector — a run with two parallel vectors writes two rows). Used for:
+  // (a) dedup — the picker queries recent vectors per user to skip topics
+  //     already covered in the last N days
+  // (b) serendipity counter — count finished runs per user to decide when to
+  //     trigger the periodic blind-wander slot
+  // surf_runs gains a `kind` column to distinguish vector runs from
+  // serendipity runs and `vector_json` to pin the picked vector(s).
+  if (userVersion < 12) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS surf_vectors (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        bot_id TEXT NOT NULL REFERENCES bots(id),
+        surf_conv_id TEXT NOT NULL REFERENCES conversations(id),
+        vector_hash TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        why_now TEXT,
+        freshness_window TEXT,
+        was_override INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_surf_vectors_user ON surf_vectors(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_surf_vectors_hash ON surf_vectors(user_id, vector_hash, created_at DESC);
+    `);
+
+    const surfCols = db.query(`PRAGMA table_info(surf_runs)`).all() as Array<{ name: string }>;
+    if (!surfCols.some(c => c.name === 'kind')) {
+      // 'vector' = guided dig | 'serendipity' = legacy blind wanderer slot
+      db.exec(`ALTER TABLE surf_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'vector'`);
+    }
+    if (!surfCols.some(c => c.name === 'vector_json')) {
+      db.exec(`ALTER TABLE surf_runs ADD COLUMN vector_json TEXT`);
+    }
+
+    db.exec('PRAGMA user_version = 12');
+  }
+
+  // v13: drop provider_models — the picker now pulls the full model list
+  // straight from OpenRouter's /api/v1/models, so the local library table is
+  // dead weight. model_assignments still holds per-task slug picks.
+  if (userVersion < 13) {
+    db.exec(`DROP TABLE IF EXISTS provider_models;`);
+    db.exec('PRAGMA user_version = 13');
   }
 }

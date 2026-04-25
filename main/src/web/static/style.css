@@ -775,6 +775,9 @@ main {
   justify-content: flex-start;
   padding: 0;
   gap: 0;
+  /* #me-view is itself a flex child of <main>; without min-height:0 here it
+     grows to fit .me-scroll's content and the inner overflow never kicks in. */
+  min-height: 0;
 }
 .me-scroll {
   flex: 1;
@@ -1221,6 +1224,31 @@ main {
 .source-list-row:hover { background: var(--bg-hover); }
 .source-list-row .sl-title { flex: 1; font-size: 13px; color: var(--text-1); }
 .source-list-row .sl-meta { font-size: 11px; color: var(--text-4); }
+
+.surf-direction { display: flex; flex-direction: column; gap: 6px; }
+.surf-dir-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-1); cursor: pointer;
+  padding: 4px 0;
+}
+.surf-dir-row input[type="radio"] { margin: 0; }
+.surf-manual-fields {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 4px 0 6px 22px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm, 6px);
+}
+.surf-manual-fields select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  background: var(--bg);
+  color: var(--text-1);
+}
+.surf-manual-fields select:focus { border-color: var(--accent-muted); outline: none; }
 
 /* ── Reusable searchable model picker (model-picker.js) ── */
 

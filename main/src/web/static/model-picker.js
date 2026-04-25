@@ -5,26 +5,29 @@
 //   multi-select   → createModelPicker({ values: Set, onChange, multi: true })
 //
 // Both render a button that opens a popover with a search input and a
-// scrollable list, fed by /api/me/provider-models. Selecting items updates
-// the underlying state and triggers onChange. The popover closes on outside
-// click or Escape.
+// scrollable list, fed by /api/openrouter/models (proxy to OpenRouter's
+// public model registry, ~400 models). Selecting items updates the underlying
+// state and triggers onChange. The popover closes on outside click or Escape.
 //
 // All copy is Chinese-first. The component is style-tokens-aware (uses CSS
 // variables already defined in tokens.css / style.css).
 
 (function () {
-  // Cached library across pickers; refreshed lazily.
+  // Cached list across pickers (5-min TTL — backend caches 10min on top).
   let cachedModels = null;
+  let cachedAt = 0;
   let cachedPromise = null;
+  const CACHE_TTL_MS = 5 * 60 * 1000;
 
-  async function loadEnabledModels() {
-    if (cachedModels) return cachedModels;
+  async function loadOpenRouterModels() {
+    const now = Date.now();
+    if (cachedModels && now - cachedAt < CACHE_TTL_MS) return cachedModels;
     if (cachedPromise) return cachedPromise;
-    cachedPromise = fetch('/api/me/provider-models')
-      .then(r => r.json())
+    cachedPromise = fetch('/api/openrouter/models')
+      .then(r => r.ok ? r.json() : [])
       .then(list => {
-        cachedModels = (Array.isArray(list) ? list : [])
-          .filter(m => m.enabled !== 0);
+        cachedModels = Array.isArray(list) ? list : [];
+        cachedAt = Date.now();
         cachedPromise = null;
         return cachedModels;
       })
@@ -36,11 +39,29 @@
     return cachedPromise;
   }
 
-  // Force a refresh — call this after the user adds/edits/deletes a model
-  // in the 「你」 tab so subsequent pickers pick up the change.
+  // Force a refresh — exposed for callers that want to drop the cache
+  // (e.g. after a manual "刷新模型列表" click).
   function invalidateModelCache() {
     cachedModels = null;
+    cachedAt = 0;
     cachedPromise = null;
+  }
+
+  function fmtPrice(p) {
+    if (!p) return '';
+    const n = parseFloat(p);
+    if (!isFinite(n) || n === 0) return p === '0' ? '免费' : '';
+    // OpenRouter price is per token. Show $/Mtok with two sig figs.
+    const perM = n * 1_000_000;
+    if (perM < 0.01) return `$${perM.toFixed(4)}/M`;
+    if (perM < 1) return `$${perM.toFixed(3)}/M`;
+    return `$${perM.toFixed(2)}/M`;
+  }
+  function fmtCtx(n) {
+    if (!n) return '';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M ctx`;
+    if (n >= 1000) return `${Math.round(n / 1000)}K ctx`;
+    return `${n} ctx`;
   }
 
   function modelMatches(m, q) {
@@ -142,7 +163,7 @@
             select(q);
           });
         } else {
-          empty.textContent = q ? '没有匹配的模型。' : '模型库为空 — 去「你」tab 添加。';
+          empty.textContent = q ? '没有匹配的模型。' : '加载 OpenRouter 模型列表失败 — 检查网络/API key';
         }
         list.appendChild(empty);
         return;
@@ -153,11 +174,14 @@
         row.className = 'model-picker-row';
         const isSelected = multi ? values.has(m.slug) : value === m.slug;
         if (isSelected) row.classList.add('selected');
+        const ctxStr = fmtCtx(m.context_length);
+        const priceStr = fmtPrice(m.pricing?.prompt);
+        const meta = [ctxStr, priceStr].filter(Boolean).join(' · ');
         row.innerHTML = `
           ${multi ? `<input type="checkbox" ${isSelected ? 'checked' : ''}>` : ''}
           <span class="mp-name">${escHtml(m.display_name)}</span>
           <span class="mp-slug">${escHtml(m.slug)}</span>
-          <span class="mp-provider">${escHtml(m.provider || '')}</span>
+          <span class="mp-provider">${escHtml(m.provider || '')}${meta ? ` · ${escHtml(meta)}` : ''}</span>
         `;
         row.addEventListener('click', () => select(m.slug));
         list.appendChild(row);
@@ -209,7 +233,7 @@
       e.preventDefault();
       e.stopPropagation();
       if (popover.style.display !== 'block') {
-        await loadEnabledModels();
+        await loadOpenRouterModels();
         open();
       } else {
         close();
@@ -219,7 +243,7 @@
 
     // Initial render — assume cache may already be warm; otherwise the
     // trigger shows the placeholder until the user opens the popover.
-    loadEnabledModels().then(() => {
+    loadOpenRouterModels().then(() => {
       renderTrigger();
     });
     renderTrigger();
@@ -238,7 +262,7 @@
     wrap.getValues = () => values;
     wrap.refresh = async () => {
       invalidateModelCache();
-      await loadEnabledModels();
+      await loadOpenRouterModels();
       renderTrigger();
       if (popover.style.display === 'block') renderList();
     };
@@ -249,5 +273,5 @@
   // Expose globally — app.js can grab them off window.
   window.createModelPicker = createModelPicker;
   window.invalidateModelCache = invalidateModelCache;
-  window.loadEnabledModels = loadEnabledModels;
+  window.loadOpenRouterModels = loadOpenRouterModels;
 })();
