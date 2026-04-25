@@ -73,10 +73,17 @@ function makeEmitter(surfConvId: string) {
     sourceMessageConvId = getSurfRun(surfConvId)?.source_message_conv_id ?? null;
   } catch {}
 
+  // surf_result is delivered as a real bot message (insertMessage with
+  // sender_type='bot') in deliverFinalMessage, so persisting a duplicate
+  // log row here would double-render in the UI. Live SSE still goes out.
+  const NO_PERSIST_TYPES = new Set(['surf_result']);
+
   return (content: string, type: string = 'surf_status') => {
-    try {
-      insertMessage(randomUUID(), surfConvId, 'log', `surf:${type}`, content);
-    } catch {}
+    if (!NO_PERSIST_TYPES.has(type)) {
+      try {
+        insertMessage(randomUUID(), surfConvId, 'log', `surf:${type}`, content);
+      } catch {}
+    }
     surfEvents.emit('log', {
       surfConvId,
       conversationId: surfConvId,

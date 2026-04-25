@@ -1760,12 +1760,23 @@ function esc(s) {
 // to model_slugs in debate_settings; the picker can swap in anything else
 // from OpenRouter's full list.
 const DEFAULT_DEBATE_SLUGS = [
-  'anthropic/claude-opus-4.6',
   'z-ai/glm-5.1',
+  'z-ai/glm-4.5-air:free',
   'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-v4-pro',
+  'minimax/minimax-m2.7',
   'tencent/hy3-preview:free',
-  'x-ai/grok-4.20',
+  'google/gemini-3.1-flash-lite-preview',
 ];
+
+const DEFAULT_DEBATE_MAX_MSGS = 30;
+function getDebateMaxMsgs() {
+  const v = parseInt(localStorage.getItem('debate-max-msgs') || '', 10);
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 200) : DEFAULT_DEBATE_MAX_MSGS;
+}
+function setDebateMaxMsgs(n) {
+  localStorage.setItem('debate-max-msgs', String(n));
+}
 
 const debateState = {
   currentDebate: null,           // hydrated debate conv (with topic + model_slugs)
@@ -1883,13 +1894,23 @@ function updateDebateHeader() {
   meta.textContent = `${(d.model_slugs ?? []).length} 个模型 · ${d.round_count_debate ?? 0} 轮 · ${modelNames}`;
 }
 
+// Pull a 1–2 char glyph for the avatar from a slug, e.g. 'z-ai/glm-5.1' -> 'GL'.
+function avatarInitials(slug, displayName) {
+  const src = (displayName || slug || '').trim();
+  // Prefer the part after the last '/' so 'z-ai/glm-5.1' becomes 'glm-5.1'.
+  const tail = src.includes('/') ? src.split('/').pop() : src;
+  const cleaned = (tail || '').replace(/[^a-zA-Z0-9一-鿿]/g, '');
+  if (!cleaned) return '?';
+  const m = cleaned.match(/[一-鿿]/);
+  if (m) return m[0];
+  return cleaned.slice(0, 2).toUpperCase();
+}
+
 function appendDebateMessage(m) {
   const root = document.getElementById('debate-messages');
   if (!root) return;
   const el = document.createElement('div');
 
-  // Distinguish row kinds by sender_type. Debater messages are tagged with
-  // their slug; clarify rows are user injections.
   const senderType = m.sender_type || (m.metadata?.sender_kind === 'clarify' ? 'user' : 'debater');
   if (senderType === 'user' || m.metadata?.sender_kind === 'clarify') {
     el.className = 'debate-msg clarify';
@@ -1898,12 +1919,18 @@ function appendDebateMessage(m) {
     const slug = m.sender_id || m.metadata?.slug || '';
     const name = m.metadata?.display_name || slug;
     el.className = 'debate-msg debater';
+    el.dataset.slug = slug;
+    // Collapse the avatar + name when the previous bubble is from the same speaker.
+    const prev = root.lastElementChild;
+    if (prev && prev.classList.contains('debater') && prev.dataset.slug === slug) {
+      el.classList.add('same-speaker');
+    }
     el.innerHTML = `
-      <div class="debate-who">
-        <span class="debate-who-dot" style="background:${modelColor(slug)}"></span>
-        <span>${esc(name)}</span>
+      <div class="debate-avatar" style="background:${modelColor(slug)}">${esc(avatarInitials(slug, name))}</div>
+      <div class="debate-body-wrap">
+        <div class="debate-who"><span>${esc(name)}</span></div>
+        <div class="debate-body">${esc(m.content)}</div>
       </div>
-      <div class="debate-body">${esc(m.content)}</div>
     `;
   }
   root.appendChild(el);
@@ -1924,7 +1951,11 @@ async function runDebateRoundClick() {
   btn.classList.add('busy');
   setDebateStatus('议论中…');
   try {
-    await fetch(`/api/debate/round/${convId}`, { method: 'POST' });
+    await fetch(`/api/debate/round/${convId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxMessages: getDebateMaxMsgs() }),
+    });
     // Server fires messages over WS + a `done` event over SSE; we'll
     // re-enable the button on `done`.
   } catch (e) {
@@ -1949,7 +1980,7 @@ async function injectDebateClarification() {
     await fetch(`/api/debate/inject/${convId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, autoRound: true }),
+      body: JSON.stringify({ content, autoRound: true, maxMessages: getDebateMaxMsgs() }),
     });
   } catch (e) {
     setDebateStatus(`出错：${e.message}`);
@@ -1999,9 +2030,11 @@ async function openDebateModal(mode = 'create', existingDebate = null) {
     title.textContent = '新议论';
     submitBtn.textContent = '创建议论';
     topicEl.value = '';
-    // Pre-pick a curated 5-model line-up so debate is usable in one click.
     debateState.pickedModelSlugs = new Set(DEFAULT_DEBATE_SLUGS);
   }
+
+  const maxEl = document.getElementById('debate-modal-max-msgs');
+  if (maxEl) maxEl.value = String(getDebateMaxMsgs());
 
   renderDebateModalModels();
   document.getElementById('debate-modal').style.display = 'flex';
@@ -2037,6 +2070,12 @@ async function submitDebateModal() {
     return;
   }
   const topic = document.getElementById('debate-modal-topic').value.trim();
+  const maxEl = document.getElementById('debate-modal-max-msgs');
+  const maxParsed = parseInt(maxEl?.value || '', 10);
+  const maxMessages = Number.isFinite(maxParsed) && maxParsed > 0
+    ? Math.min(maxParsed, 200)
+    : DEFAULT_DEBATE_MAX_MSGS;
+  setDebateMaxMsgs(maxMessages);
 
   if (debateState.modalMode === 'edit' && debateState.currentDebate) {
     // For Phase 1 edit just deletes & recreates; keep simple.
@@ -2343,7 +2382,7 @@ function renderPortraitView() {
 
 function renderPortraitSection(p) {
   const sec = document.createElement('div');
-  sec.className = 'portrait-section';
+  sec.className = `portrait-section portrait-section--${p.kind}`;
   const items = (p.content?.items) ?? [];
   const head = document.createElement('div');
   head.className = 'portrait-section-head';
@@ -2928,7 +2967,13 @@ async function selectSurfConv(convId) {
     const msgs = await res.json();
     const log = document.getElementById('surf-log');
     log.innerHTML = '';
-    for (const m of msgs) appendSurfRow(m);
+    // The result is persisted as a sender_type='bot' row; older runs also
+    // wrote a duplicate log row tagged surf:surf_result. Skip the log
+    // duplicate so existing convs don't show two identical bubbles.
+    for (const m of msgs) {
+      if ((m.sender_id || '').endsWith(':surf_result') && m.sender_type === 'log') continue;
+      appendSurfRow(m);
+    }
     scrollSurfToBottom();
   } catch (e) {
     console.error('load surf msgs:', e);
