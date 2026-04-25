@@ -778,6 +778,10 @@ main {
 }
 .me-scroll {
   flex: 1;
+  /* Without min-height:0, flex items default to min-content sizing — that
+     pushes the column taller than the viewport and overflow:auto becomes a
+     no-op. The fix is the standard "make a flex child shrinkable" trick. */
+  min-height: 0;
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
