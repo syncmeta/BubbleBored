@@ -1,0 +1,32 @@
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+
+# Build
+DerivedData/
+build/
+.build/
+*.o
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+Packages/
+Package.pins
+Package.resolved
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
