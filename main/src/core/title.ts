@@ -80,6 +80,7 @@ export async function generateTitle(
     updateConversationTitle(conversationId, title);
 
     logAudit({
+      userId: conv.user_id,
       conversationId,
       taskType: 'title',
       model,

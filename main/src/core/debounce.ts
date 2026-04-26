@@ -1,24 +1,22 @@
 import { configManager } from '../config/loader';
-import { chatCompletion } from '../llm/client';
-import { logAudit } from '../llm/audit';
 import { typedSince } from './typing';
-import { modelFor } from './models';
 import type { OutboundMessage } from '../bus/types';
 
-// Debounce has two independent gates, both must resolve before flushing:
+// Behavioral debounce based on the user's input activity:
+//   - T=0 (message arrival): start a 2s "initial" wait.
+//   - At T=2s: if user has typed anything since T=0, enter a 5s window;
+//              else resolve immediately.
+//   - At the end of each 5s window: if the user typed during that window,
+//              open another 5s window (up to 2 extensions, so base+ext1+ext2
+//              = 15s of typing windows, 17s total including initial).
+//              Else resolve.
 //
-//   1. Judge gate  — the existing LLM judge (WAIT / FLUSH). Fires immediately
-//                    on message arrival, does NOT wait for the typing gate.
-//   2. Typing gate — behavioral debounce based on the user's input activity:
-//        - T=0 (message arrival): start a 2s "initial" wait.
-//        - At T=2s: if user has typed anything since T=0, enter a 5s window;
-//                   else resolve immediately.
-//        - At the end of each 5s window: if the user typed during that window,
-//                   open another 5s window (up to 2 extensions, so base+ext1+ext2
-//                   = 15s of typing windows, 17s total including initial).
-//                   Else resolve.
+// "Is the user actually done speaking?" used to be a separate LLM judge gate.
+// That job is now handled by the main chat model — it can output `[SILENT]`
+// (see core/silent.ts) when the message looks unfinished, and the next user
+// send wakes it up to re-judge with full context. One fewer LLM round-trip.
 //
-// A hard timeout still exists as a safety net and bypasses both gates.
+// A hard timeout still exists as a safety net.
 
 const INITIAL_TYPING_WAIT_MS = 2000;
 const TYPING_WINDOW_MS = 5000;
@@ -37,12 +35,10 @@ interface DebounceState {
   // One entry per user send, preserving both per-message text and attachment
   // provenance — the orchestrator will turn each entry into its own DB row.
   pending: PendingEntry[];
-  processing: boolean;       // judge is in flight
-  judgeReady: boolean;       // judge resolved to FLUSH (or errored)
-  typingReady: boolean;      // typing gate resolved
-  typingTimer: Timer | null; // current typing-gate setTimeout handle
-  typingExtensions: number;  // how many 5s extensions have been consumed
-  typingAnchorAt: number;    // arrival time of the message that armed the gate
+  typingReady: boolean;       // typing gate resolved
+  typingTimer: Timer | null;  // current typing-gate setTimeout handle
+  typingExtensions: number;   // how many 5s extensions have been consumed
+  typingAnchorAt: number;     // arrival time of the message that armed the gate
   onReady: FlushHandler | null;
 }
 
@@ -54,8 +50,6 @@ function getState(conversationId: string): DebounceState {
     s = {
       hardTimer: null,
       pending: [],
-      processing: false,
-      judgeReady: false,
       typingReady: false,
       typingTimer: null,
       typingExtensions: 0,
@@ -102,7 +96,7 @@ export function addMessage(
   const attCount = state.pending.reduce((n, e) => n + e.attachmentIds.length, 0);
   console.log(`[debounce] buffered (${textCount} msgs, ${attCount} attachments): ${content.slice(0, 50)}`);
 
-  // Hard timeout — safety net, bypasses both gates
+  // Hard timeout — safety net
   if (!state.hardTimer) {
     state.hardTimer = setTimeout(() => {
       console.log(`[debounce] hard timeout → flush`);
@@ -110,8 +104,8 @@ export function addMessage(
     }, debounce.maxWaitMs);
   }
 
-  // Image-only messages bypass both gates — nothing for the judge to reason
-  // about, and waiting on typing for a pure image upload feels laggy.
+  // Image-only messages bypass the typing gate — waiting on typing for a pure
+  // image upload feels laggy.
   const hasAnyText = state.pending.some(e => e.content.length > 0);
   const hasAnyAtt = state.pending.some(e => e.attachmentIds.length > 0);
   if (!hasAnyText && hasAnyAtt) {
@@ -123,10 +117,6 @@ export function addMessage(
   // Each new message re-arms the typing gate. The anchor is "when did the
   // most recent message arrive", as the spec is phrased around that event.
   armTypingGate(conversationId);
-
-  // Judge only fires if not already in flight.
-  if (state.processing) return;
-  judge(conversationId, botId);
 }
 
 // ── Typing gate ────────────────────────────────────────────────────────
@@ -186,90 +176,10 @@ function resolveTypingGate(conversationId: string): void {
   const state = states.get(conversationId);
   if (!state) return;
   state.typingReady = true;
-  tryFlush(conversationId);
-}
-
-// ── Judge ──────────────────────────────────────────────────────────────
-
-async function judge(
-  conversationId: string,
-  botId: string,
-): Promise<void> {
-  const state = states.get(conversationId);
-  if (!state || state.processing) return;
-
-  state.processing = true;
-  try {
-    const judgePrompt = await configManager.readPrompt('debounce-judge.md');
-    const texts = state.pending.map(e => e.content).filter(c => c.length > 0);
-    const messagesText = texts.map((m, i) => `消息${i + 1}: ${m}`).join('\n');
-
-    const debounceModel = modelFor('debounce');
-    console.log(`[debounce] judging (${texts.length} msgs)...`);
-    const { result, latencyMs, costUsd } = await chatCompletion({
-      model: debounceModel,
-      messages: [
-        { role: 'system', content: judgePrompt },
-        { role: 'user', content: messagesText },
-      ],
-      max_tokens: 10,
-      provider: { sort: { by: 'latency' } },
-    } as any);
-
-    logAudit({
-      conversationId,
-      taskType: 'debounce',
-      model: debounceModel,
-      inputTokens: result.usage?.prompt_tokens ?? 0,
-      outputTokens: result.usage?.completion_tokens ?? 0,
-      totalTokens: result.usage?.total_tokens ?? 0,
-      costUsd,
-      generationId: result.id,
-      latencyMs,
-    });
-
-    const rawAnswer = result.choices[0]?.message?.content;
-    const answer = rawAnswer?.trim().toUpperCase();
-    console.log(`[debounce] judge → ${JSON.stringify(rawAnswer)} → ${answer ?? 'EMPTY'} (${latencyMs}ms, model: ${result.model ?? '?'})`);
-
-    const current = states.get(conversationId);
-    if (!current) return; // already flushed
-
-    if (answer?.startsWith('WAIT')) {
-      const waitSec = parseInt(answer.split(/\s+/)[1]) || 5;
-      console.log(`[debounce] judge says WAIT ${waitSec}s`);
-      current.processing = false;
-      await Bun.sleep(waitSec * 1000);
-      const still = states.get(conversationId);
-      if (!still) return; // flushed or cancelled
-      still.processing = false;
-      judge(conversationId, botId);
-      return;
-    } else {
-      current.judgeReady = true;
-      tryFlush(conversationId);
-    }
-  } catch (e) {
-    console.error('[debounce] judge error, marking judge gate ready:', e);
-    const s = states.get(conversationId);
-    if (s) {
-      s.judgeReady = true;
-      tryFlush(conversationId);
-    }
-  } finally {
-    const s = states.get(conversationId);
-    if (s) s.processing = false;
-  }
-}
-
-// ── Flush coordination ─────────────────────────────────────────────────
-
-function tryFlush(conversationId: string): void {
-  const state = states.get(conversationId);
-  if (!state) return;
-  if (!state.judgeReady || !state.typingReady) return;
   doFlush(conversationId);
 }
+
+// ── Flush ──────────────────────────────────────────────────────────────
 
 function doFlush(conversationId: string): void {
   const state = states.get(conversationId);

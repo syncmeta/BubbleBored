@@ -1,40 +1,27 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
-import { configManager } from '../config/loader';
 import {
-  findUserByChannel, createUser, findUserById, listBots,
   findConversationById, deleteConversation,
-  listConversationsByUser, getMessages,
+  listConversationsByUser, getMessages, insertMessage,
   getReviewRun,
 } from '../db/queries';
 import {
   reviewEvents, checkAndTriggerReview,
-  createReviewConversation, runReview,
+  createReviewConversation, runReview, continueReview,
   reviewsByMessageConv, getPendingReviews,
 } from '../core/review';
 import { modelFor } from '../core/models';
-import { messageBus } from '../bus/router';
-import { webChannel } from '../bus/channels/web';
-import type { OutboundMessage } from '../bus/types';
+import {
+  makeReplyFn, getOrCreateUser, findUser, resolveBotId,
+  sseStream, assertFeatureType,
+} from './_helpers';
 
 export const reviewRoutes = new Hono();
-
-function makeReplyFn(conv: { id: string; user_id: string }) {
-  const bound = messageBus.getReplyFn(conv.id);
-  if (bound) return bound;
-  const user = findUserById(conv.user_id);
-  const externalId = user?.external_id ?? null;
-  return (msg: OutboundMessage) => {
-    if (externalId) webChannel.send(externalId, msg).catch(() => {});
-  };
-}
 
 // ── 回顾 tab list ──
 
 reviewRoutes.get('/conversations', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel('web', channelUserId);
+  const user = findUser(c);
   if (!user) return c.json([]);
   const convs = listConversationsByUser(user.id, 'review');
   const pending = new Set(getPendingReviews());
@@ -55,7 +42,7 @@ reviewRoutes.get('/conversations/:id', (c) => {
   const id = c.req.param('id');
   const conv = findConversationById(id);
   if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.feature_type !== 'review') return c.json({ error: 'not a review conv' }, 400);
+  assertFeatureType(conv, 'review');
   const run = getReviewRun(id);
   return c.json({
     ...conv,
@@ -79,39 +66,27 @@ reviewRoutes.delete('/conversations/:id', (c) => {
 
 reviewRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
-    userId: string;
     botId?: string;
     sourceMessageConversationId?: string;
     modelSlug?: string;
     title?: string;
     autoStart?: boolean;
   }>();
-  if (!body.userId) return c.json({ error: 'userId required' }, 400);
 
-  let user = findUserByChannel('web', body.userId);
-  if (!user) {
-    const newId = randomUUID();
-    createUser(newId, 'web', body.userId, `User-${body.userId.slice(0, 6)}`);
-    user = findUserByChannel('web', body.userId);
-  }
-  if (!user) return c.json({ error: 'user creation failed' }, 500);
+  const user = getOrCreateUser(c);
 
-  let botId = body.botId;
   let sourceConvId: string | null = null;
   if (body.sourceMessageConversationId) {
     const src = findConversationById(body.sourceMessageConversationId);
     if (!src) return c.json({ error: 'source conversation not found' }, 404);
-    if (src.feature_type !== 'message') {
-      return c.json({ error: 'source must be a message conversation' }, 400);
-    }
+    assertFeatureType(src, 'message');
     sourceConvId = src.id;
-    if (!botId) botId = src.bot_id;
   }
-  if (!botId) {
-    const bots = listBots();
-    if (bots.length === 0) return c.json({ error: 'no bots configured' }, 500);
-    botId = bots[0].id as string;
-  }
+
+  const botId = resolveBotId({
+    explicit: body.botId,
+    fromSourceConvId: sourceConvId,
+  });
 
   const modelSlug = body.modelSlug?.trim() || modelFor('review');
 
@@ -148,7 +123,7 @@ reviewRoutes.post('/run/:id', async (c) => {
   const id = c.req.param('id');
   const conv = findConversationById(id);
   if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.feature_type !== 'review') return c.json({ error: 'not a review conv' }, 400);
+  assertFeatureType(conv, 'review');
   const run = getReviewRun(id);
   if (!run) return c.json({ error: 'run record missing' }, 500);
 
@@ -166,9 +141,7 @@ reviewRoutes.post('/run/:id', async (c) => {
 });
 
 reviewRoutes.get('/sources', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel('web', channelUserId);
+  const user = findUser(c);
   if (!user) return c.json([]);
   return c.json(listConversationsByUser(user.id, 'message'));
 });
@@ -179,9 +152,7 @@ reviewRoutes.post('/trigger/:messageConvId', async (c) => {
   const id = c.req.param('messageConvId');
   const conv = findConversationById(id);
   if (!conv) return c.json({ error: 'conversation not found' }, 404);
-  if (conv.feature_type !== 'message') {
-    return c.json({ error: 'must be a message conv' }, 400);
-  }
+  assertFeatureType(conv, 'message');
 
   const replyFn = makeReplyFn(conv);
   checkAndTriggerReview(id, conv.bot_id, replyFn, true).catch(e => {
@@ -191,36 +162,30 @@ reviewRoutes.post('/trigger/:messageConvId', async (c) => {
   return c.json({ ok: true });
 });
 
-// SSE
-reviewRoutes.get('/events', (c) => {
-  const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-      const send = (event: string, data: any) => {
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        } catch {}
-      };
-      const onLog = (data: any) => send('log', data);
-      const onDone = (data: any) => send('done', data);
-      reviewEvents.on('log', onLog);
-      reviewEvents.on('done', onDone);
-      send('init', {
-        pending: getPendingReviews(),
-        sources: Array.from(reviewsByMessageConv.keys()),
-      });
-      c.req.raw.signal.addEventListener('abort', () => {
-        reviewEvents.off('log', onLog);
-        reviewEvents.off('done', onDone);
-        try { controller.close(); } catch {}
-      });
-    },
-  });
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  });
+// Follow-up message: user replies inside the review conv after the first-pass
+// self-review. Stores the user's message, then kicks off continueReview() to
+// generate the bot's next turn (free-form chat, no structured tags).
+reviewRoutes.post('/conversations/:id/message', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ content?: string }>();
+  const content = body.content?.trim();
+  if (!content) return c.json({ error: 'content required' }, 400);
+
+  const conv = findConversationById(id);
+  if (!conv) return c.json({ error: 'not found' }, 404);
+  assertFeatureType(conv, 'review');
+
+  const userMsgId = randomUUID();
+  insertMessage(userMsgId, id, 'user', conv.user_id, content);
+
+  continueReview({ reviewConvId: id, userText: content })
+    .catch(e => console.error('[review-api] followup error:', e));
+
+  return c.json({ ok: true, messageId: userMsgId });
 });
+
+// SSE
+reviewRoutes.get('/events', (c) => sseStream(reviewEvents, c.req.raw.signal, () => ({
+  pending: getPendingReviews(),
+  sources: Array.from(reviewsByMessageConv.keys()),
+})));

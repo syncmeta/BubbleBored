@@ -17,20 +17,24 @@
   color-scheme: light;
 
   /* ---- Jade (brand accent) --------------------------------------------- */
-  --color-jade-50:  oklch(96.5% 0.018 175);
-  --color-jade-100: oklch(92.5% 0.034 175);
-  --color-jade-200: oklch(86.0% 0.056 175);
-  --color-jade-300: oklch(78.0% 0.080 175);
-  --color-jade-400: oklch(67.0% 0.105 175);
-  --color-jade-500: oklch(55.0% 0.115 175);
-  --color-jade-600: oklch(46.5% 0.105 175); /* default interactive */
-  --color-jade-700: oklch(38.5% 0.090 175);
-  --color-jade-800: oklch(31.0% 0.072 175);
-  --color-jade-900: oklch(24.5% 0.052 175);
-  --color-jade-950: oklch(18.0% 0.034 175);
+  /* Anchor: --color-jade-600 = #044735 (deep forest green). Lighter steps
+     are tints toward white, darker steps step further toward black; hue
+     held at ~165 to match the anchor. */
+  --color-jade-50:  oklch(96.0% 0.012 165);
+  --color-jade-100: oklch(92.0% 0.024 165);
+  --color-jade-200: oklch(85.0% 0.040 165);
+  --color-jade-300: oklch(74.0% 0.056 165);
+  --color-jade-400: oklch(58.0% 0.066 165);
+  --color-jade-500: oklch(42.0% 0.068 165);
+  --color-jade-600: #044735;                /* default interactive — brand */
+  --color-jade-700: oklch(24.0% 0.060 165);
+  --color-jade-800: oklch(18.5% 0.048 165);
+  --color-jade-900: oklch(14.0% 0.036 165);
+  --color-jade-950: oklch(10.0% 0.024 165);
 
   /* ---- Ink (warm-leaning neutrals) ------------------------------------- */
-  --color-ink-0:   oklch(99.2% 0.004 90);
+  /* Anchor: --color-ink-0 = #fdfcfa (warm off-white page surface). */
+  --color-ink-0:   #fdfcfa;
   --color-ink-50:  oklch(97.5% 0.005 90);
   --color-ink-100: oklch(94.5% 0.006 90);
   --color-ink-200: oklch(89.0% 0.007 90);
@@ -101,7 +105,17 @@
   --r-full: 9999px;
 
   /* ---- Sizing ---------------------------------------------------------- */
+  --rail-w:    64px;
   --sidebar-w: 272px;
+
+  /* ---- Portrait kind colors (used by both .conv-model-dot in the conv
+         list and .portrait-section--<kind> headers in the portrait feed) -- */
+  --kind-moments:  #3b82f6;
+  --kind-memos:    #f59e0b;
+  --kind-schedule: #10b981;
+  --kind-alarms:   #ef4444;
+  --kind-bills:    #8b5cf6;
+  --kind-default:  #64748b;
 
   /* ---- Motion ---------------------------------------------------------- */
   --ease:             cubic-bezier(0.16, 1, 0.3, 1);   /* ease-out-cubic */

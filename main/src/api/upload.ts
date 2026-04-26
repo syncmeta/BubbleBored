@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { saveUpload, MAX_UPLOAD_BYTES, isSupportedImageMime } from '../core/attachments';
+import { findConversationById } from '../db/queries';
+import { findUser } from './_helpers';
 
 /**
  * Upload endpoint — client POSTs multipart/form-data with a `file` field and
@@ -40,6 +42,17 @@ uploadRoutes.post('/', async (c) => {
   const conversationId = typeof body.conversationId === 'string' && body.conversationId
     ? body.conversationId
     : null;
+
+  // If a conv is named, it must belong to the caller — otherwise the
+  // upload is left as a generic orphan (message_id and conversation_id
+  // both null) so it can still be bound to a fresh conv if needed.
+  if (conversationId) {
+    const user = findUser(c);
+    const conv = findConversationById(conversationId);
+    if (!conv || conv.user_id !== user.id) {
+      return c.json({ error: 'conversation not found' }, 404);
+    }
+  }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const result = await saveUpload({ bytes, mime, conversationId });

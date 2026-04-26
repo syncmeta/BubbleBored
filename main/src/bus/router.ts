@@ -111,6 +111,15 @@ export class MessageBus {
       channel.send(info.userId, msg).catch(e => console.error('[bus] send error:', e));
     };
   }
+
+  // Returns the platform kind for a conversation: 'web' | 'ios' | 'telegram'
+  // | 'feishu' | null. Channel names are either bare ('web', 'ios') or
+  // 'kind:botId' (telegram/feishu) — strip the suffix.
+  getChannelKind(conversationId: string): string | null {
+    const info = this.conversationChannels.get(conversationId);
+    if (!info) return null;
+    return info.channel.split(':')[0];
+  }
 }
 
 export const messageBus = new MessageBus();

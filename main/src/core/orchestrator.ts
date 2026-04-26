@@ -12,6 +12,8 @@ import {
 } from '../db/queries';
 import { recordUserMessage, recordBotMessage } from '../honcho/memory';
 import { modelFor } from './models';
+import { checkAndTriggerReview } from './review';
+import { generateTitle } from './title';
 import type { OutboundMessage } from '../bus/types';
 
 // Interrupt tracking: when a new user message arrives during generation,
@@ -191,6 +193,7 @@ export async function handleUserMessage(params: {
   const messages = await buildPrompt({
     botId,
     conversationId,
+    userId,
     extraContext,
   });
   const chatModel = modelFor('chat');
@@ -280,7 +283,7 @@ export async function handleUserMessage(params: {
       console.log(`[chat] → [SILENT]`);
       updateConversationActivity(conversationId);
       logAudit({
-        conversationId, taskType: 'chat', model: botConfig.model,
+        userId, conversationId, taskType: 'chat', model: botConfig.model,
         inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
         outputTokens: streamMeta.usage?.completion_tokens ?? 0,
         totalTokens: streamMeta.usage?.total_tokens ?? 0,
@@ -324,7 +327,7 @@ export async function handleUserMessage(params: {
     }
 
     logAudit({
-      conversationId, taskType: 'chat', model: botConfig.model,
+      userId, conversationId, taskType: 'chat', model: botConfig.model,
       inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
       outputTokens: streamMeta.usage?.completion_tokens ?? 0,
       totalTokens: streamMeta.usage?.total_tokens ?? 0,
@@ -338,7 +341,6 @@ export async function handleUserMessage(params: {
       if (updatedConv && updatedConv.round_count > 0 &&
           updatedConv.round_count % botConfig.review.roundInterval === 0) {
         console.log(`[review] triggering at round ${updatedConv.round_count}`);
-        const { checkAndTriggerReview } = await import('./review');
         checkAndTriggerReview(conversationId, botId, replyFn).catch(e =>
           console.error('[review] error:', e)
         );
@@ -359,7 +361,6 @@ export async function handleUserMessage(params: {
       if (isEmpty || isRefreshRound) {
         const mode = isRefreshRound && !isEmpty ? 'refresh' : 'initial';
         console.log(`[title] triggering ${mode} for conv ${conversationId.slice(0, 8)} (round ${finalConv.round_count})`);
-        const { generateTitle } = await import('./title');
         generateTitle(conversationId, replyFn, { force: isRefreshRound }).catch(e =>
           console.error('[title] error:', e)
         );
@@ -370,7 +371,7 @@ export async function handleUserMessage(params: {
     const latencyMs = Date.now() - startTime;
     console.error(`[chat] ✗ LLM error (${latencyMs}ms):`, err.message ?? err);
     logAudit({
-      conversationId, taskType: 'chat', model: botConfig.model,
+      userId, conversationId, taskType: 'chat', model: botConfig.model,
       inputTokens: streamMeta.usage?.prompt_tokens ?? 0,
       outputTokens: streamMeta.usage?.completion_tokens ?? 0,
       totalTokens: streamMeta.usage?.total_tokens ?? 0,

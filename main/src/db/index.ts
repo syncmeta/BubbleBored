@@ -28,6 +28,7 @@ function runMigrations(db: Database): void {
       external_id TEXT,
       display_name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
+      is_admin INTEGER NOT NULL DEFAULT 0,
       honcho_peer_id TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -71,6 +72,7 @@ function runMigrations(db: Database): void {
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL REFERENCES users(id),
       conversation_id TEXT,
       task_type TEXT NOT NULL,
       model TEXT NOT NULL,
@@ -90,6 +92,9 @@ function runMigrations(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_model ON audit_log(model, created_at);
 
   `);
+  // NOTE: indexes/tables that depend on the v16 schema (audit_log.user_id +
+  // the invites table) are created inside the v16 migration block below so
+  // they don't blow up when the base block runs against a pre-v16 database.
 
   // Versioned migrations (PRAGMA user_version is per-DB)
   const userVersion = (db.query('PRAGMA user_version').get() as any).user_version as number;
@@ -338,5 +343,150 @@ function runMigrations(db: Database): void {
   if (userVersion < 13) {
     db.exec(`DROP TABLE IF EXISTS provider_models;`);
     db.exec('PRAGMA user_version = 13');
+  }
+
+  // v14: api_keys for the iOS thin client. Each row binds a long-lived bearer
+  // key to a user; the key itself is only stored as SHA-256(key). share_token
+  // is a separate, rotatable random handle used by the /i/<token> share-link
+  // landing page so the raw key never appears in a URL.
+  if (userVersion < 14) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        share_token TEXT UNIQUE,
+        created_by TEXT REFERENCES users(id),
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_used_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+      CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+      CREATE INDEX IF NOT EXISTS idx_api_keys_share ON api_keys(share_token);
+    `);
+    db.exec('PRAGMA user_version = 14');
+  }
+
+  // v15: each api key remembers which base URLs to embed in its share link.
+  // share_base_url is the primary one (what /i/<token> redirects to + what
+  // redeem returns). share_alt_urls_json is a JSON array of fallbacks the
+  // iOS client probes if the primary is unreachable — lets one share URL
+  // work in both LAN and WAN contexts.
+  if (userVersion < 15) {
+    const cols = db.query(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'share_base_url')) {
+      db.exec(`ALTER TABLE api_keys ADD COLUMN share_base_url TEXT`);
+    }
+    if (!cols.some(c => c.name === 'share_alt_urls_json')) {
+      db.exec(`ALTER TABLE api_keys ADD COLUMN share_alt_urls_json TEXT`);
+    }
+    db.exec('PRAGMA user_version = 15');
+  }
+
+  // v16: account system. Drops anonymous web users + their data so the
+  // upgrade lands cleanly with the new invite-based onboarding. Adds
+  // `is_admin` flag on users, `user_id` on audit_log (NOT NULL — every LLM
+  // call is now attributable to a real account), and the `invites` table
+  // backing the admin-issued onboarding flow.
+  if (userVersion < 16) {
+    console.log('[db] v16: wiping anonymous data and adding account columns');
+    // Wipe in FK-safe order. bots + model_assignments stay intact (no user
+    // data there); everything below either FKs to users directly or to
+    // conversations, so the cascade through these tables covers it.
+    db.exec(`
+      DELETE FROM attachments;
+      DELETE FROM messages;
+      DELETE FROM audit_log;
+      DELETE FROM ai_picks;
+      DELETE FROM device_tokens;
+      DELETE FROM portraits;
+      DELETE FROM surf_vectors;
+      DELETE FROM surf_runs;
+      DELETE FROM review_runs;
+      DELETE FROM debate_settings;
+      DELETE FROM user_profile;
+      DELETE FROM api_keys;
+      DELETE FROM conversations;
+      DELETE FROM users;
+    `);
+
+    const userCols = db.query(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+    if (!userCols.some(c => c.name === 'is_admin')) {
+      db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
+    }
+
+    // SQLite can't ALTER a column to NOT NULL on an existing table — rebuild
+    // audit_log. Safe because we just wiped it above.
+    db.exec(`
+      DROP TABLE IF EXISTS audit_log;
+      CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        conversation_id TEXT,
+        task_type TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER DEFAULT 0,
+        cost_usd REAL,
+        upstream_cost_usd REAL,
+        generation_id TEXT,
+        generation_time_ms INTEGER,
+        latency_ms INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX idx_audit_task ON audit_log(task_type, created_at);
+      CREATE INDEX idx_audit_model ON audit_log(model, created_at);
+      CREATE INDEX idx_audit_user_time ON audit_log(user_id, created_at DESC);
+    `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS invites (
+        id TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL REFERENCES users(id),
+        note TEXT,
+        expires_at INTEGER,
+        redeemed_at INTEGER,
+        redeemed_by_user_id TEXT REFERENCES users(id),
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_invites_token ON invites(token);
+    `);
+
+    db.exec('PRAGMA user_version = 16');
+  }
+
+  // v17: skills. User-managed prompt fragments injected into the system
+  // prompt at chat time. `enabled = 0` means the skill is parked in the
+  // catalog but not active. `source` is a free-form provenance tag (e.g.
+  // 'anthropic/skills:skill-creator' for bundled presets, 'user' for
+  // user-authored entries) so we can re-seed/refresh upstream copies
+  // without clobbering local edits. (name, user_id) is unique per user.
+  if (userVersion < 17) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 0,
+        source TEXT,
+        source_url TEXT,
+        license TEXT,
+        seeded_hash TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_user_name ON skills(user_id, name);
+      CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id, sort_order, created_at);
+    `);
+    db.exec('PRAGMA user_version = 17');
   }
 }

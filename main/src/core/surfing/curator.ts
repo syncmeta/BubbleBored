@@ -13,6 +13,7 @@ export interface Bridge {
 }
 
 export interface CuratorInput {
+  userId: string;
   conversationId: string;
   model: string;
   plan: PlannerOutput;
@@ -160,7 +161,7 @@ function formatInput(plan: PlannerOutput, rawFindings: RawFinding[], budget: num
 }
 
 export async function runCurator(input: CuratorInput): Promise<CuratorResult> {
-  const { conversationId, model, plan, rawFindings, budget, emitLog, signal } = input;
+  const { userId, conversationId, model, plan, rawFindings, budget, emitLog, signal } = input;
 
   const systemPrompt = await configManager.readPrompt('surfing-curator.md');
   const userInput = formatInput(plan, rawFindings, budget);
@@ -194,7 +195,7 @@ export async function runCurator(input: CuratorInput): Promise<CuratorResult> {
     });
 
     logAudit({
-      conversationId, taskType: 'surfing', model,
+      userId, conversationId, taskType: 'surfing', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,

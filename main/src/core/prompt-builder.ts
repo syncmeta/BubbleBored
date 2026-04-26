@@ -1,9 +1,32 @@
 import { configManager } from '../config/loader';
-import { getMessages, getAttachmentsForMessages, type AttachmentRow } from '../db/queries';
+import { getMessages, getAttachmentsForMessages, findConversationById, type AttachmentRow } from '../db/queries';
 import { annotateMessage } from './time';
 import { readAttachmentFile } from './attachments';
-import { buildPerceptionBlock } from './perception';
+import { getCachedPerceptionBlock, refreshPerceptionInBackground } from './perception';
+import { buildSkillsPromptBlock } from './skills';
+import { messageBus } from '../bus/router';
 import type { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/resources/chat/completions';
+
+// External chat platforms expose only text — there's no冲浪/回顾/画像/辩论 UI,
+// no image pipeline, no tab switching. Tell the bot so it doesn't promise
+// things it can't do on the current channel, while still knowing those
+// features exist on the web side if the user asks.
+function buildChannelContextBlock(kind: string | null): string | null {
+  if (kind !== 'telegram' && kind !== 'feishu') return null;
+  const platform = kind === 'telegram' ? 'Telegram' : '飞书';
+  return `## 当前接入渠道
+
+你正在通过 **${platform}** 跟对方对话。在这个渠道里你的能力是受限的：
+
+- 只能进行纯文字消息往来。对方发图片/语音/文件你都收不到（不要假装看到了）。
+- PendingBot 在网页端还有这些功能，但这里**没有**：
+  - **冲浪**：系统定期主动搜对方视野之外的内容、再让你自然带进对话
+  - **回顾**：对一段时间内的对话做总结回看
+  - **你（画像）**：系统对对方长期理解形成的画像
+  - **辩论**：两个人格围绕一个话题对辩
+- 如果对方问起"你还能做什么/有哪些功能"，你可以告诉他这些功能存在、在 PendingBot 网页端使用；但你**没法在这个渠道里替他启动它们**。
+- 不要主动推销这些功能。普通聊天照常按你的风格进行就行。`;
+}
 
 // Only attach the N most recent image-bearing user messages inline; older
 // ones degrade to a text placeholder. Keeps prompt payload bounded in long
@@ -13,6 +36,11 @@ const IMAGE_CONTEXT_WINDOW = 4;
 export async function buildPrompt(params: {
   botId: string;
   conversationId: string;
+  // Owner of the conversation. Used to load the user's enabled skills
+  // (a per-user catalog managed in the 「我」 tab). Optional so non-chat
+  // callers can omit it and skip skill injection — when missing we fall
+  // back to looking it up from the conversation row.
+  userId?: string;
   extraContext?: string;
 }): Promise<ChatCompletionMessageParam[]> {
   const botConfig = configManager.getBotConfig(params.botId);
@@ -31,19 +59,36 @@ export async function buildPrompt(params: {
   if (botPrompt) {
     system += '\n\n' + botPrompt;
   }
+  const channelBlock = buildChannelContextBlock(messageBus.getChannelKind(params.conversationId));
+  if (channelBlock) {
+    system += '\n\n' + channelBlock;
+  }
   if (params.extraContext) {
     system += '\n\n' + params.extraContext;
   }
 
-  // Append the AI-generated perception block last so the model treats it as
-  // ambient ground rather than primary instruction. The block is best-effort
-  // — failures degrade silently to no perception.
-  try {
-    const perception = await buildPerceptionBlock({ conversationId: params.conversationId });
-    if (perception) system += '\n\n' + perception;
-  } catch (e: any) {
-    console.warn('[prompt] perception build failed:', e?.message ?? e);
+  // User-enabled skills (Anthropic-style Agent Skills) — appended after the
+  // bot/channel/extra context so the bot's own persona stays primary and the
+  // skills layer reads as ambient capability.
+  const userId = params.userId
+    ?? findConversationById(params.conversationId)?.user_id
+    ?? null;
+  if (userId) {
+    const skillsBlock = buildSkillsPromptBlock(userId);
+    if (skillsBlock) system += '\n\n' + skillsBlock;
   }
+
+  // Append the AI-generated perception block last so the model treats it as
+  // ambient ground rather than primary instruction.
+  //
+  // Stale-while-revalidate: use whatever's already cached (instantaneous —
+  // no LLM call on the prompt-build path) and kick a fresh recompute in the
+  // background so the NEXT message has an up-to-date block. The first ever
+  // message in a conv runs with no perception, which is fine — Bot still
+  // has a usable system prompt and the user gets a fast first reply.
+  const perception = getCachedPerceptionBlock(params.conversationId);
+  if (perception) system += '\n\n' + perception;
+  refreshPerceptionInBackground(params.conversationId);
 
   // Get history messages with time annotations
   const now = Math.floor(Date.now() / 1000);

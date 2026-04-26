@@ -158,6 +158,7 @@ export async function runVectorPicker(input: VectorPickerInput): Promise<VectorP
   const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
   logAudit({
+    userId,
     conversationId: surfConvId, taskType: 'surfing', model,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,

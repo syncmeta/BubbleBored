@@ -60,6 +60,11 @@ export const GlobalConfigSchema = z.object({
   server: z.object({
     port: z.number().int().default(3000),
     host: z.string().default('0.0.0.0'),
+    // Optional public-facing base URL (scheme + host + optional port). When
+    // set, the iOS share-link admin panel defaults to this URL so links
+    // sent over WeChat/email work from anywhere on the internet — not just
+    // the LAN you happen to be admin'ing from. Example: "https://bot.example.com".
+    publicURL: z.string().optional(),
   }),
   openrouter: z.object({
     defaultModel: z.string().default('anthropic/claude-sonnet-4'),

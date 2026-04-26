@@ -5,13 +5,25 @@ import { logAudit } from '../../llm/audit';
 import { configManager } from '../../config/loader';
 import {
   findConversationById, getMessages, insertMessage, updateConversationActivity,
-  getDebateSettings, bumpDebateRound,
+  getDebateSettings, bumpDebateRound, findConversation,
 } from '../../db/queries';
 import type { OutboundMessage } from '../../bus/types';
 
 export const debateEvents = new EventEmitter();
 
-const ROUND_HISTORY_LIMIT = 60;
+// Conversations whose currently-running round should stop after the in-flight
+// message lands. The orchestrator clears the flag at the top of every round
+// and consults it between iterations.
+const cancelRequests = new Set<string>();
+
+export function requestPause(conversationId: string): boolean {
+  cancelRequests.add(conversationId);
+  return true;
+}
+
+const ROUND_HISTORY_LIMIT = 80;
+const DEFAULT_MAX_MESSAGES_PER_ROUND = 30;
+const MAX_MESSAGES_PER_ROUND_HARD_CAP = 200;
 
 function emit(conversationId: string, content: string, kind: string = 'log') {
   debateEvents.emit('log', {
@@ -57,6 +69,7 @@ function renderTranscript(
 }
 
 async function runOneDebater(params: {
+  userId: string;
   conversationId: string;
   slug: string;
   displayName: string;
@@ -65,7 +78,7 @@ async function runOneDebater(params: {
   transcript: string;
   systemPrompt: string;
 }): Promise<DebaterOutput> {
-  const { conversationId, slug, displayName, topic, sourceContext, transcript, systemPrompt } = params;
+  const { userId, conversationId, slug, displayName, topic, sourceContext, transcript, systemPrompt } = params;
 
   const filledSystem = fillPrompt(systemPrompt, { model_display_name: displayName });
 
@@ -91,6 +104,7 @@ async function runOneDebater(params: {
   });
 
   logAudit({
+    userId,
     conversationId, taskType: 'debate', model: slug,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,
@@ -106,25 +120,31 @@ async function runOneDebater(params: {
 }
 
 // Pull a snippet of a "source" message conversation if the debate has one
-// linked. For now we use the title-matching message conv of the same bot —
-// caller can override later. Returns a flat string ready to embed.
-async function loadSourceContext(debateConv: {
+// linked. For now we use the most recent message conv of the same (bot,
+// user) pair — caller can override later. Returns a flat string ready to
+// embed.
+function loadSourceContext(debateConv: {
   bot_id: string; user_id: string;
-}): Promise<string> {
-  // For Phase 1 we don't yet wire a per-debate source-conv pointer; pull the
-  // most recent message conversation between this user and bot.
-  const db = await import('../../db/queries');
-  const msgConv = db.findConversation(debateConv.bot_id, debateConv.user_id, 'message');
+}): string {
+  const msgConv = findConversation(debateConv.bot_id, debateConv.user_id, 'message');
   if (!msgConv) return '';
-  const msgs = db.getMessages(msgConv.id, 30);
+  const msgs = getMessages(msgConv.id, 30);
   return msgs.map((m: any) =>
     `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
   ).join('\n');
 }
 
+function pickNextSlug(slugs: string[], lastSlug: string | null): string {
+  if (slugs.length === 1) return slugs[0];
+  const pool = lastSlug ? slugs.filter(s => s !== lastSlug) : slugs;
+  const choices = pool.length > 0 ? pool : slugs;
+  return choices[Math.floor(Math.random() * choices.length)];
+}
+
 export async function runDebateRound(
   conversationId: string,
   replyFn: (msg: OutboundMessage) => void,
+  opts: { maxMessages?: number } = {},
 ): Promise<{ delivered: number; round: number }> {
   const conv = findConversationById(conversationId);
   if (!conv) throw new Error('conversation not found');
@@ -138,40 +158,68 @@ export async function runDebateRound(
     throw new Error('debate needs at least 2 models');
   }
 
-  const round = bumpDebateRound(conversationId);
-  emit(conversationId, `Round ${round} 开始 · 参与模型 ${slugs.length} 个`);
+  const requested = Number.isFinite(opts.maxMessages) ? Number(opts.maxMessages) : DEFAULT_MAX_MESSAGES_PER_ROUND;
+  const maxMessages = Math.max(1, Math.min(requested, MAX_MESSAGES_PER_ROUND_HARD_CAP));
 
-  const history = getMessages(conversationId, ROUND_HISTORY_LIMIT);
-  const sourceContext = await loadSourceContext(conv);
+  // Fresh round — clear any stale pause flag before we start.
+  cancelRequests.delete(conversationId);
+
+  const round = bumpDebateRound(conversationId);
+  emit(conversationId, `Round ${round} 开始 · 群聊上限 ${maxMessages} 条 · 参与模型 ${slugs.length} 个`);
+
+  const sourceContext = loadSourceContext(conv);
   const systemPrompt = await loadPrompt();
 
-  // Fan out — each model sees the same transcript, doesn't see the others'
-  // *current* round (they speak simultaneously). Next round they'll catch up.
-  // displayName falls back to the slug itself; the UI can map to a friendly
-  // label using its OpenRouter cache when rendering.
-  const debaters = await Promise.allSettled(slugs.map(slug =>
-    runOneDebater({
-      conversationId,
-      slug,
-      displayName: slug,
-      topic: settings.topic,
-      sourceContext,
-      transcript: renderTranscript(history, slug),
-      systemPrompt,
-    })
-  ));
-
   let delivered = 0;
-  for (const res of debaters) {
-    if (res.status !== 'fulfilled') {
-      emit(conversationId, `⚠️ 一个模型出错：${(res.reason as any)?.message ?? res.reason}`, 'error');
+  let lastSlug: string | null = null;
+  let consecutiveFailures = 0;
+  let paused = false;
+  const failureLimit = slugs.length * 2;
+
+  for (let step = 0; step < maxMessages; step++) {
+    if (cancelRequests.has(conversationId)) {
+      paused = true;
+      break;
+    }
+    const slug = pickNextSlug(slugs, lastSlug);
+    const history = getMessages(conversationId, ROUND_HISTORY_LIMIT);
+
+    let out: DebaterOutput;
+    try {
+      out = await runOneDebater({
+        userId: conv.user_id,
+        conversationId,
+        slug,
+        displayName: slug,
+        topic: settings.topic,
+        sourceContext,
+        transcript: renderTranscript(history, slug),
+        systemPrompt,
+      });
+    } catch (e: any) {
+      emit(conversationId, `⚠️ ${slug} 出错：${e?.message ?? e}`, 'error');
+      consecutiveFailures++;
+      if (consecutiveFailures >= failureLimit) {
+        emit(conversationId, '连续失败过多，本轮提前结束', 'error');
+        break;
+      }
       continue;
     }
-    const out = res.value;
+
     if (out.passed || !out.text.trim()) {
-      emit(conversationId, `[${out.displayName}] 本轮跳过（[PASS]）`);
+      emit(conversationId, `[${out.displayName}] 跳过（[PASS]）`);
+      consecutiveFailures++;
+      lastSlug = slug;
+      if (consecutiveFailures >= failureLimit) {
+        emit(conversationId, '没人想接话了，本轮提前结束');
+        break;
+      }
       continue;
     }
+
+    consecutiveFailures = 0;
+    lastSlug = slug;
+
     const msgId = randomUUID();
     insertMessage(msgId, conversationId, 'debater', out.slug, out.text);
     replyFn({
@@ -184,9 +232,11 @@ export async function runDebateRound(
     delivered++;
   }
 
+  cancelRequests.delete(conversationId);
   updateConversationActivity(conversationId);
-  emit(conversationId, `Round ${round} 完成 · 投递 ${delivered} 条`, 'done');
-  debateEvents.emit('done', { conversationId, round, delivered, timestamp: Date.now() });
+  const tail = paused ? `Round ${round} 已暂停 · 投递 ${delivered} 条` : `Round ${round} 完成 · 投递 ${delivered} 条`;
+  emit(conversationId, tail, 'done');
+  debateEvents.emit('done', { conversationId, round, delivered, paused, timestamp: Date.now() });
 
   return { delivered, round };
 }

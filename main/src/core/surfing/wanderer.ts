@@ -12,6 +12,7 @@ export interface RawFinding {
 }
 
 export interface WandererInput {
+  userId: string;
   conversationId: string;
   model: string;
   budget: number;                 // max search_web + read_url calls (note_finding/done are free)
@@ -107,7 +108,7 @@ const TOOLS: ChatCompletionTool[] = [
 ];
 
 export async function runWanderer(input: WandererInput): Promise<WandererResult> {
-  const { conversationId, model, budget, emitLog, signal } = input;
+  const { userId, conversationId, model, budget, emitLog, signal } = input;
 
   const systemPrompt = await configManager.readPrompt('surfing-wanderer.md');
 
@@ -139,7 +140,7 @@ export async function runWanderer(input: WandererInput): Promise<WandererResult>
     });
 
     logAudit({
-      conversationId, taskType: 'surfing', model,
+      userId, conversationId, taskType: 'surfing', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,

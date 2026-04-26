@@ -132,7 +132,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutput> {
   const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
   logAudit({
-    conversationId, taskType: 'surfing', model,
+    userId, conversationId, taskType: 'surfing', model,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,
     totalTokens: result.usage?.total_tokens ?? 0,

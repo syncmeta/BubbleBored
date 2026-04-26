@@ -26,6 +26,7 @@ export interface DiggerFinding {
 }
 
 export interface DiggerInput {
+  userId: string;
   conversationId: string;          // surf conv id (for audit + log)
   model: string;
   vector: DiggingVector;
@@ -152,7 +153,7 @@ function formatVector(v: DiggingVector): string {
 }
 
 export async function runDigger(input: DiggerInput): Promise<DiggerResult> {
-  const { conversationId, model, vector, knownProfile, budget, emitLog, signal } = input;
+  const { userId, conversationId, model, vector, knownProfile, budget, emitLog, signal } = input;
 
   const baseSystem = await configManager.readPrompt('surfing-digger.md');
   const modeStrategy = await loadModeStrategy(vector);
@@ -190,7 +191,7 @@ export async function runDigger(input: DiggerInput): Promise<DiggerResult> {
     });
 
     logAudit({
-      conversationId, taskType: 'surfing', model,
+      userId, conversationId, taskType: 'surfing', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,

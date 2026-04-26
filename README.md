@@ -267,10 +267,57 @@ bots:
 
 app 内的 userId 与网页端独立——同一个人在 iOS 和网页上看到的是两份对话。
 
+## 技能（Skills）
+
+「我」标签页里有「技能」区域，可以管理 Anthropic 风格的 [Agent Skills](https://github.com/anthropics/skills) — 一段带 frontmatter 的 Markdown 指令片段，启用后在聊天时会拼进系统提示词。
+
+首次打开会从仓库自带的预设里播种以下几条（默认未启用），全部来自 [`anthropic/skills`](https://github.com/anthropics/skills)（Apache-2.0）：
+
+| 预设 | 出处 |
+|------|------|
+| `skill-creator`     | https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md |
+| `mcp-builder`       | https://github.com/anthropics/skills/blob/main/skills/mcp-builder/SKILL.md |
+| `doc-coauthoring`   | https://github.com/anthropics/skills/blob/main/skills/doc-coauthoring/SKILL.md |
+| `internal-comms`    | https://github.com/anthropics/skills/blob/main/skills/internal-comms/SKILL.md |
+| `brand-guidelines`  | https://github.com/anthropics/skills/blob/main/skills/brand-guidelines/SKILL.md |
+| `theme-factory`     | https://github.com/anthropics/skills/blob/main/skills/theme-factory/SKILL.md |
+
+预设的 SKILL.md 原文存放在 [`main/prompts/skills/anthropic/`](main/prompts/skills/anthropic/) 目录，附带 [NOTICE.md](main/prompts/skills/anthropic/NOTICE.md) 说明出处与许可。预设在你不修改 body 的前提下会随仓库更新；本地编辑过的预设不会被覆盖。
+
+也可以在「新建技能」里写自己的技能 — 只填名字、一句话描述、Markdown 正文即可。
+
 ## 技术栈
 
 Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket
 
+## 致谢与第三方组件
+
+本项目除自身代码外使用以下开源组件，所有版权归原作者所有：
+
+**运行时依赖**
+
+- [Bun](https://bun.sh) — MIT
+- [Hono](https://hono.dev) — MIT
+- [OpenAI Node SDK](https://github.com/openai/openai-node) — Apache-2.0
+- [Honcho SDK](https://github.com/plastic-labs/honcho) — Apache-2.0
+- [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk) — MIT
+- [Zod](https://github.com/colinhacks/zod) — MIT
+- [yaml (eemeli)](https://github.com/eemeli/yaml) — ISC
+- [node-qrcode](https://github.com/soldair/node-qrcode) — MIT
+- [Playwright](https://github.com/microsoft/playwright) — Apache-2.0（仅 dev / 脚本用途）
+
+**外部服务**
+
+- [OpenRouter](https://openrouter.ai) — 模型路由
+- [Jina AI](https://jina.ai) — 搜索 / 抓取（MCP）
+- 可选：Telegram Bot API、飞书开放平台、Apple Push Notification service
+
+**预设技能内容**
+
+- [anthropic/skills](https://github.com/anthropics/skills) — Apache-2.0 © Anthropic, PBC. 详见 [main/prompts/skills/anthropic/NOTICE.md](main/prompts/skills/anthropic/NOTICE.md)。
+
+如发现遗漏请提 Issue。
+
 ## License
 
-MIT
+本仓库代码以 MIT 协议发布。第三方组件遵循各自原协议（见上）。

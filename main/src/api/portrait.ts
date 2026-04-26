@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
 import {
-  findUserByChannel, findUserById, createUser,
   createConversation, findConversationById, deleteConversation,
   listConversationsByUser, getMessages, insertMessage,
   listPortraitsByConversation, deletePortrait,
@@ -12,9 +11,7 @@ import { configManager } from '../config/loader';
 import { chatCompletion } from '../llm/client';
 import { logAudit } from '../llm/audit';
 import { modelFor } from '../core/models';
-import { messageBus } from '../bus/router';
-import { webChannel } from '../bus/channels/web';
-import type { OutboundMessage } from '../bus/types';
+import { makeReplyFn, getOrCreateUser, findUser, assertFeatureType } from './_helpers';
 
 export const portraitRoutes = new Hono();
 
@@ -28,20 +25,15 @@ const VALID_KINDS: ReadonlySet<PortraitKind> = new Set([
 // to base a portrait on. Lightweight projection — chat list elsewhere covers
 // full hydration.
 portraitRoutes.get('/sources', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel('web', channelUserId);
+  const user = findUser(c);
   if (!user) return c.json([]);
-  const convs = listConversationsByUser(user.id, 'message');
-  return c.json(convs);
+  return c.json(listConversationsByUser(user.id, 'message'));
 });
 
 // ── Portrait conversations ──
 
 portraitRoutes.get('/conversations', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel('web', channelUserId);
+  const user = findUser(c);
   if (!user) return c.json([]);
   const convs = listConversationsByUser(user.id, 'portrait');
   // Hydrate with a count of generated portraits per conv
@@ -58,26 +50,17 @@ portraitRoutes.get('/conversations', (c) => {
 
 portraitRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
-    userId: string;
     sourceConversationId: string;  // the message conv to base portraits on
     title?: string;
   }>();
-  if (!body.userId) return c.json({ error: 'userId required' }, 400);
   if (!body.sourceConversationId) return c.json({ error: 'sourceConversationId required' }, 400);
+
+  const user = getOrCreateUser(c);
 
   const sourceConv = findConversationById(body.sourceConversationId);
   if (!sourceConv) return c.json({ error: 'source conversation not found' }, 404);
-  if (sourceConv.feature_type !== 'message') {
-    return c.json({ error: 'source must be a message conversation' }, 400);
-  }
-
-  let user = findUserByChannel('web', body.userId);
-  if (!user) {
-    const newId = randomUUID();
-    createUser(newId, 'web', body.userId, `User-${body.userId.slice(0, 6)}`);
-    user = findUserByChannel('web', body.userId);
-  }
-  if (!user) return c.json({ error: 'user creation failed' }, 500);
+  if (sourceConv.user_id !== user.id) return c.json({ error: 'source conversation not found' }, 404);
+  assertFeatureType(sourceConv, 'message');
 
   // Reuse the source conv's bot — the generator agent inherits that bot's
   // character/voice when the user chats inside the portrait thread.
@@ -110,7 +93,7 @@ portraitRoutes.get('/conversations/:id', (c) => {
   const id = c.req.param('id');
   const conv = findConversationById(id);
   if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.feature_type !== 'portrait') return c.json({ error: 'not a portrait conv' }, 400);
+  assertFeatureType(conv, 'portrait');
 
   const portraits = listPortraitsByConversation(id).map(p => ({
     ...p,
@@ -134,7 +117,7 @@ portraitRoutes.post('/generate/:convId', async (c) => {
 
   const conv = findConversationById(portraitConvId);
   if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.feature_type !== 'portrait') return c.json({ error: 'not a portrait conv' }, 400);
+  assertFeatureType(conv, 'portrait');
 
   const sourceId = getPortraitSourceId(portraitConvId);
   if (!sourceId) return c.json({ error: 'portrait has no source conversation' }, 500);
@@ -170,7 +153,7 @@ portraitRoutes.post('/chat/:convId', async (c) => {
 
   const conv = findConversationById(portraitConvId);
   if (!conv) return c.json({ error: 'not found' }, 404);
-  if (conv.feature_type !== 'portrait') return c.json({ error: 'not a portrait conv' }, 400);
+  assertFeatureType(conv, 'portrait');
 
   // Persist user message
   const userMsgId = randomUUID();
@@ -205,6 +188,7 @@ portraitRoutes.post('/chat/:convId', async (c) => {
 
   const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
   logAudit({
+    userId: conv.user_id,
     conversationId: portraitConvId, taskType: 'portrait', model,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,
@@ -217,14 +201,8 @@ portraitRoutes.post('/chat/:convId', async (c) => {
   insertMessage(replyId, portraitConvId, 'bot', conv.bot_id, replyText);
 
   // Echo over WS too so the bubble shows up in real time if the user has
-  // multiple tabs open. Resolve the right channel id (external) since
-  // conv.user_id is the internal UUID and won't match the WS connection key.
-  const bound = messageBus.getReplyFn(portraitConvId);
-  const user = findUserById(conv.user_id);
-  const externalId = user?.external_id ?? null;
-  const replyFn: (msg: OutboundMessage) => void = bound ?? ((msg) => {
-    if (externalId) webChannel.send(externalId, msg).catch(() => {});
-  });
+  // multiple tabs open.
+  const replyFn = makeReplyFn(conv);
   replyFn({
     type: 'message',
     conversationId: portraitConvId,

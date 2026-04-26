@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
+import { HTTPException } from 'hono/http-exception';
 import { configManager } from './config/loader';
 import { getDb } from './db/index';
 import { syncBots } from './bots/registry';
@@ -16,9 +17,24 @@ import { reviewRoutes } from './api/review';
 import { debateRoutes } from './api/debate';
 import { portraitRoutes } from './api/portrait';
 import { meRoutes } from './api/me';
+import { skillsRoutes } from './api/skills';
 import { openrouterRoutes } from './api/openrouter';
 import { mobileApiRoutes } from './api/mobile';
 import { uploadRoutes } from './api/upload';
+import { keysRoutes } from './api/keys';
+import { connectRoutes } from './api/connect';
+import { invitesRoutes } from './api/invites';
+import { adminRoutes } from './api/admin';
+import {
+  apiKeyAuthMiddleware, resolveApiKeyAuth, hashApiKey,
+  clearSessionCookie,
+} from './api/_helpers';
+import {
+  countAdmins, createInvite, findApiKeyByHash, findUserById,
+  findConversationById,
+} from './db/queries';
+import { randomUUID, randomBytes } from 'crypto';
+import { base64UrlEncode } from './api/_helpers';
 import { addMessage as debounceAdd } from './core/debounce';
 import { handleUserMessage, signalNewMessage } from './core/orchestrator';
 import { cancelPendingReview } from './core/review';
@@ -26,7 +42,8 @@ import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
 import { ensureModelAssignmentsSeeded } from './core/models';
-import type { OutboundMessage } from './bus/types';
+import { runSurf, createSurfConversation } from './core/surfing/searcher';
+import { modelFor } from './core/models';
 
 // Initialize
 await configManager.load();
@@ -34,6 +51,47 @@ console.log('[init] config loaded');
 
 getDb();
 console.log('[init] database ready');
+
+// Bootstrap admin: when no admin exists yet (fresh install or post-wipe),
+// mint a one-shot invite and print the URL to stdout. The first user to
+// redeem it becomes admin (handled in invites.ts redeem path).
+ensureBootstrapAdminInvite();
+
+function ensureBootstrapAdminInvite() {
+  if (countAdmins() > 0) return;
+  const token = base64UrlEncode(randomBytes(24));
+  const id = `bootstrap_${randomUUID().slice(0, 8)}`;
+  // The createInvite "createdBy" is FK to users(id). With no users yet we
+  // can't FK to anyone — store an internal sentinel. The schema makes it
+  // NOT NULL, so we relax it with a fake-but-FK-safe self-reference:
+  // we insert a placeholder admin row that the redeem flow will replace.
+  // Simpler approach: create a synthetic "system" user with a known id.
+  const SYSTEM_ID = '00000000-0000-0000-0000-000000000000';
+  const existing = findUserById(SYSTEM_ID);
+  if (!existing) {
+    getDb().query(
+      `INSERT INTO users (id, channel, external_id, display_name, status, is_admin)
+       VALUES (?, 'system', ?, 'system', 'system', 0)`
+    ).run(SYSTEM_ID, SYSTEM_ID);
+  }
+  createInvite({
+    id, token,
+    createdBy: SYSTEM_ID,
+    note: 'bootstrap admin invite',
+    expiresAt: null,
+  });
+
+  const cfg = configManager.get();
+  const base = cfg.server.publicURL?.replace(/\/+$/, '')
+    ?? `http://${cfg.server.host === '0.0.0.0' ? 'localhost' : cfg.server.host}:${cfg.server.port}`;
+  const url = `${base}/i/${token}`;
+
+  // Big banner so a self-host user can spot it in the log soup.
+  console.log('\n' + '='.repeat(72));
+  console.log('  No admin account yet — open this link to create the first one:');
+  console.log(`  ${url}`);
+  console.log('='.repeat(72) + '\n');
+}
 
 ensureModelAssignmentsSeeded();
 
@@ -60,18 +118,22 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // into this chat (preserves the "bot proactively shares" UX). The full run
   // record lives in the new surf conv for inspection.
   if (content === '/surf') {
-    import('./core/surfing/searcher').then(({ runSurf, createSurfConversation }) => {
-      import('./core/models').then(({ modelFor }) => {
-        const surfConvId = createSurfConversation({
-          botId, userId,
-          sourceMessageConvId: conversationId,
-          modelSlug: modelFor('surfing'),
-          budget: configManager.getBotConfig(botId).surfing.maxRequests,
-        });
-        runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })
-          .catch(e => console.error('[surf] error:', e));
+    try {
+      const surfConvId = createSurfConversation({
+        botId, userId,
+        sourceMessageConvId: conversationId,
+        modelSlug: modelFor('surfing'),
+        budget: configManager.getBotConfig(botId).surfing.maxRequests,
       });
-    });
+      runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })
+        .catch(e => {
+          console.error('[surf] error:', e);
+          replyFn({ type: 'error', conversationId, content: '冲浪出了点问题 稍后再试' });
+        });
+    } catch (e) {
+      console.error('[surf] launch error:', e);
+      replyFn({ type: 'error', conversationId, content: '冲浪没起来 稍后再试' });
+    }
     return;
   }
 
@@ -142,7 +204,23 @@ for (const [botId, botCfg] of Object.entries(configManager.get().bots)) {
 // Hono app
 const app = new Hono();
 
+// Surface HTTPException thrown from API helpers as `{ error: msg }` JSON,
+// matching the explicit `c.json({ error }, code)` shape every other route uses.
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return c.json({ error: err.message }, err.status);
+  }
+  console.error('[api] uncaught:', err);
+  return c.json({ error: 'internal server error' }, 500);
+});
+
 // API routes
+// Auth runs before every /api route. Resolves the caller from either the
+// Authorization: Bearer header (iOS / programmatic) or the pb_session
+// cookie (web), then stashes the user on the context. Onboarding endpoints
+// (invite redeem) and /api/health are whitelisted inside the middleware.
+app.use('/api/*', apiKeyAuthMiddleware);
+
 app.route('/api', apiRoutes);
 app.route('/api/audit', auditRoutes);
 app.route('/api', chatApiRoutes);
@@ -151,17 +229,59 @@ app.route('/api/review', reviewRoutes);
 app.route('/api/debate', debateRoutes);
 app.route('/api/portrait', portraitRoutes);
 app.route('/api/me', meRoutes);
+app.route('/api/skills', skillsRoutes);
 app.route('/api/openrouter', openrouterRoutes);
 app.route('/api/mobile', mobileApiRoutes);
 app.route('/api/upload', uploadRoutes);
+app.route('/api/keys', keysRoutes);
+app.route('/api/invites', invitesRoutes);
+app.route('/api/admin', adminRoutes);
 
-// Serve uploaded attachments. The URL is /uploads/<attachment-id> — the id
-// is looked up in SQLite to resolve the canonical on-disk path. This keeps
-// the on-disk layout opaque to clients and lets us migrate storage later.
+// Logout — clear the session cookie. The api key itself stays valid (so
+// existing iOS sessions don't blow up if the same user logs out of the web
+// UI); we just stop telling browsers about it.
+app.post('/api/logout', (c) => {
+  clearSessionCookie(c);
+  return c.json({ ok: true });
+});
+
+// Share-link landing + redeem + AASA. Mounted at root so paths like /i/<token>
+// and /.well-known/apple-app-site-association resolve as expected.
+app.route('/', connectRoutes);
+
+// Serve uploaded attachments. URL is /uploads/<attachment-id>. Requires the
+// caller to own the conversation the attachment is bound to (resolved via
+// the same pb_session cookie or Bearer key the API uses). Orphan attachments
+// — message_id and conversation_id both null — are visible to any logged-in
+// user since there's no owner yet (they're typically just-uploaded blobs
+// the same user is about to bind to a message).
 app.get('/uploads/:id', async (c) => {
   const id = c.req.param('id');
   const entry = await getAttachmentForServing(id);
   if (!entry) return c.text('not found', 404);
+
+  const auth = c.req.header('authorization');
+  let viewer = auth ? resolveApiKeyAuth(auth) : null;
+  if (!viewer) {
+    const cookieHeader = c.req.header('cookie') ?? '';
+    for (const part of cookieHeader.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq < 0) continue;
+      if (part.slice(0, eq).trim() !== 'pb_session') continue;
+      const k = decodeURIComponent(part.slice(eq + 1).trim());
+      const row = findApiKeyByHash(hashApiKey(k));
+      if (!row || row.revoked_at) break;
+      const u = findUserById(row.user_id);
+      if (u) viewer = { user: u as any, apiKey: row };
+      break;
+    }
+  }
+  if (!viewer) return c.text('not authenticated', 401);
+
+  if (entry.row.conversation_id) {
+    const conv = findConversationById(entry.row.conversation_id);
+    if (!conv || conv.user_id !== viewer.user.id) return c.text('not found', 404);
+  }
 
   const file = Bun.file(entry.absPath);
   return new Response(file, {
@@ -169,7 +289,7 @@ app.get('/uploads/:id', async (c) => {
       'Content-Type': entry.row.mime,
       'Content-Length': String(entry.size),
       // Attachment ids are immutable + unguessable, so cache aggressively.
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'private, max-age=31536000, immutable',
     },
   });
 });
@@ -191,12 +311,15 @@ for (const ch of feishuChannels) {
   });
 }
 
-// Static files
-app.use('/*', serveStatic({ root: './src/web/static' }));
+// Static files. Resolved relative to this source file (../web/static) so
+// the server runs the same whether cwd is `main/` or the parent.
+const STATIC_DIR = new URL('./web/static', import.meta.url).pathname;
+const STATIC_INDEX = `${STATIC_DIR}/index.html`;
+app.use('/*', serveStatic({ root: STATIC_DIR }));
 
 // Fallback to index.html for SPA
 app.get('/*', async (c) => {
-  const file = Bun.file('./src/web/static/index.html');
+  const file = Bun.file(STATIC_INDEX);
   return new Response(await file.text(), { headers: { 'Content-Type': 'text/html' } });
 });
 
@@ -212,20 +335,49 @@ const server = Bun.serve({
   fetch(req, server) {
     const url = new URL(req.url);
 
-    // WebSocket upgrade — web client
+    // WebSocket upgrade — web client. Auth is by the same pb_session cookie
+    // the REST API uses; same-origin WS requests carry it automatically.
+    // We resolve the cookie's api_key here (mirroring the apiKeyAuthMiddleware
+    // path) and key the WS connection by the user's external_id so the
+    // existing webChannel.send routing keeps working unchanged.
     if (url.pathname === '/ws') {
-      const userId = url.searchParams.get('userId');
-      if (!userId) return new Response('userId required', { status: 400 });
-      const upgraded = server.upgrade(req, { data: { userId, channel: 'web' } satisfies WsData });
+      const cookieHeader = req.headers.get('cookie') ?? '';
+      let sessionKey: string | null = null;
+      for (const part of cookieHeader.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq < 0) continue;
+        if (part.slice(0, eq).trim() === 'pb_session') {
+          sessionKey = decodeURIComponent(part.slice(eq + 1).trim());
+          break;
+        }
+      }
+      if (!sessionKey) return new Response('not authenticated', { status: 401 });
+      const row = findApiKeyByHash(hashApiKey(sessionKey));
+      if (!row || row.revoked_at) return new Response('invalid session', { status: 401 });
+      const user = findUserById(row.user_id);
+      if (!user) return new Response('user vanished', { status: 401 });
+      const externalId = user.external_id ?? user.id;
+      const upgraded = server.upgrade(req, { data: { userId: externalId, channel: 'web' } satisfies WsData });
       if (upgraded) return undefined;
       return new Response('WebSocket upgrade failed', { status: 500 });
     }
 
     // WebSocket upgrade — iOS mobile client
+    //
+    // Auth is by api key, passed as ?key=<pbk_…> (WebSocket clients can't
+    // easily set custom headers, so query-param is the standard workaround).
+    // We resolve the key to the user's external_id and key the WS connection
+    // by that — iosChannel.send(externalId, …) then routes correctly without
+    // any change to the channel/router code.
     if (url.pathname === '/ws/mobile') {
-      const userId = url.searchParams.get('userId');
-      if (!userId) return new Response('userId required', { status: 400 });
-      const upgraded = server.upgrade(req, { data: { userId, channel: 'ios' } satisfies WsData });
+      const key = url.searchParams.get('key');
+      if (!key) return new Response('key required', { status: 401 });
+      const auth = resolveApiKeyAuth(`Bearer ${key}`);
+      if (!auth) return new Response('invalid api key', { status: 401 });
+      const externalId = auth.user.external_id ?? auth.user.id;
+      const upgraded = server.upgrade(req, {
+        data: { userId: externalId, channel: 'ios' } satisfies WsData,
+      });
       if (upgraded) return undefined;
       return new Response('WebSocket upgrade failed', { status: 500 });
     }

@@ -14,7 +14,6 @@ function configFallback(taskType: ModelTaskType): string {
   const c = configManager.get().openrouter;
   switch (taskType) {
     case 'chat':       return c.defaultModel;
-    case 'debounce':   return c.debounceModel ?? c.defaultModel;
     case 'review':     return c.reviewModel ?? c.defaultModel;
     case 'surfing':    return c.surfingModel ?? c.defaultModel;
     case 'title':      return c.titleModel ?? c.debounceModel ?? c.defaultModel;
@@ -34,7 +33,7 @@ export function modelFor(taskType: ModelTaskType): string {
 // don't need to register the slug anywhere local.
 export function ensureModelAssignmentsSeeded(): void {
   const taskTypes: ModelTaskType[] = [
-    'chat', 'debounce', 'review', 'surfing', 'title', 'perception', 'portrait',
+    'chat', 'review', 'surfing', 'title', 'perception', 'portrait',
   ];
   for (const t of taskTypes) {
     if (getModelAssignment(t)) continue;

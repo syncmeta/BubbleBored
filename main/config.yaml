@@ -1,6 +1,9 @@
 server:
   port: 3456
   host: "0.0.0.0"
+  # 当本服务部署到公网/有固定域名时填这里。iOS 客户端的「钥匙」分享链接会
+  # 默认用这个地址 — 不填的话默认用本机检测到的 LAN IP。
+  # publicURL: "https://bot.example.com"
 
 openrouter:
   defaultModel: "anthropic/claude-opus-4.6"
@@ -29,20 +32,35 @@ defaults:
     enabled: true
     maxWaitMs: 15000
 
+# 预设机器人 — 名字 001/002… 排开,模型对齐「议论」里的预设阵容
+# (见 main/src/web/static/app.js 的 DEFAULT_DEBATE_SLUGS)。
+# 每个 bot 也可以绑定自己的 Telegram / 飞书账号(不填则仅网页可用)。
 bots:
-  default:
-    displayName: "AAA"
+  "001":
+    displayName: "001"
     promptFile: "default.md"
-    # 每个 bot 可以绑定自己的 Telegram / 飞书账号
-    # 不填写则仅在网页可用
-    #
-    # telegram:
-    #   enabled: true
-    #   token: ""                  # 或环境变量 TELEGRAM_TOKEN_DEFAULT
-    #   # webhookUrl: "https://host/webhook/telegram/default"   # 不填则用 polling
-    #
-    # feishu:
-    #   enabled: true
-    #   appId: ""                  # 或环境变量 FEISHU_APP_ID_DEFAULT
-    #   appSecret: ""              # 或环境变量 FEISHU_APP_SECRET_DEFAULT
-    #   # 事件回调地址: https://host/webhook/feishu/default
+    model: "z-ai/glm-5.1"
+  "002":
+    displayName: "002"
+    promptFile: "default.md"
+    model: "z-ai/glm-4.5-air:free"
+  "003":
+    displayName: "003"
+    promptFile: "default.md"
+    model: "deepseek/deepseek-v4-flash"
+  "004":
+    displayName: "004"
+    promptFile: "default.md"
+    model: "deepseek/deepseek-v4-pro"
+  "005":
+    displayName: "005"
+    promptFile: "default.md"
+    model: "minimax/minimax-m2.7"
+  "006":
+    displayName: "006"
+    promptFile: "default.md"
+    model: "tencent/hy3-preview:free"
+  "007":
+    displayName: "007"
+    promptFile: "default.md"
+    model: "google/gemini-3.1-flash-lite-preview"

@@ -12,6 +12,7 @@ import type { DiggerResult } from './digger';
 import type { PickerKnownProfile } from './vector-picker';
 
 export interface SynthesizerInput {
+  userId: string;
   conversationId: string;
   model: string;
   diggerResults: DiggerResult[];
@@ -115,7 +116,7 @@ function buildUserInput(input: SynthesizerInput): string {
 }
 
 export async function runSynthesizer(input: SynthesizerInput): Promise<SynthesizerResult> {
-  const { conversationId, model, emitLog, signal } = input;
+  const { userId, conversationId, model, emitLog, signal } = input;
 
   const systemPrompt = await configManager.readPrompt('surfing-synthesizer.md');
   const userInput = buildUserInput(input);
@@ -140,7 +141,7 @@ export async function runSynthesizer(input: SynthesizerInput): Promise<Synthesiz
     });
 
     logAudit({
-      conversationId, taskType: 'surfing', model,
+      userId, conversationId, taskType: 'surfing', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
       totalTokens: result.usage?.total_tokens ?? 0,

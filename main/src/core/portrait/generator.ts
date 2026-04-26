@@ -122,6 +122,7 @@ export async function generatePortrait(input: GenerateInput): Promise<GenerateRe
   });
 
   logAudit({
+    userId: portraitConv.user_id,
     conversationId: input.portraitConvId,
     taskType: 'portrait',
     model,

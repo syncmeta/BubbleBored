@@ -270,8 +270,6 @@
     return wrap;
   }
 
-  // Expose globally — app.js can grab them off window.
+  // Expose globally — app.js calls createModelPicker() to mount a picker.
   window.createModelPicker = createModelPicker;
-  window.invalidateModelCache = invalidateModelCache;
-  window.loadOpenRouterModels = loadOpenRouterModels;
 })();

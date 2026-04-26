@@ -11,10 +11,32 @@ export function findUserById(id: string) {
   return getDb().query<any, [string]>('SELECT * FROM users WHERE id = ?').get(id);
 }
 
-export function createUser(id: string, channel: string, externalId: string, displayName: string) {
+export function createUser(
+  id: string, channel: string, externalId: string, displayName: string,
+  isAdmin: boolean = false,
+) {
   getDb().query(
-    'INSERT INTO users (id, channel, external_id, display_name) VALUES (?, ?, ?, ?)'
-  ).run(id, channel, externalId, displayName);
+    'INSERT INTO users (id, channel, external_id, display_name, is_admin) VALUES (?, ?, ?, ?, ?)'
+  ).run(id, channel, externalId, displayName, isAdmin ? 1 : 0);
+}
+
+export function listUsers() {
+  return getDb().query<any, []>(
+    'SELECT id, channel, external_id, display_name, status, is_admin, created_at FROM users ORDER BY created_at ASC'
+  ).all();
+}
+
+export function countAdmins(): number {
+  const row = getDb().query<{ n: number }, []>(
+    'SELECT COUNT(*) as n FROM users WHERE is_admin = 1'
+  ).get();
+  return row?.n ?? 0;
+}
+
+export function setUserAdmin(id: string, isAdmin: boolean): void {
+  getDb().query(
+    'UPDATE users SET is_admin = ?, updated_at = unixepoch() WHERE id = ?'
+  ).run(isAdmin ? 1 : 0, id);
 }
 
 // Bots
@@ -120,13 +142,6 @@ export function getMessages(conversationId: string, limit: number = 50) {
   ).all(conversationId, limit).reverse();
 }
 
-export function countMessages(conversationId: string): number {
-  const row = getDb().query<{ n: number }, [string]>(
-    'SELECT COUNT(*) as n FROM messages WHERE conversation_id = ?'
-  ).get(conversationId);
-  return row?.n ?? 0;
-}
-
 // All messages in chronological order, tiebreaking on rowid so multi-segment
 // bot replies (same second) stay ordered the way they were inserted. Used by
 // regenerate to slice the tail of the conversation after a chosen point.
@@ -136,8 +151,10 @@ export function getAllMessagesAsc(conversationId: string) {
   ).all(conversationId);
 }
 
-// Audit
+// Audit. user_id is mandatory — every LLM call is attributed to an account
+// so admins can see "who is burning the tokens" and users can see their own.
 export function insertAudit(entry: {
+  userId: string;
   conversationId?: string;
   taskType: string;
   model: string;
@@ -150,9 +167,10 @@ export function insertAudit(entry: {
   latencyMs?: number;
 }) {
   return getDb().query(
-    `INSERT INTO audit_log (conversation_id, task_type, model, input_tokens, output_tokens, total_tokens, cached_tokens, cost_usd, generation_id, latency_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO audit_log (user_id, conversation_id, task_type, model, input_tokens, output_tokens, total_tokens, cached_tokens, cost_usd, generation_id, latency_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
+    entry.userId,
     entry.conversationId ?? null, entry.taskType, entry.model,
     entry.inputTokens, entry.outputTokens, entry.totalTokens,
     entry.cachedTokens ?? 0, entry.costUsd ?? null,
@@ -160,20 +178,57 @@ export function insertAudit(entry: {
   );
 }
 
-export function getAuditSummary(from: number, to: number, groupBy: string = 'task_type') {
+// Generic audit summary. groupBy ∈ {task_type, model, user}. When userIdFilter
+// is set the query is scoped to that user (per-user "我的 token" view); when
+// null, returns aggregates across all users (admin global view).
+export function getAuditSummary(
+  from: number, to: number,
+  groupBy: 'task_type' | 'model' | 'user' = 'task_type',
+  userIdFilter: string | null = null,
+) {
+  const params: any[] = userIdFilter ? [from, to, userIdFilter] : [from, to];
+
+  if (groupBy === 'user') {
+    const where = userIdFilter
+      ? 'WHERE a.created_at BETWEEN ? AND ? AND a.user_id = ?'
+      : 'WHERE a.created_at BETWEEN ? AND ?';
+    return getDb().query<any, any[]>(
+      `SELECT a.user_id as group_key, u.display_name as group_label,
+         COUNT(*) as count,
+         SUM(a.input_tokens) as total_input, SUM(a.output_tokens) as total_output,
+         SUM(a.total_tokens) as total_tokens, SUM(a.cost_usd) as total_cost
+       FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+       ${where} GROUP BY a.user_id ORDER BY total_tokens DESC`
+    ).all(...params);
+  }
+  const where = userIdFilter
+    ? 'WHERE created_at BETWEEN ? AND ? AND user_id = ?'
+    : 'WHERE created_at BETWEEN ? AND ?';
   const col = groupBy === 'model' ? 'model' : 'task_type';
-  return getDb().query<any, [number, number]>(
+  return getDb().query<any, any[]>(
     `SELECT ${col} as group_key, COUNT(*) as count,
-     SUM(input_tokens) as total_input, SUM(output_tokens) as total_output,
-     SUM(total_tokens) as total_tokens, SUM(cost_usd) as total_cost
-     FROM audit_log WHERE created_at BETWEEN ? AND ? GROUP BY ${col}`
-  ).all(from, to);
+       SUM(input_tokens) as total_input, SUM(output_tokens) as total_output,
+       SUM(total_tokens) as total_tokens, SUM(cost_usd) as total_cost
+     FROM audit_log ${where} GROUP BY ${col}`
+  ).all(...params);
 }
 
-export function getAuditDetails(limit: number = 100, offset: number = 0) {
+export function getAuditDetails(
+  limit: number = 100, offset: number = 0,
+  userIdFilter: string | null = null,
+) {
+  if (userIdFilter) {
+    return getDb().query<any, [string, number, number]>(
+      'SELECT * FROM audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    ).all(userIdFilter, limit, offset);
+  }
   return getDb().query<any, [number, number]>(
     'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?'
   ).all(limit, offset);
+}
+
+export function findMessageById(id: string) {
+  return getDb().query<any, [string]>('SELECT * FROM messages WHERE id = ?').get(id);
 }
 
 // Edit the text of an existing message (keeps its attachments intact).
@@ -206,33 +261,34 @@ export function resetConversation(conversationId: string): string[] {
   return attachmentPaths;
 }
 
+// Two correlated sub-selects pull the most recent message's content + sender
+// type for each conversation row. Powers the chat list "preview" line in
+// every IM-style frontend (web + iOS) without an N+1 query per row. Costs
+// one index seek per conv on (conversation_id, created_at DESC).
 export function listConversationsByUser(userId: string, featureType?: string) {
+  const cols = `
+    c.*,
+    b.display_name as bot_name,
+    (SELECT content FROM messages
+       WHERE conversation_id = c.id
+       ORDER BY created_at DESC, rowid DESC LIMIT 1) as last_message_content,
+    (SELECT sender_type FROM messages
+       WHERE conversation_id = c.id
+       ORDER BY created_at DESC, rowid DESC LIMIT 1) as last_message_sender_type
+  `;
   if (featureType) {
     return getDb().query<any, [string, string]>(
-      `SELECT c.*, b.display_name as bot_name FROM conversations c
-       JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? AND c.feature_type = ?
+      `SELECT ${cols} FROM conversations c
+       JOIN bots b ON c.bot_id = b.id
+       WHERE c.user_id = ? AND c.feature_type = ?
        ORDER BY c.last_activity_at DESC`
     ).all(userId, featureType);
   }
   return getDb().query<any, [string]>(
-    `SELECT c.*, b.display_name as bot_name FROM conversations c
-     JOIN bots b ON c.bot_id = b.id WHERE c.user_id = ? ORDER BY c.last_activity_at DESC`
+    `SELECT ${cols} FROM conversations c
+     JOIN bots b ON c.bot_id = b.id
+     WHERE c.user_id = ? ORDER BY c.last_activity_at DESC`
   ).all(userId);
-}
-
-export function listConversationsByBot(botId: string, featureType?: string) {
-  if (featureType) {
-    return getDb().query<any, [string, string]>(
-      `SELECT c.*, u.display_name as user_name FROM conversations c
-       JOIN users u ON c.user_id = u.id WHERE c.bot_id = ? AND c.feature_type = ?
-       ORDER BY c.last_activity_at DESC`
-    ).all(botId, featureType);
-  }
-  return getDb().query<any, [string]>(
-    `SELECT c.*, u.display_name as user_name FROM conversations c
-     JOIN users u ON c.user_id = u.id WHERE c.bot_id = ?
-     ORDER BY c.last_activity_at DESC`
-  ).all(botId);
 }
 
 // ---------- Attachments ----------
@@ -437,20 +493,6 @@ export function recentSurfVectors(
 }
 
 // Counts surf runs in the recent past — used to decide whether the next
-// auto/panel surf should burn a serendipity slot. Counts both vector and
-// serendipity runs; the picker compares against `serendipityEveryN`.
-export function countRecentSurfRuns(
-  userId: string, botId: string, sinceUnixSec: number,
-): number {
-  const row = getDb().query<{ n: number }, [string, string, number]>(
-    `SELECT COUNT(*) as n FROM surf_runs sr
-       JOIN conversations c ON sr.conversation_id = c.id
-     WHERE c.user_id = ? AND c.bot_id = ? AND sr.created_at >= ?
-       AND sr.status IN ('done', 'running')`
-  ).get(userId, botId, sinceUnixSec);
-  return row?.n ?? 0;
-}
-
 // Counts how many runs since the last serendipity-kind run for this user/bot.
 // Used by the picker to decide whether it's time for another serendipity.
 // Returns Number.MAX_SAFE_INTEGER if no serendipity has ever fired (so the
@@ -517,7 +559,6 @@ export function setReviewRunStatus(
 
 export type ModelTaskType =
   | 'chat'      // default chat reply
-  | 'debounce'  // debounce judge
   | 'review'    // self-review
   | 'surfing'   // surfing planner / curator
   | 'title'     // title generation
@@ -526,7 +567,7 @@ export type ModelTaskType =
   ;
 
 export const MODEL_TASK_TYPES: readonly ModelTaskType[] = [
-  'chat', 'debounce', 'review', 'surfing', 'title', 'perception', 'portrait',
+  'chat', 'review', 'surfing', 'title', 'perception', 'portrait',
 ];
 
 export interface ModelAssignmentRow {
@@ -670,6 +711,101 @@ export function hardDeleteAiPick(id: string): void {
   getDb().query(`DELETE FROM ai_picks WHERE id = ?`).run(id);
 }
 
+// ---------- Skills ----------
+//
+// User-managed prompt fragments (Anthropic-style "Agent Skills"). Each row is
+// one skill in the user's catalog; only `enabled = 1` rows participate in the
+// system prompt. Bundled presets are seeded with `source = 'anthropic/skills:<name>'`
+// and `seeded_hash = sha1(body)` so we can detect upstream drift without
+// clobbering local edits — re-seed only refreshes rows whose body hash still
+// matches the last seed.
+
+export interface SkillRow {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  body: string;
+  enabled: number;
+  source: string | null;
+  source_url: string | null;
+  license: string | null;
+  seeded_hash: string | null;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export function listSkillsForUser(userId: string): SkillRow[] {
+  return getDb().query<SkillRow, [string]>(
+    `SELECT * FROM skills WHERE user_id = ? ORDER BY sort_order, created_at`
+  ).all(userId);
+}
+
+export function listEnabledSkillsForUser(userId: string): SkillRow[] {
+  return getDb().query<SkillRow, [string]>(
+    `SELECT * FROM skills WHERE user_id = ? AND enabled = 1 ORDER BY sort_order, created_at`
+  ).all(userId);
+}
+
+export function findSkill(id: string): SkillRow | null {
+  return getDb().query<SkillRow, [string]>(
+    `SELECT * FROM skills WHERE id = ?`
+  ).get(id) ?? null;
+}
+
+export function findSkillByName(userId: string, name: string): SkillRow | null {
+  return getDb().query<SkillRow, [string, string]>(
+    `SELECT * FROM skills WHERE user_id = ? AND name = ?`
+  ).get(userId, name) ?? null;
+}
+
+export function createSkill(params: {
+  id: string; userId: string; name: string;
+  description?: string; body?: string; enabled?: boolean;
+  source?: string | null; sourceUrl?: string | null;
+  license?: string | null; seededHash?: string | null;
+  sortOrder?: number;
+}): void {
+  getDb().query(
+    `INSERT INTO skills
+     (id, user_id, name, description, body, enabled, source, source_url, license, seeded_hash, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.userId, params.name,
+    params.description ?? '', params.body ?? '',
+    params.enabled ? 1 : 0,
+    params.source ?? null, params.sourceUrl ?? null,
+    params.license ?? null, params.seededHash ?? null,
+    params.sortOrder ?? 0,
+  );
+}
+
+export function updateSkill(id: string, patch: {
+  name?: string; description?: string; body?: string;
+  enabled?: boolean; sortOrder?: number;
+  // seeded_hash is bumped here too so a user edit detaches the row
+  // from the upstream seed (re-seed will skip it).
+  seededHash?: string | null;
+}): void {
+  const fields: string[] = [];
+  const args: any[] = [];
+  if (patch.name !== undefined) { fields.push('name = ?'); args.push(patch.name); }
+  if (patch.description !== undefined) { fields.push('description = ?'); args.push(patch.description); }
+  if (patch.body !== undefined) { fields.push('body = ?'); args.push(patch.body); }
+  if (patch.enabled !== undefined) { fields.push('enabled = ?'); args.push(patch.enabled ? 1 : 0); }
+  if (patch.sortOrder !== undefined) { fields.push('sort_order = ?'); args.push(patch.sortOrder); }
+  if (patch.seededHash !== undefined) { fields.push('seeded_hash = ?'); args.push(patch.seededHash); }
+  if (fields.length === 0) return;
+  fields.push('updated_at = unixepoch()');
+  args.push(id);
+  getDb().query(`UPDATE skills SET ${fields.join(', ')} WHERE id = ?`).run(...args);
+}
+
+export function deleteSkill(id: string): void {
+  getDb().query(`DELETE FROM skills WHERE id = ?`).run(id);
+}
+
 // ---------- Portraits ----------
 
 export type PortraitKind = 'moments' | 'memos' | 'schedule' | 'alarms' | 'bills';
@@ -711,14 +847,182 @@ export function listPortraitsByConversation(conversationId: string): PortraitRow
   ).all(conversationId);
 }
 
-export function findPortrait(id: string): PortraitRow | null {
-  return getDb().query<PortraitRow, [string]>(
-    `SELECT * FROM portraits WHERE id = ?`
+export function deletePortrait(id: string): void {
+  getDb().query(`DELETE FROM portraits WHERE id = ?`).run(id);
+}
+
+// API keys (iOS thin client). Raw key is never persisted — only SHA-256 hash.
+// `share_token` is a separate handle used by /i/<token> so the raw key stays
+// out of share URLs; rotating it invalidates outstanding share links without
+// touching the key itself.
+
+export interface ApiKeyRow {
+  id: string;
+  key_prefix: string;
+  key_hash: string;
+  user_id: string;
+  name: string;
+  share_token: string | null;
+  share_base_url: string | null;
+  share_alt_urls_json: string | null;
+  created_by: string | null;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
+export function createApiKey(params: {
+  id: string;
+  keyPrefix: string;
+  keyHash: string;
+  userId: string;
+  name: string;
+  shareToken: string | null;
+  shareBaseUrl: string | null;
+  shareAltUrls: string[] | null;
+  createdBy: string | null;
+}): void {
+  getDb().query(
+    `INSERT INTO api_keys
+       (id, key_prefix, key_hash, user_id, name, share_token,
+        share_base_url, share_alt_urls_json, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.keyPrefix, params.keyHash, params.userId,
+    params.name, params.shareToken,
+    params.shareBaseUrl,
+    params.shareAltUrls && params.shareAltUrls.length > 0
+      ? JSON.stringify(params.shareAltUrls)
+      : null,
+    params.createdBy,
+  );
+}
+
+export function updateApiKeyShareUrls(
+  id: string,
+  shareBaseUrl: string | null,
+  shareAltUrls: string[] | null,
+): void {
+  getDb().query(
+    `UPDATE api_keys SET share_base_url = ?, share_alt_urls_json = ? WHERE id = ?`
+  ).run(
+    shareBaseUrl,
+    shareAltUrls && shareAltUrls.length > 0 ? JSON.stringify(shareAltUrls) : null,
+    id,
+  );
+}
+
+export function findApiKeyByHash(keyHash: string): ApiKeyRow | null {
+  return getDb().query<ApiKeyRow, [string]>(
+    'SELECT * FROM api_keys WHERE key_hash = ?'
+  ).get(keyHash) ?? null;
+}
+
+export function findApiKeyById(id: string): ApiKeyRow | null {
+  return getDb().query<ApiKeyRow, [string]>(
+    'SELECT * FROM api_keys WHERE id = ?'
+  ).get(id) ?? null;
+}
+
+export function findApiKeyByShareToken(shareToken: string): ApiKeyRow | null {
+  return getDb().query<ApiKeyRow, [string]>(
+    'SELECT * FROM api_keys WHERE share_token = ?'
+  ).get(shareToken) ?? null;
+}
+
+export function listApiKeys(): ApiKeyRow[] {
+  return getDb().query<ApiKeyRow, []>(
+    'SELECT * FROM api_keys ORDER BY created_at DESC'
+  ).all();
+}
+
+export function revokeApiKey(id: string): void {
+  getDb().query(
+    'UPDATE api_keys SET revoked_at = unixepoch(), share_token = NULL WHERE id = ? AND revoked_at IS NULL'
+  ).run(id);
+}
+
+export function rotateApiKeyShareToken(id: string, newShareToken: string): void {
+  getDb().query(
+    'UPDATE api_keys SET share_token = ? WHERE id = ?'
+  ).run(newShareToken, id);
+}
+
+export function clearApiKeyShareToken(id: string): void {
+  getDb().query(
+    'UPDATE api_keys SET share_token = NULL WHERE id = ?'
+  ).run(id);
+}
+
+export function touchApiKey(id: string): void {
+  getDb().query(
+    'UPDATE api_keys SET last_used_at = unixepoch() WHERE id = ?'
+  ).run(id);
+}
+
+// ---------- Invites (account onboarding) ----------
+//
+// One row per outstanding/redeemed invite. Token is the random handle that
+// goes into the share URL `/i/<token>`; the recipient hits redeem with a
+// chosen display_name and the server creates a fresh users row + api_keys
+// row + sets the session cookie. Single-use (clearing happens via the
+// redeemed_* columns rather than deletion so the admin dashboard can
+// audit "who joined when via which invite").
+
+export interface InviteRow {
+  id: string;
+  token: string;
+  created_by: string;
+  note: string | null;
+  expires_at: number | null;
+  redeemed_at: number | null;
+  redeemed_by_user_id: string | null;
+  created_at: number;
+}
+
+export function createInvite(params: {
+  id: string;
+  token: string;
+  createdBy: string;
+  note?: string | null;
+  expiresAt?: number | null;
+}): void {
+  getDb().query(
+    `INSERT INTO invites (id, token, created_by, note, expires_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    params.id, params.token, params.createdBy,
+    params.note ?? null, params.expiresAt ?? null,
+  );
+}
+
+export function findInviteByToken(token: string): InviteRow | null {
+  return getDb().query<InviteRow, [string]>(
+    'SELECT * FROM invites WHERE token = ?'
+  ).get(token);
+}
+
+export function findInviteById(id: string): InviteRow | null {
+  return getDb().query<InviteRow, [string]>(
+    'SELECT * FROM invites WHERE id = ?'
   ).get(id);
 }
 
-export function deletePortrait(id: string): void {
-  getDb().query(`DELETE FROM portraits WHERE id = ?`).run(id);
+export function listInvites(): InviteRow[] {
+  return getDb().query<InviteRow, []>(
+    'SELECT * FROM invites ORDER BY created_at DESC'
+  ).all();
+}
+
+export function markInviteRedeemed(id: string, redeemedByUserId: string): void {
+  getDb().query(
+    `UPDATE invites SET redeemed_at = unixepoch(), redeemed_by_user_id = ?
+     WHERE id = ? AND redeemed_at IS NULL`
+  ).run(redeemedByUserId, id);
+}
+
+export function deleteInvite(id: string): void {
+  getDb().query('DELETE FROM invites WHERE id = ? AND redeemed_at IS NULL').run(id);
 }
 
 // Sweep orphans older than N seconds — called periodically by a background

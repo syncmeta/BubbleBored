@@ -58,7 +58,7 @@ function rhythmSignal(messages: Array<{ created_at: number; sender_type: string 
   return `今日活跃 ${todayMsgs.length} 条消息，距上一条 ${minutes < 1 ? '<1' : minutes} 分钟`;
 }
 
-async function inferTaskPhase(conversationId: string): Promise<string> {
+async function inferTaskPhase(conversationId: string, userId: string): Promise<string> {
   const cached = taskPhaseCache.get(conversationId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -87,6 +87,7 @@ async function inferTaskPhase(conversationId: string): Promise<string> {
     });
 
     logAudit({
+      userId,
       conversationId, taskType: 'perception', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
@@ -146,6 +147,7 @@ async function inferCrossFocus(userId: string, botId: string): Promise<string> {
     });
 
     logAudit({
+      userId,
       conversationId: undefined, taskType: 'perception', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
@@ -165,7 +167,54 @@ async function inferCrossFocus(userId: string, botId: string): Promise<string> {
   }
 }
 
+// ── Stale-while-revalidate cache for the assembled block ───────────────────
+//
+// Perception involves two LLM round-trips (taskPhase + crossFocus), which
+// adds a noticeable wait before the actual chat reply starts. Most of the
+// time the user already saw the rendered perception on a previous message
+// 30s ago — no need to block on a fresh recompute.
+//
+// `getCachedPerceptionBlock` returns the LAST rendered block immediately
+// (or empty for a never-seen conv); `refreshPerceptionInBackground` kicks
+// off a recompute that updates the cache for the next request. The chat
+// flow uses both: cache for the prompt, refresh fired-and-forgotten so
+// each message ends with a fresher block ready for the next one.
+
+interface BlockCacheEntry { text: string; computedAt: number; }
+const blockCache = new Map<string, BlockCacheEntry>();
+const blockInflight = new Map<string, Promise<string>>();
+
+/** Synchronous cache hit. Returns "" if we've never built one for this conv. */
+export function getCachedPerceptionBlock(conversationId: string): string {
+  return blockCache.get(conversationId)?.text ?? '';
+}
+
+/** Fire-and-forget refresh. De-dupes overlapping refreshes per conv so a
+ *  busy conversation doesn't pile up parallel LLM calls. */
+export function refreshPerceptionInBackground(conversationId: string): void {
+  if (blockInflight.has(conversationId)) return;
+  const p = buildPerceptionBlockInternal({ conversationId })
+    .then(text => {
+      blockCache.set(conversationId, { text, computedAt: Date.now() });
+      return text;
+    })
+    .catch(e => {
+      console.warn('[perception] background refresh failed:', e?.message ?? e);
+      return '';
+    })
+    .finally(() => { blockInflight.delete(conversationId); });
+  blockInflight.set(conversationId, p);
+}
+
+/** Original behavior — awaits a fresh build. Surf signals still want this
+ *  because they run on a slow cadence and want the freshest possible block. */
 export async function buildPerceptionBlock(params: {
+  conversationId: string;
+}): Promise<string> {
+  return buildPerceptionBlockInternal(params);
+}
+
+async function buildPerceptionBlockInternal(params: {
   conversationId: string;
 }): Promise<string> {
   const conv = findConversationById(params.conversationId);
@@ -178,7 +227,7 @@ export async function buildPerceptionBlock(params: {
 
   // These two go in parallel — they're independent network calls.
   const [taskPhase, crossFocus, weather] = await Promise.all([
-    inferTaskPhase(params.conversationId),
+    inferTaskPhase(params.conversationId, conv.user_id),
     inferCrossFocus(conv.user_id, conv.bot_id),
     getWeather().catch(() => ''),
   ]);

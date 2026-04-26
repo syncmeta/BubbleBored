@@ -239,6 +239,7 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
 
     const diggerResults = await Promise.all(picker.picked.map(v =>
       runDigger({
+        userId,
         conversationId: surfConvId, model,
         vector: v, knownProfile: picker.knownProfile,
         budget: perDigger,
@@ -257,6 +258,7 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
     checkAborted(signal);
 
     const synth = await runSynthesizer({
+      userId,
       conversationId: surfConvId, model,
       diggerResults, knownProfile: picker.knownProfile,
       emitLog: (c) => emit(c),
@@ -328,6 +330,7 @@ async function runSerendipityPath(params: {
       signal,
     }),
     runWanderer({
+      userId,
       conversationId: surfConvId, model,
       budget: wandererBudget,
       emitLog: (c) => emit(c),
@@ -352,6 +355,7 @@ async function runSerendipityPath(params: {
   checkAborted(signal);
   const curatorBudget = Math.max(curatorReserve, totalBudget - wanderResult.toolCallsUsed);
   const curatorResult = await runCurator({
+    userId,
     conversationId: surfConvId, model,
     plan, rawFindings: wanderResult.findings,
     budget: curatorBudget,

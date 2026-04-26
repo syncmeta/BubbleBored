@@ -9,6 +9,7 @@ export interface Finding {
 }
 
 export interface SearchLoopOptions {
+  userId: string;
   conversationId: string;
   model: string;
   queries: string[];
@@ -33,7 +34,7 @@ function checkAborted(signal?: AbortSignal): void {
 }
 
 export async function runSearchLoop(opts: SearchLoopOptions): Promise<SearchLoopResult> {
-  const { conversationId, model, queries, budget, evalPromptName, taskType, emitLog, signal } = opts;
+  const { userId, conversationId, model, queries, budget, evalPromptName, taskType, emitLog, signal } = opts;
 
   const findings: Finding[] = [];
   if (queries.length === 0 || budget <= 0) return { findings, used: 0 };
@@ -69,7 +70,7 @@ export async function runSearchLoop(opts: SearchLoopOptions): Promise<SearchLoop
     remaining--;
 
     logAudit({
-      conversationId, taskType, model,
+      userId, conversationId, taskType, model,
       inputTokens: evalResult.usage?.prompt_tokens ?? 0,
       outputTokens: evalResult.usage?.completion_tokens ?? 0,
       totalTokens: evalResult.usage?.total_tokens ?? 0,
@@ -111,7 +112,7 @@ export async function runSearchLoop(opts: SearchLoopOptions): Promise<SearchLoop
         remaining--;
 
         logAudit({
-          conversationId, taskType, model,
+          userId, conversationId, taskType, model,
           inputTokens: readEval.usage?.prompt_tokens ?? 0,
           outputTokens: readEval.usage?.completion_tokens ?? 0,
           totalTokens: readEval.usage?.total_tokens ?? 0,

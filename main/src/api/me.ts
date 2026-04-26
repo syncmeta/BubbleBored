@@ -1,39 +1,36 @@
 import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
 import {
-  findUserByChannel, createUser,
   getUserDashboardProfile, upsertUserDashboardProfile, setUserDisplayName,
   listAiPicks, createAiPick, softDeleteAiPick, hardDeleteAiPick,
   listModelAssignments, upsertModelAssignment, MODEL_TASK_TYPES,
   type ModelTaskType,
 } from '../db/queries';
 import { modelFor } from '../core/models';
+import { findUser, getOrCreateUser } from './_helpers';
 
 export const meRoutes = new Hono();
 
-// Resolve / lazily create the user behind a web userId. Most 你-tab routes
-// take ?userId= as the channel-side id (same as everywhere else).
-function ensureUser(channelUserId: string) {
-  let user = findUserByChannel('web', channelUserId);
-  if (!user) {
-    const newId = randomUUID();
-    createUser(newId, 'web', channelUserId, `User-${channelUserId.slice(0, 6)}`);
-    user = findUserByChannel('web', channelUserId);
-  }
-  return user;
-}
+// "Who am I?" — drives the web client's initial render. 401 from the global
+// middleware → frontend shows the login/redeem screen.
+meRoutes.get('/', (c) => {
+  const user = findUser(c);
+  return c.json({
+    user_id: user.id,
+    display_name: user.display_name,
+    is_admin: !!user.is_admin,
+  });
+});
 
 // ── Profile ──
 
 meRoutes.get('/profile', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel('web', channelUserId);
-  if (!user) return c.json({ display_name: '', bio: '', avatar_path: null });
+  const user = findUser(c);
   const dash = getUserDashboardProfile(user.id);
   return c.json({
     user_id: user.id,
     display_name: user.display_name,
+    is_admin: !!user.is_admin,
     bio: dash?.bio ?? '',
     avatar_path: dash?.avatar_path ?? null,
     custom_fields: dash?.custom_fields_json ? safeParse(dash.custom_fields_json) : {},
@@ -42,15 +39,12 @@ meRoutes.get('/profile', (c) => {
 
 meRoutes.patch('/profile', async (c) => {
   const body = await c.req.json<{
-    userId: string;
     displayName?: string;
     bio?: string;
     avatarPath?: string | null;
     customFields?: Record<string, unknown>;
   }>();
-  if (!body.userId) return c.json({ error: 'userId required' }, 400);
-  const user = ensureUser(body.userId);
-  if (!user) return c.json({ error: 'user creation failed' }, 500);
+  const user = getOrCreateUser(c);
 
   if (typeof body.displayName === 'string' && body.displayName.trim()) {
     setUserDisplayName(user.id, body.displayName.trim());
@@ -77,11 +71,8 @@ meRoutes.patch('/profile', async (c) => {
 // ── AI picks ──
 
 meRoutes.get('/picks', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
   const includeRemoved = c.req.query('includeRemoved') === '1';
-  const user = findUserByChannel('web', channelUserId);
-  if (!user) return c.json([]);
+  const user = findUser(c);
   return c.json(listAiPicks(user.id, includeRemoved));
 });
 
@@ -89,12 +80,11 @@ meRoutes.get('/picks', (c) => {
 // can also bookmark something they want the AI to remember).
 meRoutes.post('/picks', async (c) => {
   const body = await c.req.json<{
-    userId: string; title: string; url?: string;
+    title: string; url?: string;
     summary?: string; whyPicked?: string;
   }>();
-  if (!body.userId || !body.title) return c.json({ error: 'userId + title required' }, 400);
-  const user = ensureUser(body.userId);
-  if (!user) return c.json({ error: 'user creation failed' }, 500);
+  if (!body.title) return c.json({ error: 'title required' }, 400);
+  const user = getOrCreateUser(c);
 
   const id = `pk_${randomUUID().slice(0, 12)}`;
   createAiPick({

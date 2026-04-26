@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import { randomUUID } from 'crypto';
 import {
   listBots, findBot,
-  findUserByChannel, createUser,
   listConversationsByUser, findConversationById, createConversation,
   updateConversationTitle, deleteConversation,
   getMessages, resetConversation, deleteMessage,
@@ -14,37 +13,31 @@ import { unlinkAttachmentFiles } from '../core/attachments';
 import { regenerateConversation } from '../core/regenerate';
 import { iosChannel } from '../bus/channels/ios';
 import type { OutboundMessage } from '../bus/types';
+import { requireAuthMiddleware } from './_helpers';
 
 /**
- * Mobile-only REST surface. Separate from the web `/api/*` routes so that
- * iOS/Android evolve independently. All routes take a `userId` generated
- * client-side (stored in UserDefaults); the server auto-creates the user
- * on first call — mirrors how the router auto-creates on first inbound WS.
+ * Mobile-only REST surface. Auth is enforced by `requireAuthMiddleware` —
+ * every route here expects `Authorization: Bearer <api_key>` and reads the
+ * resolved user from `c.get('authUser')`. The previous client-supplied
+ * userId param is ignored (and intentionally not trusted).
+ *
+ * /health is exempt so the iOS app can probe a server URL before it has
+ * a key, e.g. on the manual-entry screen.
  */
 export const mobileApiRoutes = new Hono();
 
 const CHANNEL = 'ios' as const;
 
-// Ensure an ios-channel user exists for the given client-generated id.
-// Returns the internal user.id.
-function ensureUser(channelUserId: string, displayName?: string): string {
-  let user = findUserByChannel(CHANNEL, channelUserId);
-  if (!user) {
-    const id = randomUUID();
-    createUser(id, CHANNEL, channelUserId, displayName ?? `iPhone-${channelUserId.slice(0, 6)}`);
-    user = findUserByChannel(CHANNEL, channelUserId);
-  }
-  if (!user) throw new Error('user creation failed');
-  return user.id;
-}
-
-// ── Health ──────────────────────────────────────────────────────────────────
+// ── Health (unauthenticated) ────────────────────────────────────────────────
 
 mobileApiRoutes.get('/health', (c) => c.json({
   ok: true,
   service: 'bubblebored-mobile',
   ts: Math.floor(Date.now() / 1000),
 }));
+
+// Everything below requires a valid api key.
+mobileApiRoutes.use('*', requireAuthMiddleware);
 
 // ── Bots ────────────────────────────────────────────────────────────────────
 
@@ -64,24 +57,30 @@ mobileApiRoutes.get('/bots', (c) => {
   return c.json(out);
 });
 
+// Convenience: who am I? Lets the app show "logged in as <name>" in settings.
+mobileApiRoutes.get('/me', (c) => {
+  const user = c.get('authUser');
+  return c.json({
+    user_id: user.id,
+    display_name: user.display_name,
+  });
+});
+
 // ── Conversations ───────────────────────────────────────────────────────────
 
 mobileApiRoutes.get('/conversations', (c) => {
-  const channelUserId = c.req.query('userId');
-  if (!channelUserId) return c.json({ error: 'userId required' }, 400);
-  const user = findUserByChannel(CHANNEL, channelUserId);
-  if (!user) return c.json([]);
+  const user = c.get('authUser');
   return c.json(listConversationsByUser(user.id, 'message'));
 });
 
 mobileApiRoutes.post('/conversations', async (c) => {
-  const { userId, botId, title } = await c.req.json<{ userId: string; botId: string; title?: string }>();
-  if (!userId || !botId) return c.json({ error: 'userId and botId required' }, 400);
+  const user = c.get('authUser');
+  const { botId, title } = await c.req.json<{ botId: string; title?: string }>();
+  if (!botId) return c.json({ error: 'botId required' }, 400);
   if (!findBot(botId)) return c.json({ error: 'bot not found' }, 404);
 
-  const uid = ensureUser(userId);
   const id = randomUUID();
-  createConversation(id, botId, uid, title ?? null);
+  createConversation(id, botId, user.id, title ?? null);
   return c.json(findConversationById(id));
 });
 
@@ -136,13 +135,16 @@ mobileApiRoutes.delete('/messages/:id', (c) => {
 // ── Regenerate / edit ───────────────────────────────────────────────────────
 mobileApiRoutes.post('/conversations/:id/regenerate', async (c) => {
   const convId = c.req.param('id');
+  const user = c.get('authUser');
   const body = await c.req.json<{
     messageId?: string;
-    userId?: string;
     newContent?: string;
     edits?: Array<{ messageId: string; content: string }>;
   }>();
-  const { userId: channelUserId } = body;
+
+  // The WS channel keys connections by external_id, so that's what we
+  // pass to iosChannel.send and to the regenerate helper.
+  const channelUserId = user.external_id;
 
   const replyFn = (msg: OutboundMessage) => {
     if (channelUserId) {
@@ -172,15 +174,14 @@ mobileApiRoutes.post('/conversations/:id/regenerate', async (c) => {
 // record it.
 
 mobileApiRoutes.post('/push/register', async (c) => {
-  const { userId, deviceToken, bundleId, environment } = await c.req.json<{
-    userId: string;
+  const user = c.get('authUser');
+  const { deviceToken, bundleId, environment } = await c.req.json<{
     deviceToken: string;
     bundleId?: string;
     environment?: 'sandbox' | 'production';
   }>();
-  if (!userId || !deviceToken) return c.json({ error: 'userId and deviceToken required' }, 400);
+  if (!deviceToken) return c.json({ error: 'deviceToken required' }, 400);
 
-  const uid = ensureUser(userId);
   getDb().query(
     `INSERT INTO device_tokens (user_id, device_token, bundle_id, environment, updated_at)
      VALUES (?, ?, ?, ?, unixepoch())
@@ -189,7 +190,7 @@ mobileApiRoutes.post('/push/register', async (c) => {
        bundle_id = excluded.bundle_id,
        environment = excluded.environment,
        updated_at = excluded.updated_at`
-  ).run(uid, deviceToken, bundleId ?? null, environment ?? 'sandbox');
+  ).run(user.id, deviceToken, bundleId ?? null, environment ?? 'sandbox');
 
   return c.json({ ok: true });
 });

@@ -11,8 +11,10 @@
   "dependencies": {
     "@honcho-ai/sdk": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/qrcode": "^1.5.6",
     "hono": "^4",
     "openai": "^4",
+    "qrcode": "^1.5.4",
     "yaml": "^2",
     "zod": "^3"
   },

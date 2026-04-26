@@ -1,11 +1,12 @@
 import { insertAudit } from '../db/queries';
 
 export type TaskType =
-  | 'chat' | 'debounce' | 'review' | 'review_eval'
+  | 'chat' | 'review' | 'review_eval' | 'review_followup'
   | 'surfing' | 'surfing_eval' | 'title'
   | 'debate' | 'portrait' | 'perception';
 
 export interface AuditParams {
+  userId: string;
   conversationId?: string;
   taskType: TaskType;
   model: string;

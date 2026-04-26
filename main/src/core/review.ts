@@ -30,10 +30,14 @@ interface SearchBlock {
 }
 
 function emit(reviewConvId: string, content: string, kind: string = 'status') {
-  // Persist as a log message in the review conv
+  // Persist as a log message in the review conv. If the insert fails (FK
+  // violation, disk pressure, etc.) we still emit on the SSE channel so the
+  // UI doesn't go dark, but we want a trail in the server log.
   try {
     insertMessage(randomUUID(), reviewConvId, 'log', `review:${kind}`, content);
-  } catch {}
+  } catch (e) {
+    console.warn('[review] emit log persist failed:', e);
+  }
   reviewEvents.emit('log', {
     reviewConvId, conversationId: reviewConvId,
     sourceMessageConvId: getReviewRun(reviewConvId)?.source_message_conv_id ?? null,
@@ -160,6 +164,7 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
     logAudit({
+      userId: reviewConv.user_id,
       conversationId: reviewConvId, taskType: 'review', model,
       inputTokens: result.usage?.prompt_tokens ?? 0,
       outputTokens: result.usage?.completion_tokens ?? 0,
@@ -183,6 +188,7 @@ export async function runReview(params: RunReviewParams): Promise<void> {
 
       const botConfig = configManager.getBotConfig(reviewConv.bot_id);
       const { findings } = await runSearchLoop({
+        userId: reviewConv.user_id,
         conversationId: reviewConvId,
         model,
         queries: search.queries,
@@ -220,6 +226,7 @@ export async function runReview(params: RunReviewParams): Promise<void> {
       });
 
       logAudit({
+        userId: reviewConv.user_id,
         conversationId: reviewConvId, taskType: 'review', model,
         inputTokens: finalResult.usage?.prompt_tokens ?? 0,
         outputTokens: finalResult.usage?.completion_tokens ?? 0,
@@ -360,4 +367,128 @@ export function cancelPendingReview(messageConvId: string): void {
 
 export function getPendingReviews(): string[] {
   return Array.from(pendingTimers.keys());
+}
+
+// ── Follow-up dialogue ──
+// Once the first-pass self-review is done, the user can keep talking with the
+// bot inside the review tab. This drives that follow-up turn: take the user's
+// new message + the source-conv history + everything said in this review tab
+// so far, and have the bot reply in normal chat tone (no structured tags).
+
+export interface ContinueReviewParams {
+  reviewConvId: string;
+  userText: string;
+}
+
+export async function continueReview(params: ContinueReviewParams): Promise<void> {
+  const { reviewConvId, userText } = params;
+  const reviewConv = findConversationById(reviewConvId);
+  if (!reviewConv) return;
+  const run = getReviewRun(reviewConvId);
+  if (!run) return;
+
+  // The user actively engaging means the timed correction-to-source is no
+  // longer wanted — they're now reviewing together, not letting the bot ship
+  // a follow-up correction unattended.
+  if (run.source_message_conv_id) {
+    cancelPendingReview(run.source_message_conv_id);
+  }
+
+  emit(reviewConvId, '用户跟进，准备回应…', 'followup_started');
+
+  try {
+    const followupPrompt = await configManager.readPrompt('review-followup.md');
+    const model = run.model_slug || modelFor('review');
+
+    // Source-conv reference (the conversation being reviewed). Same 30-msg
+    // slice runReview uses, rendered as plain text so we can stuff it into
+    // a single user-role context block alongside the dialogue history.
+    let sourceContext = '（无源会话上下文 — 自由回顾）';
+    if (run.source_message_conv_id) {
+      const srcMsgs = getMessages(run.source_message_conv_id, 30)
+        .filter(m => m.sender_type !== 'log');
+      if (srcMsgs.length > 0) {
+        sourceContext = srcMsgs.map((m: any) =>
+          `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
+        ).join('\n');
+      }
+    }
+
+    // Long-term user profile (best effort, mirrors runReview).
+    let profileText = '';
+    try {
+      const profile = await getUserProfile(reviewConv.user_id);
+      if (profile.card.length > 0 || profile.representation) {
+        profileText = `用户画像：\n${profile.card.join('\n')}${profile.representation ? '\n' + profile.representation : ''}`;
+      }
+    } catch (e: any) {
+      console.warn('[review] followup profile load failed:', e?.message ?? e);
+    }
+
+    // Dialogue inside the review conv. Everything that's user/bot-typed
+    // (i.e. the first-pass conclusion bubble + any prior follow-up turns)
+    // becomes the chat history. We also append the new user message.
+    const dialogueRows = getMessages(reviewConvId, 200)
+      .filter((m: any) => m.sender_type === 'user' || m.sender_type === 'bot');
+
+    const dialogueMessages = dialogueRows.map((m: any) => ({
+      role: (m.sender_type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: m.content as string,
+    }));
+
+    const contextBlock = [
+      profileText,
+      profileText ? '' : null,
+      '─── 被回顾的那段对话 ───',
+      sourceContext,
+      '',
+      '（接下来是你和用户在回顾里的来回。用户最新那条在最后，请回应它。）',
+    ].filter(x => x !== null).join('\n');
+
+    const messages = [
+      { role: 'system' as const, content: followupPrompt },
+      { role: 'user' as const, content: contextBlock },
+      ...dialogueMessages,
+      { role: 'user' as const, content: userText },
+    ];
+
+    emit(reviewConvId, `跟进调用 LLM（${model}）…`);
+    const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
+
+    logAudit({
+      userId: reviewConv.user_id,
+      conversationId: reviewConvId, taskType: 'review_followup', model,
+      inputTokens: result.usage?.prompt_tokens ?? 0,
+      outputTokens: result.usage?.completion_tokens ?? 0,
+      totalTokens: result.usage?.total_tokens ?? 0,
+      costUsd, generationId: result.id, latencyMs,
+    });
+
+    const replyText = result.choices[0]?.message?.content?.trim() ?? '';
+    emit(reviewConvId, `LLM 回应（${latencyMs}ms, ${result.usage?.total_tokens ?? 0} tokens）`);
+
+    if (!replyText) {
+      emit(reviewConvId, '⚠️ 模型没给出回应', 'error');
+      reviewEvents.emit('done', {
+        reviewConvId, conversationId: reviewConvId,
+        sourceMessageConvId: run.source_message_conv_id,
+        result: 'followup_empty', timestamp: Date.now(),
+      });
+      return;
+    }
+
+    insertMessage(randomUUID(), reviewConvId, 'bot', reviewConv.bot_id, replyText);
+    reviewEvents.emit('done', {
+      reviewConvId, conversationId: reviewConvId,
+      sourceMessageConvId: run.source_message_conv_id,
+      result: 'followup', timestamp: Date.now(),
+    });
+  } catch (e: any) {
+    emit(reviewConvId, `⚠️ 跟进出错：${e?.message ?? e}`, 'error');
+    reviewEvents.emit('done', {
+      reviewConvId, conversationId: reviewConvId,
+      sourceMessageConvId: run.source_message_conv_id ?? null,
+      result: 'error', timestamp: Date.now(),
+    });
+  }
 }

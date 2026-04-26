@@ -1,11 +1,50 @@
 // PendingBot Web Client — multi-conversation
+//
+// Architecture:
+//   The app shell (sidebar conv-list + main work area) is generic. Every tab
+//   plugs into TAB_REGISTRY with its own load / render / select / new-chat /
+//   ws-handler hooks. The six dispatch functions below (loadConversations,
+//   renderConvList, onNewChatClick, selectConversation, handleWsMessage,
+//   applyTabView) are the only shell-level entry points; they delegate to
+//   whatever the current tab registered.
+//
+// To add a tab: define its functions, register a TAB_REGISTRY entry at the
+// bottom of its section, add a button in index.html.
 
-// Top-level feature tabs. message is the existing chat experience; the rest
-// are independent activities populated in later phases.
-const FEATURE_TABS = ['message', 'surf', 'review', 'debate', 'portrait', 'me'];
+// 画像 lost its top-level rail button in v2 — folded into 「我」 because
+// most of its UX is "stuff about you" (memos / schedule / bills / etc.).
+// The tab id stays in FEATURE_TABS so switchTab('portrait') from inside
+// 「我」 still works and the existing portrait view code is untouched —
+// only the rail entrypoint moved.
+const FEATURE_TABS = ['message', 'debate', 'surf', 'review', 'me', 'portrait', 'keys'];
+
+const TAB_LABELS = {
+  message:  '消息',
+  debate:   '议论',
+  surf:     '冲浪',
+  review:   '回顾',
+  me:       '我',
+  portrait: '画像',
+  keys:     '钥匙',
+};
+
+// Each tab registers itself at the bottom of its section. Shape:
+//   loadConvs?:        async () => void
+//   renderItem?:       (conv) => HTMLElement
+//   onNewChat?:        (e) => void           — what "新对话" triggers
+//   selectConv?:       (convId) => void      — what clicking a list item does
+//   wsHandler?:        (msg) => boolean      — return true to mark consumed
+//   view:              string                — id-suffix in <main> (e.g. 'chat')
+//   emptyHint:         string                — conv-list empty placeholder
+//   emptyHintNoSel:    string                — main-area empty-state text
+//   onActivate?:       () => void            — fired when tab becomes active
+//   alwaysShowView?:   bool                  — always show `view` even with no convId
+const TAB_REGISTRY = {};
 
 const state = {
-  userId: localStorage.getItem('bb_userId') || generateId(),
+  userId: null,        // populated from /api/me after auth
+  displayName: '',
+  isAdmin: false,
   bots: [],                      // [{ id, display_name, ... }]
   botsById: new Map(),
   // Conversations per feature tab (only the active tab is loaded; others are
@@ -43,8 +82,77 @@ const state = {
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-localStorage.setItem('bb_userId', state.userId);
-init();
+// All API calls reuse the same fetch wrapper so the pb_session cookie rides
+// along automatically. Centralising it also gives us a single place to peel
+// off 401 responses → re-render the login screen.
+const fetchOpts = (extra) => ({ credentials: 'include', ...(extra || {}) });
+const _origFetch = window.fetch.bind(window);
+window.fetch = (input, init) => _origFetch(input, fetchOpts(init));
+
+bootAuth();
+
+async function bootAuth() {
+  // If the URL carries an invite token (?invite=…) — usually because the
+  // server redirected /i/<token> here — surface the redeem form pre-filled.
+  const params = new URLSearchParams(location.search);
+  const inviteToken = params.get('invite');
+
+  let me = null;
+  try {
+    const r = await fetch('/api/me');
+    if (r.ok) me = await r.json();
+  } catch {}
+
+  if (me && me.user_id) {
+    state.userId = me.user_id;
+    state.displayName = me.display_name;
+    state.isAdmin = !!me.is_admin;
+    init();
+    return;
+  }
+
+  renderLoginScreen(inviteToken);
+}
+
+function renderLoginScreen(prefillToken) {
+  document.body.innerHTML = `
+    <div class="login-shell">
+      <form id="login-form" class="login-card">
+        <h1>进入 PendingBot</h1>
+        <p>凭管理员发的邀请链接进入。token 会自动从 URL 读取，也可以手动粘贴。</p>
+        <label>邀请 token</label>
+        <input id="login-token" required value="${prefillToken ? esc(prefillToken) : ''}">
+        <label>叫你什么</label>
+        <input id="login-name" required maxlength="40" placeholder="比如：阿橙">
+        <button type="submit" class="btn-primary login-submit">进入</button>
+        <div id="login-error" class="login-error"></div>
+      </form>
+    </div>`;
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const token = document.getElementById('login-token').value.trim();
+    const displayName = document.getElementById('login-name').value.trim();
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+      const r = await fetch('/api/invites/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, displayName }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        errEl.textContent = j.error || `兑换失败 (${r.status})`;
+        return;
+      }
+      // Cookie is set by the server response; reload to drop the ?invite=
+      // and let bootAuth() take the happy path.
+      location.replace(location.pathname);
+    } catch (err) {
+      errEl.textContent = String(err);
+    }
+  });
+}
 
 function generateId() {
   return 'u_' + Math.random().toString(36).slice(2, 10);
@@ -57,7 +165,119 @@ Object.defineProperty(state, 'conversations', {
   set(v) { state.convsByTab[state.currentTab] = v; },
 });
 
+// ── Utilities ──────────────────────────────────────────────────────────
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s ?? '';
+  return d.innerHTML;
+}
+
+// Modal close: collapses the previous closeXxxModal helpers. If `e` is given,
+// only close when the click hit the overlay backdrop (not the card).
+function closeModal(modalId, e) {
+  if (e && e.target.id !== modalId) return;
+  const el = document.getElementById(modalId);
+  if (el) el.style.display = 'none';
+}
+
+// Legacy helper: used to embed ?userId= in GET URLs. Auth is now cookie-
+// based, so it returns "" — call sites that string-concat it keep working
+// without churn. Remove when no longer referenced.
+function userParam() { return ''; }
+
+const STATUS_LABELS = {
+  pending: '待运行',
+  running: '运行中',
+  done:    '完成',
+  error:   '出错',
+  aborted: '中断',
+};
+function statusLabel(status, active) {
+  if (active) return '运行中';
+  return STATUS_LABELS[status] ?? status;
+}
+
+// Mounts a model picker into `host` once; subsequent calls just reset the
+// value. Replaces 4 copy-pasted "if !mounted then create else setValue" blocks.
+function ensureModelPicker(host, opts) {
+  if (!host) return null;
+  if (host.firstChild && host.firstChild.setValue) {
+    host.firstChild.setValue(opts.value ?? '');
+    return host.firstChild;
+  }
+  host.innerHTML = '';
+  const picker = createModelPicker(opts);
+  host.appendChild(picker);
+  return picker;
+}
+
+// Renders a vanilla conv-list. Replaces the 5 near-identical "list.innerHTML
+// = empty hint else forEach renderItem" blocks.
+function renderConvListInto(items, emptyHint, renderItem) {
+  const list = document.getElementById('conv-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!items || items.length === 0) {
+    list.innerHTML = `<div class="conv-empty">${esc(emptyHint).replace(/\n/g, '<br>')}</div>`;
+    return;
+  }
+  for (const c of items) list.appendChild(renderItem(c));
+}
+
+// Renders a "pick a source 消息 conversation" picker — used by surf / review
+// / portrait modals. `onPick(convId|'')` fires on each selection change.
+function renderSourcePicker(host, sources, opts) {
+  if (!host) return;
+  host.innerHTML = '';
+  const select = (row, id) => {
+    host.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
+    row.classList.add('selected');
+    if (opts.onPick) opts.onPick(id);
+  };
+  if (opts.withNoneRow) {
+    const noneRow = document.createElement('div');
+    noneRow.className = 'source-list-row selected';
+    noneRow.innerHTML =
+      `<span class="sl-title">${esc(opts.noneLabel || '— 不绑定 —')}</span>` +
+      (opts.noneHint ? `<span class="sl-meta">${esc(opts.noneHint)}</span>` : '');
+    noneRow.addEventListener('click', () => select(noneRow, ''));
+    host.appendChild(noneRow);
+  }
+  if (Array.isArray(sources)) {
+    for (const conv of sources) {
+      const row = document.createElement('div');
+      row.className = 'source-list-row';
+      row.innerHTML = `
+        <span class="sl-title">${esc(conv.title || '新对话')}</span>
+        <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${esc(relTime(conv.last_activity_at))}</span>
+      `;
+      row.addEventListener('click', () => select(row, conv.id));
+      host.appendChild(row);
+    }
+  }
+}
+
+// Find a conv-list row by id without relying on an attribute selector (CSS
+// selectors choke on ids that contain quotes or special chars).
+function findConvItem(convId) {
+  const list = document.getElementById('conv-list');
+  if (!list) return null;
+  for (const el of list.querySelectorAll('.conv-item')) {
+    if (el.dataset.convId === convId) return el;
+  }
+  return null;
+}
+
+// ── Init / tab dispatch ────────────────────────────────────────────────
+
 async function init() {
+  // Admin-gated rail buttons. Hidden for non-admin so they don't see a
+  // 403-on-click. The endpoints themselves still enforce admin server-side.
+  if (state.isAdmin) {
+    const adminBtn = document.getElementById('rail-admin-btn');
+    if (adminBtn) adminBtn.hidden = false;
+  }
   await loadBots();
   setupFeatureTabs();
   await loadConversations();
@@ -66,7 +286,7 @@ async function init() {
   updateNewChatLabel();
   applyTabView();
   // Auto-select most recent conversation in the active tab (only meaningful
-  // for the message tab; other tabs land on the placeholder anyway).
+  // for the message tab; other tabs need a modal first).
   if (state.currentTab === 'message' && state.conversations.length > 0) {
     selectConversation(state.conversations[0].id);
   }
@@ -78,9 +298,7 @@ async function init() {
 }
 
 function setupFeatureTabs() {
-  const root = document.getElementById('feature-tabs');
-  if (!root) return;
-  for (const btn of root.querySelectorAll('.feature-tab')) {
+  for (const btn of document.querySelectorAll('.rail-tab')) {
     btn.classList.toggle('active', btn.dataset.tab === state.currentTab);
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   }
@@ -93,7 +311,7 @@ async function switchTab(tabId) {
   localStorage.setItem('bb_currentTab', tabId);
   // Clear selection on tab change — convId is tab-scoped
   state.currentConversationId = null;
-  for (const btn of document.querySelectorAll('.feature-tab')) {
+  for (const btn of document.querySelectorAll('.rail-tab')) {
     btn.classList.toggle('active', btn.dataset.tab === tabId);
   }
   await loadConversations();
@@ -103,66 +321,75 @@ async function switchTab(tabId) {
   applyTabView();
 }
 
-// Show the right main pane for the active tab. The chat-view stays alive
-// behind the placeholder so reselecting message-tab conversations is instant.
+// Decide which view in <main> is visible based on the current tab and whether
+// a conversation is selected. Replaces 6 different `applyTabView` patches that
+// each manually toggled all 6 view elements via inline style.
 function applyTabView() {
-  const empty = document.getElementById('empty-state');
-  const chat = document.getElementById('chat-view');
-  const debate = document.getElementById('debate-view');
-  const placeholder = document.getElementById('placeholder-view');
-  const meView = document.getElementById('me-view');
+  const tab = state.currentTab;
+  const cfg = TAB_REGISTRY[tab];
+  document.getElementById('app').dataset.activeTab = tab;
 
-  // Default: hide all
-  if (empty) empty.style.display = 'none';
-  if (chat) chat.style.display = 'none';
-  if (debate) debate.style.display = 'none';
-  if (placeholder) placeholder.style.display = 'none';
-  if (meView) meView.style.display = 'none';
+  const titleEl = document.getElementById('sidebar-title');
+  if (titleEl) titleEl.textContent = TAB_LABELS[tab] || '';
 
-  if (state.currentTab === 'me') {
-    if (meView) meView.style.display = 'flex';
-    return;
-  }
-  if (state.currentTab === 'message') {
-    if (state.currentConversationId) {
-      if (chat) chat.style.display = 'flex';
-    } else {
-      if (empty) empty.style.display = 'flex';
-    }
-    return;
-  }
-  if (state.currentTab === 'debate') {
-    if (state.currentConversationId) {
-      if (debate) debate.style.display = 'flex';
-    } else {
-      if (empty) empty.style.display = 'flex';
-      const txt = document.getElementById('empty-state-text');
-      if (txt) txt.textContent = '点「新对话」开启一场议论';
-    }
-    return;
-  }
-  // Other tabs (surf / review / portrait): placeholder
-  if (state.currentConversationId) {
-    if (placeholder) placeholder.style.display = 'flex';
-    const text = document.getElementById('placeholder-text');
-    if (text) {
-      text.textContent = ({
-        surf: '冲浪独立流将在后续阶段实现 — 该会话已记录。',
-        review: '回顾独立流将在后续阶段实现 — 该会话已记录。',
-        portrait: '画像将在 Phase 2 实现 — 选源会话、生成多种数字痕迹。',
-      })[state.currentTab] ?? '施工中';
-    }
+  let view;
+  if (cfg?.alwaysShowView) {
+    view = cfg.view;
+  } else if (state.currentConversationId && cfg?.view) {
+    view = cfg.view;
   } else {
-    if (empty) empty.style.display = 'flex';
-    const txt = document.getElementById('empty-state-text');
-    if (txt) {
-      txt.textContent = ({
-        surf: '点「新对话」开启一段冲浪',
-        review: '点「新对话」开启一次回顾',
-        portrait: '点「新对话」选源会话生成画像',
-      })[state.currentTab] ?? '选个对话，或者开个新的';
-    }
+    view = 'empty';
+    const text = document.getElementById('empty-state-text');
+    if (text) text.textContent = cfg?.emptyHintNoSel ?? '选个对话，或者开个新的';
   }
+  document.getElementById('main').dataset.activeView = view;
+
+  if (cfg?.onActivate) cfg.onActivate();
+}
+
+// Tab-aware dispatchers. Each tab supplies its own implementation via
+// TAB_REGISTRY; the message tab's defaults live with this file's chat code
+// (see _messageLoadConvs / _messageSelectConv / etc.) and are wired up at the
+// bottom of the message section.
+
+async function loadConversations() {
+  const cfg = TAB_REGISTRY[state.currentTab];
+  if (cfg?.loadConvs) await cfg.loadConvs();
+}
+
+function renderConvList() {
+  const cfg = TAB_REGISTRY[state.currentTab];
+  if (!cfg) {
+    const list = document.getElementById('conv-list');
+    if (list) list.innerHTML = '';
+    return;
+  }
+  if (cfg.render) { cfg.render(); return; }      // full override (e.g. message tab's bot-filter)
+  if (!cfg.renderItem) {
+    const list = document.getElementById('conv-list');
+    if (list) list.innerHTML = '';
+    return;
+  }
+  renderConvListInto(state.convsByTab[state.currentTab] || [], cfg.emptyHint, cfg.renderItem);
+}
+
+function onNewChatClick(e) {
+  const cfg = TAB_REGISTRY[state.currentTab];
+  if (cfg?.onNewChat) cfg.onNewChat(e);
+}
+
+function selectConversation(convId) {
+  const cfg = TAB_REGISTRY[state.currentTab];
+  if (cfg?.selectConv) cfg.selectConv(convId);
+}
+
+function handleWsMessage(msg) {
+  // Tab-specific handlers (e.g. debate intercepting clarify/debater messages)
+  // get first crack. Returning true marks the message consumed.
+  for (const cfg of Object.values(TAB_REGISTRY)) {
+    if (cfg.wsHandler && cfg.wsHandler(msg) === true) return;
+  }
+  defaultMessageWsHandler(msg);
 }
 
 // ── Bots ──
@@ -198,13 +425,9 @@ function botAvatarHTML(botId) {
 
 // ── Conversations ──
 
-async function loadConversations() {
-  // 'me' tab has no conversations
-  if (state.currentTab === 'me') {
-    return;
-  }
+async function _messageLoadConvs() {
   try {
-    const url = `/api/conversations?userId=${encodeURIComponent(state.userId)}&feature=${state.currentTab}`;
+    const url = `/api/conversations?feature=message`;
     const res = await fetch(url);
     const convs = await res.json();
     state.conversations = Array.isArray(convs) ? convs : [];
@@ -279,10 +502,12 @@ function filteredConversations() {
   return state.conversations.filter(c => c.bot_id === state.botFilter);
 }
 
-function renderConvList() {
+// Message-tab list render — the message tab applies an additional bot-filter
+// step on top of state.conversations, which the generic dispatcher doesn't
+// know about, so we keep a custom render here and wire it via TAB_REGISTRY.
+function _messageRenderConvList() {
   const list = document.getElementById('conv-list');
   list.innerHTML = '';
-
   const convs = filteredConversations();
   if (convs.length === 0) {
     const hint = state.botFilter ? '没有该 Bot 的对话' : '还没有对话';
@@ -290,10 +515,7 @@ function renderConvList() {
     list.innerHTML = `<div class="conv-empty">${esc(hint)}<br>${esc(action)}</div>`;
     return;
   }
-
-  for (const conv of convs) {
-    list.appendChild(renderConvItem(conv));
-  }
+  for (const conv of convs) list.appendChild(renderConvItem(conv));
 }
 
 function renderConvItem(conv) {
@@ -314,14 +536,10 @@ function renderConvItem(conv) {
     </span>
     <span class="conv-actions">
       <button title="重命名" data-act="rename">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
-        </svg>
+        <svg width="12" height="12"><use href="#icon-pencil"/></svg>
       </button>
       <button title="删除" class="danger" data-act="delete">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        </svg>
+        <svg width="12" height="12"><use href="#icon-trash"/></svg>
       </button>
     </span>
   `;
@@ -352,6 +570,7 @@ function relTime(ts) {
 
 function startRelativeTimeTick() {
   setInterval(() => {
+    if (document.hidden) return;       // skip while tab is in background
     document.querySelectorAll('.conv-time[data-ts]').forEach(el => {
       const ts = parseInt(el.dataset.ts);
       if (ts) el.textContent = relTime(ts);
@@ -359,25 +578,16 @@ function startRelativeTimeTick() {
   }, 60 * 1000);
 }
 
-function selectConversation(convId) {
+function _messageSelectConv(convId) {
   const conv = state.conversations.find(c => c.id === convId);
   if (!conv) return;
   state.currentConversationId = convId;
 
-  // Update active state in sidebar
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
 
-  if (state.currentTab !== 'message') {
-    // Non-message tabs land on the placeholder for now; their full UI lands
-    // in the per-feature phase.
-    applyTabView();
-    return;
-  }
-
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'flex';
+  applyTabView();
   updateChatHeader(conv);
   loadHistory(convId);
   refreshActionBusyState();
@@ -415,7 +625,7 @@ async function loadHistory(convId) {
 
 // ── New chat ──
 
-function onNewChatClick(e) {
+function _messageOnNewChat(e) {
   if (e) e.stopPropagation();
   const picker = document.getElementById('bot-picker');
   if (state.bots.length === 0) {
@@ -456,7 +666,7 @@ async function createConversation(botId) {
     const res = await fetch('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: state.userId, botId, featureType }),
+      body: JSON.stringify({ botId, featureType }),
     });
     const conv = await res.json();
     if (!conv?.id) {
@@ -521,7 +731,7 @@ function startRename(convId, itemEl) {
 
 function renameCurrentConversation() {
   if (!state.currentConversationId) return;
-  const item = document.querySelector(`.conv-item[data-conv-id="${state.currentConversationId}"]`);
+  const item = findConvItem(state.currentConversationId);
   if (item) startRename(state.currentConversationId, item);
 }
 
@@ -583,7 +793,6 @@ async function triggerSurfForCurrent() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: state.userId,
         sourceMessageConversationId: convId,
         autoStart: true,
       }),
@@ -754,7 +963,7 @@ function connectWs() {
   if (state.ws && state.ws.readyState <= 1) return;
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  state.ws = new WebSocket(`${proto}://${location.host}/ws?userId=${state.userId}`);
+  state.ws = new WebSocket(`${proto}://${location.host}/ws`);
 
   state.ws.onopen = () => {
     state.reconnectDelay = 1000;
@@ -779,7 +988,7 @@ function connectWs() {
   state.ws.onerror = () => {};
 }
 
-function handleWsMessage(msg) {
+function defaultMessageWsHandler(msg) {
   if (msg.type === 'message' && msg.content) {
     if (msg.conversationId === state.currentConversationId) {
       clearSurfLog();
@@ -819,7 +1028,7 @@ function handleWsMessage(msg) {
     if (conv) {
       conv.title = msg.title;
       // Update sidebar item without full re-render to keep scroll position
-      const item = document.querySelector(`.conv-item[data-conv-id="${msg.conversationId}"] .conv-title`);
+      const item = findConvItem(msg.conversationId)?.querySelector('.conv-title');
       if (item) {
         item.textContent = msg.title;
         item.classList.remove('untitled');
@@ -837,6 +1046,15 @@ function bumpConversationToTop(convId) {
   state.conversations.unshift(conv);
   renderConvList();
 }
+
+TAB_REGISTRY.message = {
+  view: 'chat',
+  loadConvs: _messageLoadConvs,
+  render: _messageRenderConvList,
+  onNewChat: _messageOnNewChat,
+  selectConv: _messageSelectConv,
+  emptyHintNoSel: '选个对话，或者开个新的',
+};
 
 // ── Typing indicator ──
 //
@@ -1136,7 +1354,6 @@ async function commitAllEdits() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: state.userId,
         edits: changed,
       }),
     });
@@ -1198,7 +1415,7 @@ async function regenerateFromUserMessage(msgId, wrap, btn) {
     const res = await fetch(`/api/conversations/${state.currentConversationId}/regenerate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId: msgId, userId: state.userId }),
+      body: JSON.stringify({ messageId: msgId }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
@@ -1521,9 +1738,10 @@ function closeImageViewer(e) {
   const viewer = document.getElementById('image-viewer');
   const img = document.getElementById('image-viewer-img');
   if (!viewer || !img) return;
-  // If click originated on the image itself, let it pass through instead of
-  // closing — only close on backdrop / close-button.
-  if (e && e.target === img) return;
+  // Only close on backdrop / close-button. Use contains() rather than ===
+  // so clicks that bubble up from inside the image (e.g. selection handles)
+  // also pass through.
+  if (e && img.contains(e.target)) return;
   viewer.classList.remove('open');
   viewer.setAttribute('aria-hidden', 'true');
   img.src = '';
@@ -1646,6 +1864,17 @@ function setupGlobalHandlers() {
     }
   });
 
+  // Tear down outgoing connections on page unload so the server doesn't hold
+  // sockets open and the next reload starts clean.
+  window.addEventListener('beforeunload', () => {
+    state.surfES?.close();
+    state.reviewES?.close();
+    debateState.es?.close();
+    if (state.ws && state.ws.readyState <= 1) {
+      try { state.ws.close(); } catch {}
+    }
+  });
+
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
@@ -1745,12 +1974,6 @@ function shortModel(m) {
   return m.split('/').pop().slice(0, 24);
 }
 
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s ?? '';
-  return d.innerHTML;
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 //  议论 (Debate) — multi-agent group chat, user can only inject 辟谣
 // ──────────────────────────────────────────────────────────────────────────
@@ -1798,7 +2021,7 @@ function modelColor(slug) {
 // list endpoint that hydrates topic + model_slugs.
 async function loadDebateConversations() {
   try {
-    const res = await fetch(`/api/debate/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/debate/conversations`);
     const list = await res.json();
     state.convsByTab.debate = Array.isArray(list) ? list : [];
   } catch (e) {
@@ -1827,9 +2050,7 @@ function renderDebateConvItem(conv) {
     </span>
     <span class="conv-actions">
       <button title="删除" class="danger" data-act="delete">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        </svg>
+          <svg width="12" height="12"><use href="#icon-trash"/></svg>
       </button>
     </span>
   `;
@@ -1851,13 +2072,7 @@ async function selectDebateConv(convId) {
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
-
-  // Hide other panes, show debate-view
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('placeholder-view').style.display = 'none';
-  document.getElementById('me-view').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'none';
-  document.getElementById('debate-view').style.display = 'flex';
+  applyTabView();
 
   try {
     const res = await fetch(`/api/debate/conversations/${convId}`);
@@ -1894,16 +2109,74 @@ function updateDebateHeader() {
   meta.textContent = `${(d.model_slugs ?? []).length} 个模型 · ${d.round_count_debate ?? 0} 轮 · ${modelNames}`;
 }
 
-// Pull a 1–2 char glyph for the avatar from a slug, e.g. 'z-ai/glm-5.1' -> 'GL'.
-function avatarInitials(slug, displayName) {
+// ── Provider brand avatars ──
+// Maps an OpenRouter slug prefix (the part before the `/`) to the model
+// vendor's official-ish logo file (under /logos/) plus a brand color and
+// glyph fallback. `logo` files were sourced from each company's site /
+// the Iconify "logos" set / Simple Icons. When `logo` is absent we render
+// a colored circle with the `text` glyph instead.
+const PROVIDER_BRANDS = {
+  'anthropic':   { logo: 'anthropic',   bg: '#D97757', text: 'A' },
+  'openai':      { logo: 'openai',      bg: '#10A37F', text: 'O' },
+  'deepseek':    { logo: 'deepseek',    bg: '#4D6BFE', text: '深' },
+  'google':      { logo: 'google',      bg: '#1A73E8', text: 'G' },
+  'z-ai':        { logo: 'z-ai',        bg: '#6E45E2', text: '智' },
+  'zhipu':       { logo: 'z-ai',        bg: '#6E45E2', text: '智' },
+  'tencent':     { logo: 'tencent',     bg: '#0052D9', text: '腾' },
+  'minimax':     { logo: 'minimax',     bg: '#E73562', text: 'M' },
+  'x-ai':        { logo: 'x-ai',        bg: '#0E0E0E', text: '𝕏' },
+  'meta-llama':  { logo: 'meta-llama',  bg: '#0866FF', text: 'M' },
+  'mistralai':   { logo: 'mistralai',   bg: '#FA520F', text: 'M' },
+  'mistral':     { logo: 'mistralai',   bg: '#FA520F', text: 'M' },
+  'qwen':        { logo: 'qwen',        bg: '#623AE7', text: '通' },
+  'alibaba':     { logo: 'alibaba',     bg: '#FF6A00', text: '通' },
+  'perplexity':  { logo: 'perplexity',  bg: '#1FB8CD', text: 'PX' },
+  'nvidia':      { logo: 'nvidia',      bg: '#76B900', text: 'N' },
+  'moonshotai':  { logo: 'moonshotai',  bg: '#0F172A', text: '月' },
+  'cohere':      {                       bg: '#39594D', text: 'C' },
+  'baichuan':    {                       bg: '#1F8FFF', text: '百' },
+  '01-ai':       {                       bg: '#1F2937', text: '零' },
+};
+
+function providerKey(slug) {
+  const s = (slug || '').toLowerCase();
+  const slash = s.indexOf('/');
+  return slash > 0 ? s.slice(0, slash) : s;
+}
+
+// Returns { mode, ... } describing how to render the avatar circle.
+//   mode 'logo' → white circle with brand image inside
+//   mode 'glyph' → colored circle with white text
+function providerAvatarHTML(slug, displayName) {
+  const key = providerKey(slug);
+  const brand = PROVIDER_BRANDS[key];
+  if (brand?.logo) {
+    return {
+      mode: 'logo',
+      html: `<img src="/logos/${brand.logo}.svg" alt="${esc(key)}" loading="lazy">`,
+    };
+  }
+  if (brand?.text) {
+    return {
+      mode: 'glyph',
+      bg: brand.bg,
+      html: `<span class="debate-avatar-text">${esc(brand.text)}</span>`,
+    };
+  }
+  // Unknown provider — hashed color + initials from the model name.
   const src = (displayName || slug || '').trim();
-  // Prefer the part after the last '/' so 'z-ai/glm-5.1' becomes 'glm-5.1'.
   const tail = src.includes('/') ? src.split('/').pop() : src;
   const cleaned = (tail || '').replace(/[^a-zA-Z0-9一-鿿]/g, '');
-  if (!cleaned) return '?';
-  const m = cleaned.match(/[一-鿿]/);
-  if (m) return m[0];
-  return cleaned.slice(0, 2).toUpperCase();
+  let glyph = '?';
+  if (cleaned) {
+    const m = cleaned.match(/[一-鿿]/);
+    glyph = m ? m[0] : cleaned.slice(0, 2).toUpperCase();
+  }
+  return {
+    mode: 'glyph',
+    bg: modelColor(slug),
+    html: `<span class="debate-avatar-text">${esc(glyph)}</span>`,
+  };
 }
 
 function appendDebateMessage(m) {
@@ -1925,8 +2198,12 @@ function appendDebateMessage(m) {
     if (prev && prev.classList.contains('debater') && prev.dataset.slug === slug) {
       el.classList.add('same-speaker');
     }
+    const av = providerAvatarHTML(slug, name);
+    const avatarAttr = av.mode === 'logo'
+      ? 'class="debate-avatar has-logo"'
+      : `class="debate-avatar" style="background:${av.bg}"`;
     el.innerHTML = `
-      <div class="debate-avatar" style="background:${modelColor(slug)}">${esc(avatarInitials(slug, name))}</div>
+      <div ${avatarAttr}>${av.html}</div>
       <div class="debate-body-wrap">
         <div class="debate-who"><span>${esc(name)}</span></div>
         <div class="debate-body">${esc(m.content)}</div>
@@ -1943,12 +2220,23 @@ function scrollDebateToBottom() {
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
 }
 
+function setDebateBusy(busy) {
+  const round = document.getElementById('debate-round-btn');
+  const pause = document.getElementById('debate-pause-btn');
+  if (round) {
+    round.disabled = !!busy;
+    round.classList.toggle('busy', !!busy);
+  }
+  if (pause) {
+    pause.style.display = busy ? '' : 'none';
+    pause.disabled = false;
+  }
+}
+
 async function runDebateRoundClick() {
   const convId = state.currentConversationId;
   if (!convId) return;
-  const btn = document.getElementById('debate-round-btn');
-  btn.disabled = true;
-  btn.classList.add('busy');
+  setDebateBusy(true);
   setDebateStatus('议论中…');
   try {
     await fetch(`/api/debate/round/${convId}`, {
@@ -1960,8 +2248,21 @@ async function runDebateRoundClick() {
     // re-enable the button on `done`.
   } catch (e) {
     setDebateStatus(`出错：${e.message}`);
-    btn.disabled = false;
-    btn.classList.remove('busy');
+    setDebateBusy(false);
+  }
+}
+
+async function pauseDebateRoundClick() {
+  const convId = state.currentConversationId;
+  if (!convId) return;
+  const pause = document.getElementById('debate-pause-btn');
+  if (pause) pause.disabled = true;
+  setDebateStatus('暂停中… 等当前这条说完');
+  try {
+    await fetch(`/api/debate/pause/${convId}`, { method: 'POST' });
+  } catch (e) {
+    setDebateStatus(`暂停失败：${e.message}`);
+    if (pause) pause.disabled = false;
   }
 }
 
@@ -1972,9 +2273,7 @@ async function injectDebateClarification() {
   const content = input.value.trim();
   if (!content) return;
   input.value = '';
-  const btn = document.getElementById('debate-round-btn');
-  btn.disabled = true;
-  btn.classList.add('busy');
+  setDebateBusy(true);
   setDebateStatus('注入并开始下一轮…');
   try {
     await fetch(`/api/debate/inject/${convId}`, {
@@ -1984,8 +2283,7 @@ async function injectDebateClarification() {
     });
   } catch (e) {
     setDebateStatus(`出错：${e.message}`);
-    btn.disabled = false;
-    btn.classList.remove('busy');
+    setDebateBusy(false);
   }
 }
 
@@ -2058,10 +2356,8 @@ function renderDebateModalModels() {
   host.appendChild(picker);
 }
 
-function closeDebateModal(e) {
-  if (e && e.target.id !== 'debate-modal') return;
-  document.getElementById('debate-modal').style.display = 'none';
-}
+// Legacy alias kept for any inline onclick attributes that still reference it.
+function closeDebateModal(e) { closeModal('debate-modal', e); }
 
 async function submitDebateModal() {
   const slugs = Array.from(debateState.pickedModelSlugs);
@@ -2088,7 +2384,6 @@ async function submitDebateModal() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: state.userId,
         topic: topic || null,
         modelSlugs: slugs,
       }),
@@ -2129,17 +2424,17 @@ function connectDebateEvents() {
   debateState.es.addEventListener('done', (e) => {
     try {
       const data = JSON.parse(e.data);
-      const btn = document.getElementById('debate-round-btn');
       if (state.currentConversationId === data.conversationId) {
-        if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
-        setDebateStatus(`Round ${data.round} 完成 · ${data.delivered} 条`);
-        // Refresh round counter on the current debate
+        setDebateBusy(false);
+        const tail = data.paused
+          ? `Round ${data.round} 已暂停 · ${data.delivered} 条`
+          : `Round ${data.round} 完成 · ${data.delivered} 条`;
+        setDebateStatus(tail);
         if (debateState.currentDebate) {
           debateState.currentDebate.round_count_debate = data.round;
           updateDebateHeader();
         }
       }
-      // Refresh sidebar list to update round counts
       if (state.currentTab === 'debate') {
         loadDebateConversations().then(renderConvList);
       }
@@ -2148,58 +2443,19 @@ function connectDebateEvents() {
   debateState.es.onerror = () => { /* EventSource auto-reconnects */ };
 }
 
-// ── Hooks into the existing app shell ──
-
-// Patch loadConversations: route debate tab to its own endpoint.
-const __origLoadConversations = loadConversations;
-loadConversations = async function() {
-  if (state.currentTab === 'debate') {
-    await loadDebateConversations();
-    return;
-  }
-  return __origLoadConversations();
-};
-
-// Patch renderConvList: render debate items differently.
-const __origRenderConvList = renderConvList;
-renderConvList = function() {
-  if (state.currentTab !== 'debate') return __origRenderConvList();
-  const list = document.getElementById('conv-list');
-  list.innerHTML = '';
-  const convs = state.conversations;
-  if (convs.length === 0) {
-    list.innerHTML = '<div class="conv-empty">还没有议论<br>点上面「新对话」开启</div>';
-    return;
-  }
-  for (const c of convs) list.appendChild(renderDebateConvItem(c));
-};
-
-// Patch onNewChatClick: open the debate modal instead.
-const __origOnNewChatClick = onNewChatClick;
-onNewChatClick = function(e) {
-  if (state.currentTab === 'debate') {
-    if (e) e.stopPropagation();
-    openDebateModal('create');
-    return;
-  }
-  return __origOnNewChatClick(e);
-};
-
-// Patch selectConversation: route debate convs to selectDebateConv.
-const __origSelectConversation = selectConversation;
-selectConversation = function(convId) {
-  if (state.currentTab === 'debate') {
-    selectDebateConv(convId);
-    return;
-  }
-  __origSelectConversation(convId);
-};
-
-// Patch handleWsMessage so debate messages land in the debate view.
-const __origHandleWsMessage = handleWsMessage;
-handleWsMessage = function(msg) {
-  const kind = msg?.metadata?.sender_kind;
-  if (kind === 'debater' || kind === 'clarify') {
+TAB_REGISTRY.debate = {
+  view: 'debate',
+  loadConvs: loadDebateConversations,
+  renderItem: renderDebateConvItem,
+  selectConv: selectDebateConv,
+  onNewChat: (e) => { if (e) e.stopPropagation(); openDebateModal('create'); },
+  emptyHint: '还没有议论\n点上面「新对话」开启',
+  emptyHintNoSel: '点「新对话」开启一场议论',
+  // Intercept clarify / debater WS messages so they land in the debate view
+  // instead of the normal chat bubble path.
+  wsHandler(msg) {
+    const kind = msg?.metadata?.sender_kind;
+    if (kind !== 'debater' && kind !== 'clarify') return false;
     if (msg.conversationId === state.currentConversationId && state.currentTab === 'debate') {
       appendDebateMessage({
         sender_type: kind === 'clarify' ? 'user' : 'debater',
@@ -2209,9 +2465,8 @@ handleWsMessage = function(msg) {
       });
       scrollDebateToBottom();
     }
-    return;
-  }
-  return __origHandleWsMessage(msg);
+    return true;
+  },
 };
 
 // Kick off SSE on page load; the connection is cheap and lets the debate view
@@ -2236,12 +2491,11 @@ const portraitState = {
   current: null,            // hydrated portrait conv (with portraits[])
   busyKinds: new Set(),     // kinds currently generating
   modelOverride: '',        // optional per-generation model slug
-  modelPicker: null,        // mounted lazily
 };
 
 async function loadPortraitConversations() {
   try {
-    const res = await fetch(`/api/portrait/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/portrait/conversations`);
     state.convsByTab.portrait = await res.json();
     if (!Array.isArray(state.convsByTab.portrait)) state.convsByTab.portrait = [];
   } catch (e) {
@@ -2255,9 +2509,10 @@ function renderPortraitConvItem(conv) {
   el.className = 'conv-item';
   el.dataset.convId = conv.id;
   if (conv.id === state.currentConversationId) el.classList.add('active');
-  const kindBadges = (conv.kinds ?? []).map(k =>
-    `<span class="conv-model-dot" style="background:${kindColor(k)}" title="${esc(PORTRAIT_KIND_LABELS[k] ?? k)}"></span>`
-  ).join('');
+  const kindBadges = (conv.kinds ?? []).map(k => {
+    const safe = PORTRAIT_KINDS.includes(k) ? k : 'default';
+    return `<span class="conv-model-dot" data-kind="${esc(safe)}" title="${esc(PORTRAIT_KIND_LABELS[k] ?? k)}"></span>`;
+  }).join('');
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(conv.title || '画像')}</span>
@@ -2265,9 +2520,7 @@ function renderPortraitConvItem(conv) {
     </span>
     <span class="conv-actions">
       <button title="删除" class="danger" data-act="delete">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        </svg>
+        <svg width="12" height="12"><use href="#icon-trash"/></svg>
       </button>
     </span>
   `;
@@ -2283,28 +2536,12 @@ function renderPortraitConvItem(conv) {
   return el;
 }
 
-function kindColor(kind) {
-  return ({
-    moments:  '#3b82f6',
-    memos:    '#f59e0b',
-    schedule: '#10b981',
-    alarms:   '#ef4444',
-    bills:    '#8b5cf6',
-  })[kind] ?? '#64748b';
-}
-
 async function selectPortraitConv(convId) {
   state.currentConversationId = convId;
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
-
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('placeholder-view').style.display = 'none';
-  document.getElementById('me-view').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'none';
-  document.getElementById('debate-view').style.display = 'none';
-  document.getElementById('portrait-view').style.display = 'flex';
+  applyTabView();
 
   try {
     const res = await fetch(`/api/portrait/conversations/${convId}`);
@@ -2345,25 +2582,19 @@ function renderPortraitView() {
   // Mount the per-generation model picker once; subsequent renders just reset
   // it. Empty value means "use the system default for portrait" (resolved on
   // the server via modelFor('portrait')).
-  const host = document.getElementById('portrait-model-host');
-  if (host && !portraitState.modelPicker) {
-    portraitState.modelPicker = createModelPicker({
-      value: '',
-      placeholder: '默认（系统分配）',
-      allowCustomSlug: true,
-      onChange: (slug) => { portraitState.modelOverride = slug || ''; },
-    });
-    host.appendChild(portraitState.modelPicker);
-  } else if (portraitState.modelPicker) {
-    portraitState.modelPicker.setValue(portraitState.modelOverride || '');
-  }
+  ensureModelPicker(document.getElementById('portrait-model-host'), {
+    value: portraitState.modelOverride || '',
+    placeholder: '默认（系统分配）',
+    allowCustomSlug: true,
+    onChange: (slug) => { portraitState.modelOverride = slug || ''; },
+  });
 
   // Feed: each existing portrait gets a section (most recent first per kind)
   const feed = document.getElementById('portrait-feed');
   feed.innerHTML = '';
   const portraits = d.portraits ?? [];
   if (portraits.length === 0) {
-    feed.innerHTML = '<div class="conv-empty" style="padding:32px 0">还没有生成任何画像 — 点上面任一卡片来生成</div>';
+    feed.innerHTML = '<div class="portrait-empty">还没有生成任何画像 — 点上面任一卡片来生成</div>';
   } else {
     for (const p of portraits) feed.appendChild(renderPortraitSection(p));
   }
@@ -2386,8 +2617,10 @@ function renderPortraitSection(p) {
   const items = (p.content?.items) ?? [];
   const head = document.createElement('div');
   head.className = 'portrait-section-head';
+  // The first <span> picks up its color from
+  // .portrait-section--<kind> .portrait-section-head > span:first-child in CSS.
   head.innerHTML = `
-    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${kindColor(p.kind)}"></span>
+    <span class="ps-dot"></span>
     <span>${esc(PORTRAIT_KIND_LABELS[p.kind] ?? p.kind)}</span>
     <span class="ps-when">${esc(new Date(p.created_at * 1000).toLocaleString())}</span>
     <button data-pid="${esc(p.id)}" data-act="regen">重新生成</button>
@@ -2437,7 +2670,7 @@ function renderPortraitSection(p) {
     }
   } else if (p.kind === 'schedule') {
     const wrap = document.createElement('div');
-    wrap.style = 'border:1px solid var(--border-light); border-radius:8px; overflow:hidden;';
+    wrap.className = 'pi-table-wrap';
     for (const it of items) {
       const row = document.createElement('div');
       row.className = 'pi-row';
@@ -2450,7 +2683,7 @@ function renderPortraitSection(p) {
     sec.appendChild(wrap);
   } else if (p.kind === 'alarms') {
     const wrap = document.createElement('div');
-    wrap.style = 'border:1px solid var(--border-light); border-radius:8px; overflow:hidden;';
+    wrap.className = 'pi-table-wrap';
     for (const it of items) {
       const row = document.createElement('div');
       row.className = `pi-row ${it.enabled === false ? 'disabled' : ''}`;
@@ -2583,36 +2816,28 @@ async function sendPortraitChat() {
 
 async function openPortraitModal() {
   const list = document.getElementById('portrait-source-list');
-  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
   document.getElementById('portrait-modal').style.display = 'flex';
 
   try {
-    const res = await fetch(`/api/portrait/sources?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/portrait/sources`);
     const sources = await res.json();
     if (!Array.isArray(sources) || sources.length === 0) {
-      list.innerHTML = '<div style="padding:20px;color:var(--text-4);font-size:12.5px;text-align:center">还没有任何消息会话 — 先去「消息」聊几句。</div>';
+      list.innerHTML = '<div class="modal-status-row">还没有任何消息会话 — 先去「消息」聊几句。</div>';
       return;
     }
-    list.innerHTML = '';
-    for (const conv of sources) {
-      const row = document.createElement('div');
-      row.className = 'source-list-row';
-      row.innerHTML = `
-        <span class="sl-title">${esc(conv.title || '新对话')}</span>
-        <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
-      `;
-      row.addEventListener('click', () => createPortraitConv(conv.id));
-      list.appendChild(row);
-    }
+    renderSourcePicker(list, sources, {
+      // Portrait flow creates a new conv on click (no separate submit step),
+      // so the "selection" is single-shot — onPick fires once, and we let
+      // createPortraitConv take over from there.
+      onPick: (id) => { if (id) createPortraitConv(id); },
+    });
   } catch (e) {
-    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+    list.innerHTML = `<div class="modal-status-row error">加载失败：${esc(e.message)}</div>`;
   }
 }
 
-function closePortraitModal(e) {
-  if (e && e.target.id !== 'portrait-modal') return;
-  document.getElementById('portrait-modal').style.display = 'none';
-}
+function closePortraitModal(e) { closeModal('portrait-modal', e); }
 
 async function createPortraitConv(sourceConversationId) {
   try {
@@ -2620,7 +2845,6 @@ async function createPortraitConv(sourceConversationId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: state.userId,
         sourceConversationId,
       }),
     });
@@ -2636,78 +2860,14 @@ async function createPortraitConv(sourceConversationId) {
   } catch (e) { alert('创建失败：' + e.message); }
 }
 
-// ── Hooks into the existing app shell ──
-
-const __origLoadConversations2 = loadConversations;
-loadConversations = async function() {
-  if (state.currentTab === 'portrait') { await loadPortraitConversations(); return; }
-  return __origLoadConversations2();
-};
-
-const __origRenderConvList2 = renderConvList;
-renderConvList = function() {
-  if (state.currentTab !== 'portrait') return __origRenderConvList2();
-  const list = document.getElementById('conv-list');
-  list.innerHTML = '';
-  const convs = state.conversations;
-  if (convs.length === 0) {
-    list.innerHTML = '<div class="conv-empty">还没有画像<br>点上面「新对话」选个源会话</div>';
-    return;
-  }
-  for (const c of convs) list.appendChild(renderPortraitConvItem(c));
-};
-
-const __origOnNewChatClick2 = onNewChatClick;
-onNewChatClick = function(e) {
-  if (state.currentTab === 'portrait') {
-    if (e) e.stopPropagation();
-    openPortraitModal();
-    return;
-  }
-  return __origOnNewChatClick2(e);
-};
-
-const __origSelectConversation2 = selectConversation;
-selectConversation = function(convId) {
-  if (state.currentTab === 'portrait') { selectPortraitConv(convId); return; }
-  __origSelectConversation2(convId);
-};
-
-// Patch applyTabView so portrait tab opens the portrait-view rather than the
-// generic placeholder.
-const __origApplyTabView = applyTabView;
-applyTabView = function() {
-  if (state.currentTab === 'portrait') {
-    const empty = document.getElementById('empty-state');
-    document.getElementById('chat-view').style.display = 'none';
-    document.getElementById('debate-view').style.display = 'none';
-    document.getElementById('placeholder-view').style.display = 'none';
-    document.getElementById('me-view').style.display = 'none';
-    if (state.currentConversationId) {
-      empty.style.display = 'none';
-      document.getElementById('portrait-view').style.display = 'flex';
-    } else {
-      document.getElementById('portrait-view').style.display = 'none';
-      empty.style.display = 'flex';
-      const txt = document.getElementById('empty-state-text');
-      if (txt) txt.textContent = '点「新对话」选源会话生成画像';
-    }
-    return;
-  }
-  // Hide portrait-view when leaving the tab
-  document.getElementById('portrait-view').style.display = 'none';
-
-  if (state.currentTab === 'me') {
-    document.getElementById('chat-view').style.display = 'none';
-    document.getElementById('debate-view').style.display = 'none';
-    document.getElementById('portrait-view').style.display = 'none';
-    document.getElementById('placeholder-view').style.display = 'none';
-    document.getElementById('empty-state').style.display = 'none';
-    document.getElementById('me-view').style.display = 'flex';
-    loadMeView();
-    return;
-  }
-  return __origApplyTabView();
+TAB_REGISTRY.portrait = {
+  view: 'portrait',
+  loadConvs: loadPortraitConversations,
+  renderItem: renderPortraitConvItem,
+  selectConv: selectPortraitConv,
+  onNewChat: (e) => { if (e) e.stopPropagation(); openPortraitModal(); },
+  emptyHint: '还没有画像\n点上面「新对话」选个源会话',
+  emptyHintNoSel: '点「新对话」选源会话生成画像',
 };
 
 
@@ -2720,12 +2880,257 @@ async function loadMeView() {
     loadMyProfile(),
     loadMyPicks(),
     loadMeAssignments(),
+    loadMySkills(),
   ]);
+}
+
+TAB_REGISTRY.me = {
+  view: 'me',
+  alwaysShowView: true,
+  onActivate: loadMeView,
+};
+
+// ── 钥匙 tab — iOS API key management ───────────────────────────────────────
+
+TAB_REGISTRY.keys = {
+  view: 'keys',
+  alwaysShowView: true,
+  onActivate: loadKeysList,
+};
+
+// Cache of detected server URLs — refreshed each time the keys tab opens
+// so the dropdown reflects the host the admin is currently on (LAN IP vs.
+// localhost matters for which option is "current").
+let _keysServerUrls = null;
+
+async function loadKeysList() {
+  const root = document.getElementById('keys-list');
+  if (!root) return;
+  root.innerHTML = '<div class="me-section-status">加载中…</div>';
+  try {
+    const [rowsRes, urlsRes] = await Promise.all([
+      fetch('/api/keys'),
+      fetch('/api/keys/server-urls'),
+    ]);
+    const rows = await rowsRes.json();
+    _keysServerUrls = await urlsRes.json();
+    populateBaseUrlDropdown();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      root.innerHTML = '<div class="me-section-status">还没有钥匙。在上面填个名称然后创建一把。</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const row of rows) {
+      root.appendChild(renderKeyRow(row));
+    }
+  } catch (e) {
+    root.innerHTML = `<div class="me-section-status">加载失败: ${esc(String(e))}</div>`;
+  }
+}
+
+function populateBaseUrlDropdown() {
+  const sel = document.getElementById('keys-new-baseurl');
+  const warn = document.getElementById('keys-baseurl-warning');
+  if (!sel || !_keysServerUrls) return;
+  sel.innerHTML = '';
+  for (const opt of _keysServerUrls.options) {
+    const o = document.createElement('option');
+    o.value = opt.url;
+    o.textContent = `${opt.label}${opt.isCurrent ? '  · 你正在用' : ''}`;
+    if (opt.url === _keysServerUrls.primary) o.selected = true;
+    sel.appendChild(o);
+  }
+  // Custom-entry option always at the bottom.
+  const custom = document.createElement('option');
+  custom.value = '__custom__';
+  custom.textContent = '自定义…';
+  sel.appendChild(custom);
+
+  if (warn) {
+    if (_keysServerUrls.warning) {
+      warn.style.display = 'block';
+      warn.textContent = '⚠ ' + _keysServerUrls.warning;
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+
+  // Replace the select with a free-text input if user picks "自定义".
+  sel.onchange = () => {
+    if (sel.value === '__custom__') {
+      const url = prompt('输入完整 URL (含 http:// 或 https://):', 'https://');
+      if (url && /^https?:\/\//i.test(url)) {
+        // Insert as a new option at top, select it.
+        const o = document.createElement('option');
+        o.value = url.replace(/\/+$/, '');
+        o.textContent = `自定义: ${o.value}`;
+        o.selected = true;
+        sel.insertBefore(o, sel.firstChild);
+      } else {
+        // Cancelled or invalid — revert to primary.
+        for (const o of sel.options) if (o.value === _keysServerUrls.primary) { o.selected = true; break; }
+      }
+    }
+  };
+}
+
+function renderKeyRow(row) {
+  const wrap = document.createElement('div');
+  wrap.className = 'keys-row';
+  if (row.revoked_at) wrap.classList.add('revoked');
+  const lastUsed = row.last_used_at
+    ? `${relTime(row.last_used_at)}前使用过`
+    : '从未使用';
+  const created = `${relTime(row.created_at)}前`;
+  const status = row.revoked_at
+    ? '<span class="keys-badge revoked">已撤销</span>'
+    : (row.has_share_link ? '<span class="keys-badge pending">待领取</span>' : '<span class="keys-badge active">已激活</span>');
+  const baseUrlBit = row.share_base_url
+    ? `<div class="keys-row-meta">分享地址 <code>${esc(row.share_base_url)}</code></div>`
+    : '';
+  wrap.innerHTML = `
+    <div class="keys-row-main">
+      <div class="keys-row-name">${esc(row.name)} ${status}</div>
+      <div class="keys-row-meta">
+        <code>${esc(row.key_prefix)}…</code>
+        · ${esc(lastUsed)}
+        · 创建于 ${esc(created)}
+      </div>
+      ${baseUrlBit}
+    </div>
+    <div class="keys-row-actions"></div>
+  `;
+  const actions = wrap.querySelector('.keys-row-actions');
+  if (!row.revoked_at) {
+    if (row.has_share_link) {
+      const shareBtn = document.createElement('button');
+      shareBtn.className = 'btn-soft';
+      shareBtn.textContent = '查看分享链接';
+      shareBtn.onclick = () => showExistingShare(row.id);
+      actions.appendChild(shareBtn);
+    } else {
+      const reShareBtn = document.createElement('button');
+      reShareBtn.className = 'btn-soft';
+      reShareBtn.textContent = '重新生成分享链接';
+      reShareBtn.onclick = () => rotateShare(row.id);
+      actions.appendChild(reShareBtn);
+    }
+    const revokeBtn = document.createElement('button');
+    revokeBtn.className = 'btn-soft danger';
+    revokeBtn.textContent = '撤销';
+    revokeBtn.onclick = () => revokeKey(row.id, row.name);
+    actions.appendChild(revokeBtn);
+  }
+  return wrap;
+}
+
+async function createNewKey() {
+  const nameEl = document.getElementById('keys-new-name');
+  const baseUrlSel = document.getElementById('keys-new-baseurl');
+  const includeAlts = document.getElementById('keys-include-alts')?.checked ?? true;
+  const name = (nameEl?.value ?? '').trim();
+  if (!name) { nameEl?.focus(); return; }
+  const baseURL = baseUrlSel?.value;
+  if (!baseURL || baseURL === '__custom__') {
+    alert('请选择或输入服务器地址');
+    return;
+  }
+  // Build alt list = every other detected option, except loopback + the primary
+  // we just picked. The iOS client probes these in order if `baseURL` is
+  // unreachable from where it is.
+  let altURLs = [];
+  if (includeAlts && _keysServerUrls) {
+    altURLs = _keysServerUrls.options
+      .filter(o => o.source !== 'loopback' && o.url !== baseURL)
+      .map(o => o.url);
+  }
+  try {
+    const res = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, baseURL, altURLs }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const out = await res.json();
+    if (nameEl) nameEl.value = '';
+    showKeyModal({ key: out.key, share_url: out.share_url, id: out.id, share_base_url: out.share_base_url });
+    loadKeysList();
+  } catch (e) {
+    alert(`创建失败: ${e}`);
+  }
+}
+
+function showKeyModal({ key, share_url, id }) {
+  document.getElementById('keys-show-key').value = key ?? '';
+  document.getElementById('keys-show-share').value = share_url ?? '';
+  const qrHost = document.getElementById('keys-show-qr');
+  if (qrHost) {
+    qrHost.innerHTML = `<img src="/api/keys/${encodeURIComponent(id)}/qr?t=${Date.now()}" alt="二维码" loading="lazy">`;
+  }
+  document.getElementById('keys-show-modal').style.display = 'flex';
+}
+
+async function showExistingShare(id) {
+  try {
+    const res = await fetch(`/api/keys/${encodeURIComponent(id)}/share`);
+    if (!res.ok) {
+      // No live share link — offer to rotate (mints a fresh one)
+      if (confirm('该钥匙暂无分享链接,生成一条新的?')) await rotateShare(id);
+      return;
+    }
+    const out = await res.json();
+    document.getElementById('keys-show-key').value = '（已隐藏 — 完整钥匙仅在创建时显示一次）';
+    document.getElementById('keys-show-share').value = out.share_url ?? '';
+    const qrHost = document.getElementById('keys-show-qr');
+    if (qrHost) {
+      qrHost.innerHTML = `<img src="/api/keys/${encodeURIComponent(id)}/qr?t=${Date.now()}" alt="二维码" loading="lazy">`;
+    }
+    document.getElementById('keys-show-modal').style.display = 'flex';
+  } catch (e) {
+    alert(`加载失败: ${e}`);
+  }
+}
+
+async function rotateShare(id) {
+  try {
+    const res = await fetch(`/api/keys/${encodeURIComponent(id)}/share/rotate`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadKeysList();
+    await showExistingShare(id);
+  } catch (e) {
+    alert(`生成分享链接失败: ${e}`);
+  }
+}
+
+async function revokeKey(id, name) {
+  if (!confirm(`撤销 "${name}" 的钥匙? 持有者将立即无法访问。\n此操作不可撤销。`)) return;
+  try {
+    const res = await fetch(`/api/keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    loadKeysList();
+  } catch (e) {
+    alert(`撤销失败: ${e}`);
+  }
+}
+
+function copyToClipboard(elementId, btn) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.select();
+  navigator.clipboard.writeText(el.value).then(() => {
+    if (btn) {
+      const old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = old; }, 1200);
+    }
+  }).catch(() => {
+    document.execCommand('copy');
+    if (btn) btn.textContent = '已复制';
+  });
 }
 
 const ASSIGNMENT_LABELS = {
   chat:       ['对话回复',     '消息 tab 的常规聊天回复'],
-  debounce:   ['防抖判断',     '判断该等用户继续打字还是立即回复（cheap）'],
   review:     ['会话内自审',   '消息 tab 的周期性回顾，会话中的自审'],
   surfing:    ['冲浪',         '冲浪 tab 的 planner / curator'],
   title:      ['标题生成',     '会话标题（cheap）'],
@@ -2735,7 +3140,7 @@ const ASSIGNMENT_LABELS = {
 
 async function loadMeAssignments() {
   const root = document.getElementById('me-assignments-list');
-  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:8px 0">加载中…</div>';
+  root.innerHTML = '<div class="me-section-status">加载中…</div>';
   try {
     const res = await fetch('/api/me/model-assignments');
     const map = await res.json();
@@ -2758,7 +3163,7 @@ async function loadMeAssignments() {
       root.appendChild(row);
     }
   } catch (e) {
-    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:8px 0">${esc(e.message)}</div>`;
+    root.innerHTML = `<div class="me-section-status error">${esc(e.message)}</div>`;
   }
 }
 
@@ -2776,7 +3181,7 @@ async function saveAssignment(taskType, slug) {
 
 async function loadMyProfile() {
   try {
-    const res = await fetch(`/api/me/profile?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/me/profile`);
     const p = await res.json();
     document.getElementById('me-display-name').value = p.display_name ?? '';
     document.getElementById('me-bio').value = p.bio ?? '';
@@ -2792,7 +3197,7 @@ async function saveMyProfile() {
     await fetch('/api/me/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: state.userId, displayName, bio }),
+      body: JSON.stringify({ displayName, bio }),
     });
     const saved = document.getElementById('me-profile-saved');
     saved.hidden = false;
@@ -2803,12 +3208,12 @@ async function saveMyProfile() {
 
 async function loadMyPicks() {
   const root = document.getElementById('me-picks-list');
-  root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:8px 0">加载中…</div>';
+  root.innerHTML = '<div class="me-section-status">加载中…</div>';
   try {
-    const res = await fetch(`/api/me/picks?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/me/picks`);
     const picks = await res.json();
     if (!Array.isArray(picks) || picks.length === 0) {
-      root.innerHTML = '<div style="color:var(--text-4);font-size:12px;padding:14px 0">还没有 AI 收藏</div>';
+      root.innerHTML = '<div class="me-section-status">还没有 AI 收藏</div>';
       return;
     }
     root.innerHTML = '';
@@ -2833,7 +3238,7 @@ async function loadMyPicks() {
       root.appendChild(card);
     }
   } catch (e) {
-    root.innerHTML = `<div style="color:var(--red);font-size:12px;padding:8px 0">加载失败：${esc(e.message)}</div>`;
+    root.innerHTML = `<div class="me-section-status error">加载失败：${esc(e.message)}</div>`;
   }
 }
 
@@ -2847,7 +3252,7 @@ async function addManualPick() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: state.userId, title,
+        title,
         url: url || undefined,
         summary: summary || undefined,
       }),
@@ -2866,21 +3271,179 @@ async function removePick(id) {
   } catch (e) { alert('删除失败：' + e.message); }
 }
 
+// ── Skills (Anthropic-style Agent Skills) ───────────────────────────────────
+// Skill rows live in the 「我」 tab as a per-user catalog. Toggling `enabled`
+// flips whether the skill body gets stitched into the system prompt at chat
+// time. Bundled presets (source = anthropic/skills:*) are seeded disabled on
+// first GET; the user opts in.
+
+async function loadMySkills() {
+  const root = document.getElementById('me-skills-list');
+  if (!root) return;
+  root.innerHTML = '<div class="me-section-status">加载中…</div>';
+  try {
+    const res = await fetch('/api/skills');
+    const skills = await res.json();
+    if (!Array.isArray(skills) || skills.length === 0) {
+      root.innerHTML = '<div class="me-section-status">还没有技能。展开下面的「新建技能」来添加，或刷新预设。</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const s of skills) root.appendChild(renderSkillCard(s));
+  } catch (e) {
+    root.innerHTML = `<div class="me-section-status error">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderSkillCard(s) {
+  const card = document.createElement('div');
+  card.className = 'skill-card' + (s.enabled ? ' enabled' : '');
+  card.dataset.id = s.id;
+
+  const sourceLine = s.is_preset && s.source_url
+    ? `<span class="skill-source">来自 <a href="${esc(s.source_url)}" target="_blank" rel="noopener">${esc(s.source || '')}</a></span>`
+    : (s.source && s.source !== 'user' ? `<span class="skill-source">${esc(s.source)}</span>` : '<span class="skill-source">本地</span>');
+  const licenseLine = s.license ? `<span class="skill-license">${esc(s.license)}</span>` : '';
+
+  card.innerHTML = `
+    <div class="skill-head">
+      <label class="skill-toggle">
+        <input type="checkbox" ${s.enabled ? 'checked' : ''}>
+        <span class="skill-name">${esc(s.name)}</span>
+      </label>
+      <div class="skill-meta-actions">
+        <button class="btn-soft skill-edit-btn">编辑</button>
+        <button class="btn-soft danger skill-del-btn">删除</button>
+      </div>
+    </div>
+    ${s.description ? `<div class="skill-desc">${esc(s.description)}</div>` : ''}
+    <div class="skill-meta">
+      ${sourceLine}
+      ${licenseLine}
+      <span class="skill-meta-len">${s.body_length} 字符</span>
+    </div>
+    <div class="skill-edit" hidden></div>
+  `;
+
+  card.querySelector('.skill-toggle input').addEventListener('change', (ev) => {
+    toggleSkillEnabled(s.id, ev.target.checked);
+  });
+  card.querySelector('.skill-edit-btn').addEventListener('click', () => {
+    openSkillEditor(card, s.id);
+  });
+  card.querySelector('.skill-del-btn').addEventListener('click', () => {
+    deleteSkillCard(s);
+  });
+  return card;
+}
+
+async function toggleSkillEnabled(id, enabled) {
+  try {
+    await fetch(`/api/skills/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const card = document.querySelector(`.skill-card[data-id="${id}"]`);
+    if (card) card.classList.toggle('enabled', enabled);
+  } catch (e) {
+    alert('保存失败：' + e.message);
+    loadMySkills();
+  }
+}
+
+async function openSkillEditor(card, id) {
+  const slot = card.querySelector('.skill-edit');
+  if (!slot.hidden) { slot.hidden = true; slot.innerHTML = ''; return; }
+  slot.innerHTML = '<div class="me-section-status">加载中…</div>';
+  slot.hidden = false;
+  try {
+    const res = await fetch(`/api/skills/${id}`);
+    const full = await res.json();
+    slot.innerHTML = `
+      <div class="me-form">
+        <label>名称<input type="text" class="sk-edit-name" value="${esc(full.name)}" maxlength="64"></label>
+        <label>描述<input type="text" class="sk-edit-desc" value="${esc(full.description || '')}" maxlength="280"></label>
+        <label>正文（Markdown）<textarea class="sk-edit-body" rows="14">${esc(full.body || '')}</textarea></label>
+        <div style="display:flex;gap:8px">
+          <button class="btn-primary sk-save">保存</button>
+          <button class="btn-soft sk-cancel">取消</button>
+        </div>
+      </div>
+    `;
+    slot.querySelector('.sk-save').addEventListener('click', async () => {
+      const patch = {
+        name: slot.querySelector('.sk-edit-name').value.trim(),
+        description: slot.querySelector('.sk-edit-desc').value,
+        body: slot.querySelector('.sk-edit-body').value,
+      };
+      try {
+        const r = await fetch(`/api/skills/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        loadMySkills();
+      } catch (e) { alert('保存失败：' + e.message); }
+    });
+    slot.querySelector('.sk-cancel').addEventListener('click', () => {
+      slot.hidden = true; slot.innerHTML = '';
+    });
+  } catch (e) {
+    slot.innerHTML = `<div class="me-section-status error">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function deleteSkillCard(s) {
+  const note = s.is_preset
+    ? `删除「${s.name}」预设？再次刷新会从预设重新拉回（如果你没改过）。`
+    : `删除技能「${s.name}」？此操作不可撤销。`;
+  if (!confirm(note)) return;
+  try {
+    await fetch(`/api/skills/${s.id}`, { method: 'DELETE' });
+    loadMySkills();
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
+async function createSkillFromForm() {
+  const name = document.getElementById('me-skill-new-name').value.trim();
+  const description = document.getElementById('me-skill-new-desc').value.trim();
+  const body = document.getElementById('me-skill-new-body').value;
+  if (!name) { alert('请填名称'); return; }
+  try {
+    const r = await fetch('/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, body, enabled: true }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${r.status}`);
+    }
+    document.getElementById('me-skill-new-name').value = '';
+    document.getElementById('me-skill-new-desc').value = '';
+    document.getElementById('me-skill-new-body').value = '';
+    loadMySkills();
+  } catch (e) { alert('创建失败：' + e.message); }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 //  冲浪 (Surf) — each conv = one run. List + create modal + live log view.
 // ──────────────────────────────────────────────────────────────────────────
 
 const surfTabState = {
   current: null,            // hydrated surf conv (with run record)
-  modalModelHostMounted: false,
   modalSelectedSource: '',  // optional source message conv id
   modalModelSlug: '',
-  modelPicker: null,
 };
 
 async function loadSurfConversations() {
   try {
-    const res = await fetch(`/api/surf/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/surf/conversations`);
     state.convsByTab.surf = await res.json();
     if (!Array.isArray(state.convsByTab.surf)) state.convsByTab.surf = [];
   } catch (e) {
@@ -2922,9 +3485,7 @@ function renderSurfConvItem(conv) {
     </span>
     <span class="conv-actions">
       <button title="删除" class="danger" data-act="delete">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        </svg>
+          <svg width="12" height="12"><use href="#icon-trash"/></svg>
       </button>
     </span>
   `;
@@ -2945,14 +3506,7 @@ async function selectSurfConv(convId) {
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
-
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('placeholder-view').style.display = 'none';
-  document.getElementById('me-view').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'none';
-  document.getElementById('debate-view').style.display = 'none';
-  document.getElementById('portrait-view').style.display = 'none';
-  document.getElementById('surf-view').style.display = 'flex';
+  applyTabView();
 
   try {
     const res = await fetch(`/api/surf/conversations/${convId}`);
@@ -3106,75 +3660,46 @@ async function stopCurrentSurf() {
 // ── Surf modal (create new surf) ──
 
 async function openSurfModal() {
-  const host = document.getElementById('surf-modal-model-host');
-  if (!surfTabState.modalModelHostMounted) {
-    surfTabState.modelPicker = createModelPicker({
-      value: '',
-      placeholder: '默认（系统的「冲浪」分配）',
-      allowCustomSlug: true,
-      onChange: (slug) => { surfTabState.modalModelSlug = slug || ''; },
-    });
-    host.appendChild(surfTabState.modelPicker);
-    surfTabState.modalModelHostMounted = true;
-  } else if (surfTabState.modelPicker) {
-    surfTabState.modelPicker.setValue('');
-  }
+  ensureModelPicker(document.getElementById('surf-modal-model-host'), {
+    value: '',
+    placeholder: '默认（系统的「冲浪」分配）',
+    allowCustomSlug: true,
+    onChange: (slug) => { surfTabState.modalModelSlug = slug || ''; },
+  });
   surfTabState.modalSelectedSource = '';
   surfTabState.modalModelSlug = '';
   document.getElementById('surf-modal-budget').value = '10';
 
-  // Reset vector-direction controls each time the modal opens.
+  // Reset vector-direction controls each time the modal opens. Re-running
+  // onSurfDirectionChange() after the radio reset keeps the manual-fields
+  // visibility in sync with the radio (otherwise a leftover state from a
+  // prior open could show the wrong subset).
   const autoRadio = document.querySelector('input[name="surf-direction"][value="auto"]');
   if (autoRadio) autoRadio.checked = true;
-  document.getElementById('surf-manual-fields').style.display = 'none';
   document.getElementById('surf-modal-vector-topic').value = '';
   document.getElementById('surf-modal-vector-mode').value = 'depth';
   document.getElementById('surf-modal-vector-fresh').value = '';
-  document.getElementById('surf-modal-vector-fresh').style.display = 'none';
+  onSurfDirectionChange();
 
   // Load source candidates
   const list = document.getElementById('surf-modal-source-list');
-  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
   document.getElementById('surf-modal').style.display = 'flex';
   try {
-    const res = await fetch(`/api/surf/sources?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/surf/sources`);
     const sources = await res.json();
-    list.innerHTML = '';
-    const noneRow = document.createElement('div');
-    noneRow.className = 'source-list-row';
-    noneRow.innerHTML = `<span class="sl-title">— 不绑定（自由冲浪） —</span><span class="sl-meta">planner 几乎无上下文</span>`;
-    noneRow.addEventListener('click', () => {
-      surfTabState.modalSelectedSource = '';
-      list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
-      noneRow.classList.add('selected');
+    renderSourcePicker(list, sources, {
+      withNoneRow: true,
+      noneLabel: '— 不绑定（自由冲浪） —',
+      noneHint: 'planner 几乎无上下文',
+      onPick: (id) => { surfTabState.modalSelectedSource = id; },
     });
-    noneRow.classList.add('selected');
-    list.appendChild(noneRow);
-    if (Array.isArray(sources)) {
-      for (const conv of sources) {
-        const row = document.createElement('div');
-        row.className = 'source-list-row';
-        row.innerHTML = `
-          <span class="sl-title">${esc(conv.title || '新对话')}</span>
-          <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
-        `;
-        row.addEventListener('click', () => {
-          surfTabState.modalSelectedSource = conv.id;
-          list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
-          row.classList.add('selected');
-        });
-        list.appendChild(row);
-      }
-    }
   } catch (e) {
-    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+    list.innerHTML = `<div class="modal-status-row error">加载失败：${esc(e.message)}</div>`;
   }
 }
 
-function closeSurfModal(e) {
-  if (e && e.target.id !== 'surf-modal') return;
-  document.getElementById('surf-modal').style.display = 'none';
-}
+function closeSurfModal(e) { closeModal('surf-modal', e); }
 
 function onSurfDirectionChange() {
   const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
@@ -3191,7 +3716,6 @@ async function submitSurfModal() {
   const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
   const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
   const body = {
-    userId: state.userId,
     autoStart: true,
   };
   if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
@@ -3228,64 +3752,14 @@ async function submitSurfModal() {
   } catch (e) { alert('创建失败：' + e.message); }
 }
 
-// ── Hooks into the app shell ──
-
-const __origLoadConversations3 = loadConversations;
-loadConversations = async function() {
-  if (state.currentTab === 'surf') { await loadSurfConversations(); return; }
-  return __origLoadConversations3();
-};
-
-const __origRenderConvList3 = renderConvList;
-renderConvList = function() {
-  if (state.currentTab !== 'surf') return __origRenderConvList3();
-  const list = document.getElementById('conv-list');
-  list.innerHTML = '';
-  const convs = state.conversations;
-  if (convs.length === 0) {
-    list.innerHTML = '<div class="conv-empty">还没有冲浪<br>点上面「新对话」开启一次</div>';
-    return;
-  }
-  for (const c of convs) list.appendChild(renderSurfConvItem(c));
-};
-
-const __origOnNewChatClick3 = onNewChatClick;
-onNewChatClick = function(e) {
-  if (state.currentTab === 'surf') {
-    if (e) e.stopPropagation();
-    openSurfModal();
-    return;
-  }
-  return __origOnNewChatClick3(e);
-};
-
-const __origSelectConversation3 = selectConversation;
-selectConversation = function(convId) {
-  if (state.currentTab === 'surf') { selectSurfConv(convId); return; }
-  __origSelectConversation3(convId);
-};
-
-const __origApplyTabView2 = applyTabView;
-applyTabView = function() {
-  if (state.currentTab === 'surf') {
-    document.getElementById('chat-view').style.display = 'none';
-    document.getElementById('debate-view').style.display = 'none';
-    document.getElementById('portrait-view').style.display = 'none';
-    document.getElementById('me-view').style.display = 'none';
-    document.getElementById('placeholder-view').style.display = 'none';
-    if (state.currentConversationId) {
-      document.getElementById('empty-state').style.display = 'none';
-      document.getElementById('surf-view').style.display = 'flex';
-    } else {
-      document.getElementById('surf-view').style.display = 'none';
-      document.getElementById('empty-state').style.display = 'flex';
-      const txt = document.getElementById('empty-state-text');
-      if (txt) txt.textContent = '点「新对话」开启一次冲浪';
-    }
-    return;
-  }
-  document.getElementById('surf-view').style.display = 'none';
-  return __origApplyTabView2();
+TAB_REGISTRY.surf = {
+  view: 'surf',
+  loadConvs: loadSurfConversations,
+  renderItem: renderSurfConvItem,
+  selectConv: selectSurfConv,
+  onNewChat: (e) => { if (e) e.stopPropagation(); openSurfModal(); },
+  emptyHint: '还没有冲浪\n点上面「新对话」开启一次',
+  emptyHintNoSel: '点「新对话」开启一次冲浪',
 };
 
 
@@ -3295,15 +3769,14 @@ applyTabView = function() {
 
 const reviewTabState = {
   current: null,
-  modelPicker: null,
-  modelPickerMounted: false,
+  sawUserMsg: false,        // toggles bubble style for bot messages
   modalSelectedSource: '',
   modalModelSlug: '',
 };
 
 async function loadReviewConversations() {
   try {
-    const res = await fetch(`/api/review/conversations?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/review/conversations`);
     state.convsByTab.review = await res.json();
     if (!Array.isArray(state.convsByTab.review)) state.convsByTab.review = [];
   } catch (e) {
@@ -3332,9 +3805,7 @@ function renderReviewConvItem(conv) {
     </span>
     <span class="conv-actions">
       <button title="删除" class="danger" data-act="delete">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-        </svg>
+          <svg width="12" height="12"><use href="#icon-trash"/></svg>
       </button>
     </span>
   `;
@@ -3355,15 +3826,12 @@ async function selectReviewConv(convId) {
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.convId === convId);
   });
+  applyTabView();
 
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('placeholder-view').style.display = 'none';
-  document.getElementById('me-view').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'none';
-  document.getElementById('debate-view').style.display = 'none';
-  document.getElementById('portrait-view').style.display = 'none';
-  document.getElementById('surf-view').style.display = 'none';
-  document.getElementById('review-view').style.display = 'flex';
+  // Reset per-conv local state — without this, switching from a conv with
+  // user followups to one without leaves sawUserMsg=true and the first bot
+  // bubble renders as a chat reply instead of the formal review conclusion.
+  reviewTabState.sawUserMsg = false;
 
   try {
     const res = await fetch(`/api/review/conversations/${convId}`);
@@ -3371,12 +3839,18 @@ async function selectReviewConv(convId) {
   } catch { reviewTabState.current = null; }
   updateReviewHeader();
 
+  // The first bot message in a review conv is the structured self-review
+  // conclusion (formal bubble); any bot message *after* a user followup is a
+  // chat reply. sawUserMsg drives that switch in appendReviewRow.
   try {
     const res = await fetch(`/api/review/conversations/${convId}/messages`);
     const msgs = await res.json();
     const log = document.getElementById('review-log');
     log.innerHTML = '';
-    for (const m of msgs) appendReviewRow(m);
+    for (const m of msgs) {
+      appendReviewRow(m);
+      if (m.sender_type === 'user') reviewTabState.sawUserMsg = true;
+    }
     scrollReviewToBottom();
   } catch (e) { console.error('load review msgs:', e); }
 }
@@ -3403,14 +3877,26 @@ function updateReviewHeader() {
 function appendReviewRow(m) {
   const log = document.getElementById('review-log');
   if (!log) return;
-  const isResult = (m.sender_type === 'bot') || (m.sender_id || '').endsWith(':conclusion');
-  if (isResult && m.sender_type === 'bot') {
+
+  if (m.sender_type === 'user') {
     const b = document.createElement('div');
-    b.className = 'review-result-bubble';
+    b.className = 'review-user-bubble';
     b.textContent = m.content;
     log.appendChild(b);
     return;
   }
+
+  if (m.sender_type === 'bot') {
+    // First bot message = formal self-review conclusion. Anything after a
+    // user follow-up is a chat reply (rendered as a normal bubble).
+    const isFollowup = reviewTabState.sawUserMsg;
+    const b = document.createElement('div');
+    b.className = isFollowup ? 'review-bot-bubble' : 'review-result-bubble';
+    b.textContent = m.content;
+    log.appendChild(b);
+    return;
+  }
+
   const row = document.createElement('div');
   const isError = (m.sender_id || '').endsWith(':error');
   row.className = 'surf-log-line' + (isError ? ' error' : '');
@@ -3458,6 +3944,60 @@ window.handleReviewSseDone = function (data) {
   }
 };
 
+async function sendReviewMessage() {
+  const input = document.getElementById('review-msg-input');
+  if (!input) return;
+  const content = input.value.trim();
+  if (!content) return;
+  if (!state.currentConversationId) return;
+
+  const convId = state.currentConversationId;
+
+  // Optimistic render — append user bubble immediately so the screen feels
+  // responsive. The next loadReview… reload (from SSE 'done') will reconcile.
+  appendReviewRow({
+    sender_type: 'user',
+    sender_id: 'me',
+    content,
+    created_at: Math.floor(Date.now() / 1000),
+  });
+  reviewTabState.sawUserMsg = true;
+  scrollReviewToBottom();
+
+  input.value = '';
+  autoResize(input);
+
+  try {
+    const res = await fetch(`/api/review/conversations/${convId}/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert('发送失败：' + (err.error || res.status));
+    }
+  } catch (e) {
+    alert('发送失败：' + e.message);
+  }
+}
+
+function setupReviewInput() {
+  const input = document.getElementById('review-msg-input');
+  if (!input || input.dataset.wired === '1') return;
+  input.dataset.wired = '1';
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendReviewMessage();
+    }
+  });
+  input.addEventListener('input', () => autoResize(input));
+}
+// Wire the review input once the DOM is ready. This file runs at the bottom
+// of the body, so the textarea already exists by now.
+setupReviewInput();
+
 async function deleteReviewConv(convId) {
   if (!confirm('删除这次回顾？')) return;
   try {
@@ -3484,66 +4024,36 @@ async function rerunCurrentReview() {
 // ── Review modal ──
 
 async function openReviewModal() {
-  const host = document.getElementById('review-modal-model-host');
-  if (!reviewTabState.modelPickerMounted) {
-    reviewTabState.modelPicker = createModelPicker({
-      value: '',
-      placeholder: '默认（系统的「会话内自审」分配）',
-      allowCustomSlug: true,
-      onChange: (slug) => { reviewTabState.modalModelSlug = slug || ''; },
-    });
-    host.appendChild(reviewTabState.modelPicker);
-    reviewTabState.modelPickerMounted = true;
-  } else if (reviewTabState.modelPicker) {
-    reviewTabState.modelPicker.setValue('');
-  }
+  ensureModelPicker(document.getElementById('review-modal-model-host'), {
+    value: '',
+    placeholder: '默认（系统的「会话内自审」分配）',
+    allowCustomSlug: true,
+    onChange: (slug) => { reviewTabState.modalModelSlug = slug || ''; },
+  });
   reviewTabState.modalSelectedSource = '';
   reviewTabState.modalModelSlug = '';
 
   const list = document.getElementById('review-modal-source-list');
-  list.innerHTML = '<div style="padding:14px;color:var(--text-4);font-size:12px">加载中…</div>';
+  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
   document.getElementById('review-modal').style.display = 'flex';
   try {
-    const res = await fetch(`/api/review/sources?userId=${encodeURIComponent(state.userId)}`);
+    const res = await fetch(`/api/review/sources`);
     const sources = await res.json();
-    list.innerHTML = '';
-    const noneRow = document.createElement('div');
-    noneRow.className = 'source-list-row selected';
-    noneRow.innerHTML = '<span class="sl-title">— 不绑定（自由回顾） —</span><span class="sl-meta">仅基于本回顾会话历史</span>';
-    noneRow.addEventListener('click', () => {
-      reviewTabState.modalSelectedSource = '';
-      list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
-      noneRow.classList.add('selected');
+    renderSourcePicker(list, sources, {
+      withNoneRow: true,
+      noneLabel: '— 不绑定（自由回顾） —',
+      noneHint: '仅基于本回顾会话历史',
+      onPick: (id) => { reviewTabState.modalSelectedSource = id; },
     });
-    list.appendChild(noneRow);
-    if (Array.isArray(sources)) {
-      for (const conv of sources) {
-        const row = document.createElement('div');
-        row.className = 'source-list-row';
-        row.innerHTML = `
-          <span class="sl-title">${esc(conv.title || '新对话')}</span>
-          <span class="sl-meta">${conv.round_count ?? 0} 轮 · ${relTime(conv.last_activity_at)}</span>
-        `;
-        row.addEventListener('click', () => {
-          reviewTabState.modalSelectedSource = conv.id;
-          list.querySelectorAll('.source-list-row').forEach(r => r.classList.remove('selected'));
-          row.classList.add('selected');
-        });
-        list.appendChild(row);
-      }
-    }
   } catch (e) {
-    list.innerHTML = `<div style="padding:14px;color:var(--text-4)">加载失败：${esc(e.message)}</div>`;
+    list.innerHTML = `<div class="modal-status-row error">加载失败：${esc(e.message)}</div>`;
   }
 }
 
-function closeReviewModal(e) {
-  if (e && e.target.id !== 'review-modal') return;
-  document.getElementById('review-modal').style.display = 'none';
-}
+function closeReviewModal(e) { closeModal('review-modal', e); }
 
 async function submitReviewModal() {
-  const body = { userId: state.userId, autoStart: true };
+  const body = { autoStart: true };
   if (reviewTabState.modalSelectedSource) body.sourceMessageConversationId = reviewTabState.modalSelectedSource;
   if (reviewTabState.modalModelSlug) body.modelSlug = reviewTabState.modalModelSlug;
   try {
@@ -3561,63 +4071,230 @@ async function submitReviewModal() {
   } catch (e) { alert('创建失败：' + e.message); }
 }
 
-// ── Hooks ──
-
-const __origLoadConversations4 = loadConversations;
-loadConversations = async function() {
-  if (state.currentTab === 'review') { await loadReviewConversations(); return; }
-  return __origLoadConversations4();
+TAB_REGISTRY.review = {
+  view: 'review',
+  loadConvs: loadReviewConversations,
+  renderItem: renderReviewConvItem,
+  selectConv: selectReviewConv,
+  onNewChat: (e) => { if (e) e.stopPropagation(); openReviewModal(); },
+  emptyHint: '还没有回顾\n点上面「新对话」开启一次',
+  emptyHintNoSel: '点「新对话」开启一次回顾',
 };
 
-const __origRenderConvList4 = renderConvList;
-renderConvList = function() {
-  if (state.currentTab !== 'review') return __origRenderConvList4();
-  const list = document.getElementById('conv-list');
-  list.innerHTML = '';
-  const convs = state.conversations;
-  if (convs.length === 0) {
-    list.innerHTML = '<div class="conv-empty">还没有回顾<br>点上面「新对话」开启一次</div>';
-    return;
-  }
-  for (const c of convs) list.appendChild(renderReviewConvItem(c));
-};
+// ── Auth: logout + admin panel ────────────────────────────────────────────
 
-const __origOnNewChatClick4 = onNewChatClick;
-onNewChatClick = function(e) {
-  if (state.currentTab === 'review') {
-    if (e) e.stopPropagation();
-    openReviewModal();
-    return;
-  }
-  return __origOnNewChatClick4(e);
-};
+async function logoutAndReload() {
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+  } catch {}
+  // Reload — bootAuth will see no cookie and render the login screen.
+  location.replace(location.pathname);
+}
 
-const __origSelectConversation4 = selectConversation;
-selectConversation = function(convId) {
-  if (state.currentTab === 'review') { selectReviewConv(convId); return; }
-  __origSelectConversation4(convId);
-};
+// Admin panel — three-tab modal styled with the same .modal-* classes as
+// the rest of the app (avoids the inline-style mess and matches dark mode).
+async function showAdminPanel() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'admin-modal';
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `
+    <div class="modal-card admin-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-head">
+        <span>管理后台</span>
+        <button class="modal-close" data-close aria-label="关闭">×</button>
+      </div>
+      <div class="admin-tabs" role="tablist">
+        <button class="admin-tab active" data-pane="invites" role="tab">邀请</button>
+        <button class="admin-tab" data-pane="users" role="tab">用户</button>
+        <button class="admin-tab" data-pane="audit" role="tab">Token 用量</button>
+      </div>
+      <div class="modal-body">
+        <div class="admin-pane active" data-pane="invites">
+          <div class="admin-create-row">
+            <input id="admin-invite-note" placeholder="备注（可选，比如：给老婆）">
+            <button id="admin-invite-create" class="btn-primary">新建邀请</button>
+          </div>
+          <div id="admin-invite-list"></div>
+        </div>
+        <div class="admin-pane" data-pane="users">
+          <div id="admin-user-list"></div>
+        </div>
+        <div class="admin-pane" data-pane="audit">
+          <div id="admin-audit-table"></div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
 
-const __origApplyTabView3 = applyTabView;
-applyTabView = function() {
-  if (state.currentTab === 'review') {
-    document.getElementById('chat-view').style.display = 'none';
-    document.getElementById('debate-view').style.display = 'none';
-    document.getElementById('portrait-view').style.display = 'none';
-    document.getElementById('surf-view').style.display = 'none';
-    document.getElementById('me-view').style.display = 'none';
-    document.getElementById('placeholder-view').style.display = 'none';
-    if (state.currentConversationId) {
-      document.getElementById('empty-state').style.display = 'none';
-      document.getElementById('review-view').style.display = 'flex';
-    } else {
-      document.getElementById('review-view').style.display = 'none';
-      document.getElementById('empty-state').style.display = 'flex';
-      const txt = document.getElementById('empty-state-text');
-      if (txt) txt.textContent = '点「新对话」开启一次回顾';
+  overlay.addEventListener('click', (e) => {
+    if (e.target.dataset.close !== undefined || e.target === overlay) overlay.remove();
+  });
+  overlay.querySelectorAll('.admin-tab').forEach(t => t.addEventListener('click', () => {
+    overlay.querySelectorAll('.admin-tab').forEach(x => x.classList.toggle('active', x === t));
+    overlay.querySelectorAll('.admin-pane').forEach(p =>
+      p.classList.toggle('active', p.dataset.pane === t.dataset.pane));
+  }));
+  document.getElementById('admin-invite-create').addEventListener('click', adminCreateInvite);
+  document.getElementById('admin-invite-note').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') adminCreateInvite();
+  });
+
+  await Promise.all([adminLoadInvites(), adminLoadUsers(), adminLoadAudit()]);
+}
+
+function adminFormatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function adminLoadInvites() {
+  const root = document.getElementById('admin-invite-list');
+  if (!root) return;
+  root.innerHTML = '<div class="admin-empty">加载中…</div>';
+  try {
+    const r = await fetch('/api/invites');
+    const list = await r.json();
+    if (!Array.isArray(list) || list.length === 0) {
+      root.innerHTML = '<div class="admin-empty">还没有邀请，新建一条发出去吧</div>';
+      return;
     }
-    return;
+    root.innerHTML = '';
+    for (const inv of list) {
+      const used = !!inv.redeemed_at;
+      const tag = used
+        ? '<span class="admin-tag admin-tag-used">已用</span>'
+        : '<span class="admin-tag admin-tag-pending">待用</span>';
+      const note = inv.note ? esc(inv.note) : '<span style="color:var(--text-4)">（无备注）</span>';
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      row.innerHTML = `
+        <div class="admin-row-main">
+          <div class="admin-row-title">${note} ${tag}</div>
+          <div class="admin-row-sub">${esc(inv.share_url)}</div>
+          <div class="admin-row-meta">建于 ${esc(adminFormatTime(inv.created_at))}${used ? ' · 已被兑换' : ''}</div>
+        </div>
+        <div class="admin-row-actions">
+          ${used ? '' : `<button class="btn-mini" data-copy="${esc(inv.share_url)}">复制链接</button>`}
+          ${used ? '' : `<button class="btn-mini danger" data-revoke="${esc(inv.id)}">撤销</button>`}
+        </div>`;
+      root.appendChild(row);
+    }
+    root.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', () => {
+      navigator.clipboard.writeText(b.dataset.copy);
+      const original = b.textContent;
+      b.textContent = '已复制';
+      setTimeout(() => { b.textContent = original; }, 1200);
+    }));
+    root.querySelectorAll('[data-revoke]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('撤销这条邀请？')) return;
+      await fetch(`/api/invites/${b.dataset.revoke}`, { method: 'DELETE' });
+      adminLoadInvites();
+    }));
+  } catch (e) {
+    root.innerHTML = `<div class="admin-empty">加载失败：${esc(e.message)}</div>`;
   }
-  document.getElementById('review-view').style.display = 'none';
-  return __origApplyTabView3();
-};
+}
+
+async function adminCreateInvite() {
+  const input = document.getElementById('admin-invite-note');
+  const note = input.value.trim();
+  try {
+    const r = await fetch('/api/invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note || undefined }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert('创建失败：' + (j.error || r.status));
+      return;
+    }
+    input.value = '';
+    adminLoadInvites();
+  } catch (e) { alert('创建失败：' + e.message); }
+}
+
+async function adminLoadUsers() {
+  const root = document.getElementById('admin-user-list');
+  if (!root) return;
+  root.innerHTML = '<div class="admin-empty">加载中…</div>';
+  try {
+    const r = await fetch('/api/admin/users');
+    const list = await r.json();
+    const visible = (Array.isArray(list) ? list : []).filter(u => u.channel !== 'system');
+    if (visible.length === 0) {
+      root.innerHTML = '<div class="admin-empty">还没有用户</div>';
+      return;
+    }
+    root.innerHTML = '';
+    for (const u of visible) {
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      const adminTag = u.is_admin ? '<span class="admin-tag admin-tag-admin">admin</span>' : '';
+      const channelTag = `<span class="admin-tag admin-tag-system">${esc(u.channel)}</span>`;
+      row.innerHTML = `
+        <div class="admin-row-main">
+          <div class="admin-row-title">${esc(u.display_name)} ${adminTag} ${channelTag}</div>
+          <div class="admin-row-meta">加入于 ${esc(adminFormatTime(u.created_at))}</div>
+        </div>
+        <div class="admin-row-actions">
+          <button class="btn-mini" data-toggle="${esc(u.id)}" data-cur="${u.is_admin ? 1 : 0}">
+            ${u.is_admin ? '降为普通' : '设为 admin'}
+          </button>
+        </div>`;
+      root.appendChild(row);
+    }
+    root.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => {
+      const next = b.dataset.cur === '1' ? false : true;
+      const r = await fetch(`/api/admin/users/${b.dataset.toggle}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAdmin: next }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(j.error || `失败 (${r.status})`);
+        return;
+      }
+      adminLoadUsers();
+    }));
+  } catch (e) {
+    root.innerHTML = `<div class="admin-empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function adminLoadAudit() {
+  const root = document.getElementById('admin-audit-table');
+  if (!root) return;
+  root.innerHTML = '<div class="admin-empty">加载中…</div>';
+  try {
+    const r = await fetch('/api/admin/audit/summary?groupBy=user');
+    const rows = await r.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      root.innerHTML = '<div class="admin-empty">还没有 token 记录</div>';
+      return;
+    }
+    const thead = `<thead><tr>
+      <th>用户</th>
+      <th class="num">调用</th>
+      <th class="num">输入</th>
+      <th class="num">输出</th>
+      <th class="num">合计</th>
+      <th class="num">cost ($)</th>
+    </tr></thead>`;
+    const tbody = rows.map(row => `<tr>
+      <td>${esc(row.group_label || row.group_key || '—')}</td>
+      <td class="num">${row.count ?? 0}</td>
+      <td class="num">${(row.total_input ?? 0).toLocaleString()}</td>
+      <td class="num">${(row.total_output ?? 0).toLocaleString()}</td>
+      <td class="num-strong">${(row.total_tokens ?? 0).toLocaleString()}</td>
+      <td class="num">${row.total_cost != null ? Number(row.total_cost).toFixed(4) : '—'}</td>
+    </tr>`).join('');
+    root.innerHTML = `<table class="admin-table">${thead}<tbody>${tbody}</tbody></table>`;
+  } catch (e) {
+    root.innerHTML = `<div class="admin-empty">加载失败：${esc(e.message)}</div>`;
+  }
+}

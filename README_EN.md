@@ -265,10 +265,57 @@ Steps:
 
 The iOS userId is independent from the web — the same person sees two separate conversation histories on iOS vs. the web UI.
 
+## Skills
+
+The 「我」 tab has a Skills section where you can manage Anthropic-style [Agent Skills](https://github.com/anthropics/skills) — markdown instruction fragments with YAML frontmatter that get stitched into the system prompt at chat time when enabled.
+
+On first visit a few presets from [`anthropic/skills`](https://github.com/anthropics/skills) (Apache-2.0) are seeded into your catalog disabled by default:
+
+| Preset | Source |
+|--------|--------|
+| `skill-creator`     | https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md |
+| `mcp-builder`       | https://github.com/anthropics/skills/blob/main/skills/mcp-builder/SKILL.md |
+| `doc-coauthoring`   | https://github.com/anthropics/skills/blob/main/skills/doc-coauthoring/SKILL.md |
+| `internal-comms`    | https://github.com/anthropics/skills/blob/main/skills/internal-comms/SKILL.md |
+| `brand-guidelines`  | https://github.com/anthropics/skills/blob/main/skills/brand-guidelines/SKILL.md |
+| `theme-factory`     | https://github.com/anthropics/skills/blob/main/skills/theme-factory/SKILL.md |
+
+Preset SKILL.md files are vendored verbatim under [`main/prompts/skills/anthropic/`](main/prompts/skills/anthropic/) with a [NOTICE.md](main/prompts/skills/anthropic/NOTICE.md) describing provenance and license. Presets refresh from disk on next bundle update **only if** you haven't edited the body; locally-modified presets are left alone.
+
+You can also write your own skills via "新建技能" — just name, one-line description, Markdown body.
+
 ## Stack
 
 Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket
 
+## Credits & third-party components
+
+Beyond first-party code, this project uses the following open-source components. All rights belong to their original authors.
+
+**Runtime dependencies**
+
+- [Bun](https://bun.sh) — MIT
+- [Hono](https://hono.dev) — MIT
+- [OpenAI Node SDK](https://github.com/openai/openai-node) — Apache-2.0
+- [Honcho SDK](https://github.com/plastic-labs/honcho) — Apache-2.0
+- [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk) — MIT
+- [Zod](https://github.com/colinhacks/zod) — MIT
+- [yaml (eemeli)](https://github.com/eemeli/yaml) — ISC
+- [node-qrcode](https://github.com/soldair/node-qrcode) — MIT
+- [Playwright](https://github.com/microsoft/playwright) — Apache-2.0 (dev / scripts only)
+
+**External services**
+
+- [OpenRouter](https://openrouter.ai) — model routing
+- [Jina AI](https://jina.ai) — search / fetch (MCP)
+- Optional: Telegram Bot API, Feishu Open Platform, Apple Push Notification service
+
+**Bundled skill presets**
+
+- [anthropic/skills](https://github.com/anthropics/skills) — Apache-2.0 © Anthropic, PBC. See [main/prompts/skills/anthropic/NOTICE.md](main/prompts/skills/anthropic/NOTICE.md).
+
+Please open an issue if anything is missing.
+
 ## License
 
-MIT
+This repository's own code is released under the MIT License. Third-party components retain their original licenses (see above).
