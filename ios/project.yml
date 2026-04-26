@@ -65,6 +65,10 @@ targets:
         CFBundleDisplayName: PendingBot
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 跳过 App Store Connect 上传后那个 "Missing Compliance / Manage" 步骤。
+        # 我们只用 HTTPS / Keychain 这些 Apple 系统加密，没有自研加密，所以填 false
+        # 就等于回答了"Does your app use encryption? No"。
+        ITSAppUsesNonExemptEncryption: false
         # Cold-start screen — cream background with the brand mark centered.
         # Anything else (text, indicators, app name) is intentionally absent.
         UILaunchScreen:
