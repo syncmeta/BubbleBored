@@ -1015,6 +1015,13 @@ export function findInviteById(id: string): InviteRow | null {
   ).get(id);
 }
 
+export function findLatestBootstrapInvite(): InviteRow | null {
+  return getDb().query<InviteRow, []>(
+    `SELECT * FROM invites WHERE id LIKE 'bootstrap\\_%' ESCAPE '\\'
+     ORDER BY created_at DESC LIMIT 1`
+  ).get();
+}
+
 export function listInvites(): InviteRow[] {
   return getDb().query<InviteRow, []>(
     'SELECT * FROM invites ORDER BY created_at DESC'

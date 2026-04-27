@@ -31,7 +31,7 @@ import {
 } from './api/_helpers';
 import {
   countAdmins, createInvite, findApiKeyByHash, findUserById,
-  findConversationById,
+  findConversationById, findLatestBootstrapInvite,
 } from './db/queries';
 import { randomUUID, randomBytes } from 'crypto';
 import { base64UrlEncode } from './api/_helpers';
@@ -51,43 +51,45 @@ console.log('[init] config loaded');
 getDb();
 console.log('[init] database ready');
 
-// Bootstrap admin: when no admin exists yet (fresh install or post-wipe),
-// mint a one-shot invite and print the URL to stdout. The first user to
-// redeem it becomes admin (handled in invites.ts redeem path).
+// Bootstrap admin: mint (or recover) a reusable invite link. The token is
+// printed on every startup so a self-host operator who lost the URL can
+// re-claim admin access. Each redeem creates a new admin user (handled in
+// invites.ts) — the link itself never expires or burns.
 ensureBootstrapAdminInvite();
 
 function ensureBootstrapAdminInvite() {
-  if (countAdmins() > 0) return;
-  const token = base64UrlEncode(randomBytes(24));
-  const id = `bootstrap_${randomUUID().slice(0, 8)}`;
-  // The createInvite "createdBy" is FK to users(id). With no users yet we
-  // can't FK to anyone — store an internal sentinel. The schema makes it
-  // NOT NULL, so we relax it with a fake-but-FK-safe self-reference:
-  // we insert a placeholder admin row that the redeem flow will replace.
-  // Simpler approach: create a synthetic "system" user with a known id.
-  const SYSTEM_ID = '00000000-0000-0000-0000-000000000000';
-  const existing = findUserById(SYSTEM_ID);
-  if (!existing) {
-    getDb().query(
-      `INSERT INTO users (id, channel, external_id, display_name, status, is_admin)
-       VALUES (?, 'system', ?, 'system', 'system', 0)`
-    ).run(SYSTEM_ID, SYSTEM_ID);
+  let inv = findLatestBootstrapInvite();
+  if (!inv) {
+    const token = base64UrlEncode(randomBytes(24));
+    const id = `bootstrap_${randomUUID().slice(0, 8)}`;
+    // createInvite.createdBy is FK to users(id). With no users yet, route
+    // the row through a synthetic "system" user so the FK holds.
+    const SYSTEM_ID = '00000000-0000-0000-0000-000000000000';
+    if (!findUserById(SYSTEM_ID)) {
+      getDb().query(
+        `INSERT INTO users (id, channel, external_id, display_name, status, is_admin)
+         VALUES (?, 'system', ?, 'system', 'system', 0)`
+      ).run(SYSTEM_ID, SYSTEM_ID);
+    }
+    createInvite({
+      id, token,
+      createdBy: SYSTEM_ID,
+      note: 'bootstrap admin invite',
+      expiresAt: null,
+    });
+    inv = findLatestBootstrapInvite();
   }
-  createInvite({
-    id, token,
-    createdBy: SYSTEM_ID,
-    note: 'bootstrap admin invite',
-    expiresAt: null,
-  });
 
   const cfg = configManager.get();
   const base = cfg.server.publicURL?.replace(/\/+$/, '')
     ?? `http://${cfg.server.host === '0.0.0.0' ? 'localhost' : cfg.server.host}:${cfg.server.port}`;
-  const url = `${base}/i/${token}`;
+  const url = `${base}/i/${inv!.token}`;
+  const headline = countAdmins() === 0
+    ? 'No admin account yet — open this link to create the first one:'
+    : 'Reusable admin bootstrap link (each redeem mints a new admin):';
 
-  // Big banner so a self-host user can spot it in the log soup.
   console.log('\n' + '='.repeat(72));
-  console.log('  No admin account yet — open this link to create the first one:');
+  console.log(`  ${headline}`);
   console.log(`  ${url}`);
   console.log('='.repeat(72) + '\n');
 }
