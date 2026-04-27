@@ -11,7 +11,7 @@ import {
   getAttachmentsForMessage,
 } from '../db/queries';
 import { recordUserMessage, recordBotMessage } from '../honcho/memory';
-import { modelFor } from './models';
+import { modelFor, modelForTask } from './models';
 import { checkAndTriggerReview } from './review';
 import { generateTitle } from './title';
 import type { OutboundMessage } from '../bus/types';
@@ -194,15 +194,21 @@ export async function handleUserMessage(params: {
 
   // Build prompt
   console.log(`[chat] building prompt...`);
-  const messages = await buildPrompt({
+  const { messages, hasInlineImages } = await buildPrompt({
     botId,
     conversationId,
     userId,
     extraContext,
     tone,
   });
-  const chatModel = modelFor(botId, conversationId);
-  console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}`);
+  // When the conversation carries any inline image in the recent window,
+  // route to the vision-capable model regardless of which model the bot
+  // (or per-conv override) usually uses for chat. Text-only stays on the
+  // bot's own personality model.
+  const chatModel = hasInlineImages
+    ? modelForTask('vision')
+    : modelFor(botId, conversationId);
+  console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}${hasInlineImages ? ' (vision routed)' : ''}`);
 
   const messageId = randomUUID();
   const startTime = Date.now();
