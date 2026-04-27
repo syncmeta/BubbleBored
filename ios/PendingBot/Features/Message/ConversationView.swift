@@ -283,20 +283,29 @@ struct ConversationView: View {
         case "stream_end":
             // Final content is authoritative — replaces whatever we
             // accumulated from deltas. Covers the case where deltas were
-            // dropped on a bad connection.
+            // dropped on a bad connection. An explicit empty string means
+            // the server gave up on this reply (e.g. the [SILENT] marker
+            // tripped after we'd already opened the bubble) — collapse it
+            // rather than leave a blank row sitting there.
             guard let id = event.messageId,
                   let idx = messages.firstIndex(where: { $0.id == id }) else { return }
             if let content = event.content {
-                let prev = messages[idx]
-                messages[idx] = ChatMessage(
-                    id: prev.id, conversation_id: prev.conversation_id,
-                    sender_type: prev.sender_type, sender_id: prev.sender_id,
-                    content: content,
-                    created_at: prev.created_at,
-                    attachments: prev.attachments
-                )
+                if content.isEmpty {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        _ = messages.remove(at: idx)
+                    }
+                } else {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id, conversation_id: prev.conversation_id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: content,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments
+                    )
+                    Haptics.receive()
+                }
             }
-            Haptics.receive()
             onChange()
         case "message":
             // Full bot reply — server-side bots aren't token-streamed when

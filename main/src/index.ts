@@ -147,6 +147,12 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // toggle is sent fresh on every send.
   const webSearch = metadata && metadata.webSearch === true;
 
+  // Per-message streaming opt-in. Mobile sets this when the user toggles
+  // 流式输出 on (paired with 普通AI tone — wechat uses segment delivery
+  // which already feels live). When unset, we fall through to the legacy
+  // whole-segment `message` delivery so existing channels keep working.
+  const streaming = metadata && metadata.streaming === true;
+
   // Pass through debounce. Each entry the user sent becomes its own DB row —
   // only at LLM-request time do consecutive user rows get joined with \n\n.
   debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (entries) => {
@@ -155,6 +161,7 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
       userMessages: entries,
       tone,
       webSearch,
+      streaming,
       replyFn,
     }).catch(e => {
       console.error('[orchestrator] error:', e);

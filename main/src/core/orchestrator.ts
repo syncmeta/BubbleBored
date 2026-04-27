@@ -132,12 +132,19 @@ export async function handleUserMessage(params: {
   // search activity is reported live via surf_status so the chat shows a
   // "searching…" log above the bot reply (reuses the existing surf-log UI).
   webSearch?: boolean;
+  // Per-message client preference for token streaming. Honored only when
+  // tone === 'normal' (single-bubble) — multi-bubble wechat already
+  // delivers each segment live and would interleave deltas confusingly.
+  // When false/undefined, the legacy whole-segment `message` reply path
+  // is used (Telegram/Feishu can't render mid-message updates anyway).
+  streaming?: boolean;
   // Re-run the LLM for an existing user message without inserting a new row,
   // binding attachments, or bumping the round counter. The caller is
   // responsible for having already deleted the stale bot reply(ies) from DB.
   regenerate?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, userMessages, replyFn, extraContext: extraContextIn, tone, webSearch, regenerate } = params;
+  const { conversationId, botId, userId, userMessages, replyFn, extraContext: extraContextIn, tone, webSearch, streaming, regenerate } = params;
+  const useStreaming = streaming === true && tone === 'normal';
   let extraContext = extraContextIn;
   // Per-gen start timestamp — isInterrupted/hasFreshInterrupt ignore signals
   // raised before this, so we don't need to wipe the map at entry and can't
@@ -260,19 +267,47 @@ export async function handleUserMessage(params: {
       const trimmed = fullText.trim();
       if (trimmed) segments.set(segmentIndex, trimmed);
     };
+    // Streaming-mode bookkeeping. We open exactly one bubble (segment 0,
+    // tone === 'normal' → splitter is disabled so there's only one) with
+    // stream_start, dribble deltas in via the streamWithSplit loop, then
+    // finalize with stream_end below. The legacy `message` reply is then
+    // suppressed for that segment so the client doesn't double-render.
+    let streamOpened = false;
+    const openStreamIfNeeded = () => {
+      if (!useStreaming || streamOpened) return;
+      streamOpened = true;
+      replyFn({
+        type: 'stream_start',
+        conversationId,
+        messageId,
+      });
+    };
+
     const sendSegment = (idx: number) => {
       if (sentSegments.has(idx)) return;
       if (isInterrupted(conversationId, genStartedAt)) return;
       const content = segments.get(idx);
-      if (content) {
-        sentSegments.add(idx);
+      if (!content) return;
+      sentSegments.add(idx);
+      // For the first (and, in normal mode, only) segment under streaming,
+      // close out the live stream with the canonical content. For any
+      // additional segments — which only happen in wechat tone where we
+      // explicitly disabled streaming — fall through to a normal `message`.
+      if (useStreaming && idx === 0 && streamOpened) {
         replyFn({
-          type: 'message',
+          type: 'stream_end',
           conversationId,
-          messageId: idx === 0 ? messageId : randomUUID(),
+          messageId,
           content,
         });
+        return;
       }
+      replyFn({
+        type: 'message',
+        conversationId,
+        messageId: idx === 0 ? messageId : randomUUID(),
+        content,
+      });
     };
 
     let conversationMessages: ChatCompletionMessageParam[] = promptMessages;
@@ -304,6 +339,20 @@ export async function handleUserMessage(params: {
 
         roundContent += seg.delta;
         fullOutput += seg.delta;
+
+        // Token streaming for the chat WS: emit each non-empty delta so the
+        // client can grow the bubble live. We open the stream lazily (on the
+        // first real delta) so silent-detection short-circuits don't leave
+        // an empty placeholder bubble on the client.
+        if (useStreaming && seg.delta) {
+          openStreamIfNeeded();
+          replyFn({
+            type: 'stream_delta',
+            conversationId,
+            messageId,
+            delta: seg.delta,
+          });
+        }
 
         if (!earlyCheckDone) {
           earlyBuffer += seg.delta;
@@ -450,6 +499,12 @@ export async function handleUserMessage(params: {
 
     if (silentDetected) {
       console.log(`[chat] → [SILENT]`);
+      // If we'd already opened a stream before realising the model went
+      // silent, close it with an empty content so the client can collapse
+      // the placeholder bubble it had been growing from deltas.
+      if (streamOpened) {
+        replyFn({ type: 'stream_end', conversationId, messageId, content: '' });
+      }
       updateConversationActivity(conversationId);
       logAudit({
         userId, conversationId, taskType: 'chat', model: botConfig.model,
