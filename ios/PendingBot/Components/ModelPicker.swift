@@ -1,13 +1,11 @@
 import SwiftUI
 
-/// Compact pill-style button showing the currently-picked model. Tap to
-/// open `ModelPickerSheet` for browsing/searching the full OpenRouter list.
-///
-/// Use everywhere a model is selected — chat composer settings, surf/review
-/// creation sheets, debate setup, etc.
+/// Pill button that surfaces the currently-selected model. Tap opens
+/// `ModelPickerSheet` to browse the OpenRouter catalog. `slug` empty means
+/// "use the bot's default" — rendered as a muted placeholder.
 struct ModelPickerButton: View {
     @Binding var slug: String
-    var placeholder: String = "选择模型"
+    var placeholder: String = "默认模型"
 
     @State private var showSheet = false
 
@@ -31,32 +29,32 @@ struct ModelPickerButton: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(
-                Capsule().fill(Theme.Palette.surfaceMuted)
-            )
+            .background(Capsule().fill(Theme.Palette.surfaceMuted))
         }
         .buttonStyle(.plain)
         .sheet(isPresented: $showSheet) {
-            ModelPickerSheet(initial: slug) { picked in
-                slug = picked
+            ModelPickerSheet(initial: slug,
+                             allowsClear: true,
+                             onPick: { picked in
+                slug = picked ?? ""
                 showSheet = false
-            }
+            })
             .presentationDragIndicator(.visible)
             .tint(Theme.Palette.accent)
         }
     }
 }
 
-/// Full-screen-ish sheet that browses all OpenRouter models with search +
-/// "recent picks" pinned to the top. The user picks one; the sheet closes
-/// and the chosen slug bumps to the head of `RecentModelsStore`.
+/// Sheet that lists every OpenRouter model. Search filters slug / name /
+/// provider. Picking a row dismisses; an optional "use default" row clears
+/// the binding.
 struct ModelPickerSheet: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var recents = RecentModelsStore.shared
 
     let initial: String
-    var onPick: (String) -> Void
+    var allowsClear: Bool = false
+    var onPick: (String?) -> Void
 
     @State private var allModels: [OpenRouterModel] = []
     @State private var loading = true
@@ -77,7 +75,6 @@ struct ModelPickerSheet: View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-
                 VStack(spacing: 0) {
                     searchField
                         .padding(.horizontal, Theme.Metrics.gutter)
@@ -122,8 +119,6 @@ struct ModelPickerSheet: View {
         .task { await load() }
     }
 
-    // ── Search field ───────────────────────────────────────────────────────
-
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -154,33 +149,68 @@ struct ModelPickerSheet: View {
         )
     }
 
-    // ── Result list with "最近用过" section ─────────────────────────────────
-
     private var list: some View {
-        let recentSlugs = query.isEmpty ? recents.slugs : []
-        let recentRows = recentSlugs.compactMap { slug in
-            allModels.first { $0.slug == slug } ?? OpenRouterModel(
-                slug: slug, display_name: slug, provider: "—", context_length: nil
-            )
-        }
-
-        return List {
-            if !recentRows.isEmpty {
+        List {
+            if allowsClear && query.isEmpty {
                 Section {
-                    ForEach(recentRows) { m in
-                        row(for: m)
+                    Button {
+                        onPick(nil)
+                        Haptics.success()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.accent)
+                            Text("跟随机器人默认")
+                                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                .foregroundStyle(Theme.Palette.ink)
+                            Spacer(minLength: 8)
+                            if initial.isEmpty {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.Palette.accent)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
-                } header: {
-                    sectionHeader("最近用过")
+                    .buttonStyle(.plain)
                 }
                 .listRowBackground(Theme.Palette.surface)
             }
             Section {
                 ForEach(filtered) { m in
-                    row(for: m)
+                    Button {
+                        onPick(m.slug)
+                        Haptics.success()
+                    } label: {
+                        HStack(alignment: .center, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.display_name)
+                                    .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.Palette.ink)
+                                    .lineLimit(1)
+                                Text(m.slug)
+                                    .font(Theme.Fonts.monoSmall)
+                                    .foregroundStyle(Theme.Palette.inkMuted)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
+                            if m.slug == initial {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.Palette.accent)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
                 }
             } header: {
-                sectionHeader(query.isEmpty ? "全部模型" : "搜索结果（\(filtered.count)）")
+                Text(query.isEmpty ? "全部模型" : "搜索结果（\(filtered.count)）")
+                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .textCase(nil)
             }
             .listRowBackground(Theme.Palette.surface)
         }
@@ -189,52 +219,10 @@ struct ModelPickerSheet: View {
         .background(Theme.Palette.canvas)
     }
 
-    private func sectionHeader(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-            .foregroundStyle(Theme.Palette.inkMuted)
-            .textCase(nil)
-    }
-
-    private func row(for m: OpenRouterModel) -> some View {
-        Button {
-            recents.bump(m.slug)
-            onPick(m.slug)
-            Haptics.success()
-        } label: {
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(m.display_name)
-                        .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                        .lineLimit(1)
-                    Text(m.slug)
-                        .font(Theme.Fonts.monoSmall)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 8)
-                if m.slug == initial {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // ── Data ───────────────────────────────────────────────────────────────
-
     private func load() async {
         guard let api else { return }
         loading = true; defer { loading = false }
         do {
-            // Endpoint is unauthenticated on the server side (it's a proxy
-            // to OpenRouter's public list). The bearer header still goes
-            // along — server ignores it when not required.
             allModels = try await api.get("api/openrouter/models")
             error = nil
         } catch {

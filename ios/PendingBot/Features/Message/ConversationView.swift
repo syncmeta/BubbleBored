@@ -20,6 +20,7 @@ struct ConversationView: View {
     @State private var input = ""
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var modelOverride: String = ""    // "" = use bot default
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
     // Per-user tone preference, persisted globally across conversations.
@@ -92,14 +93,17 @@ struct ConversationView: View {
                 input: $input,
                 pending: $pendingAttachments,
                 photoItems: $photoPickerItems,
+                modelOverride: $modelOverride,
                 canSend: canSend,
-                onSend: { Task { await send() } }
+                onSend: { Task { await send() } },
+                onModelChange: { slug in Task { await persistModelOverride(slug) } }
             )
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
             ws.bind(account: account)
+            modelOverride = conversation.model_override ?? ""
             await loadHistory()
             ws.connect()
         }
@@ -320,6 +324,25 @@ struct ConversationView: View {
             self.messages = raw.sorted { $0.created_at < $1.created_at }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Persist the conversation's per-conversation model override. Empty
+    /// slug → null on the server (clears the override).
+    private func persistModelOverride(_ slug: String) async {
+        guard let api else { return }
+        struct Body: Encodable { let modelOverride: String? }
+        let payload = Body(modelOverride: slug.isEmpty ? nil : slug)
+        do {
+            _ = try await api.patch(
+                "api/mobile/conversations/\(conversation.id)",
+                body: payload
+            ) as EmptyResponse
+            Haptics.success()
+            onChange()
+        } catch {
+            self.error = "更换模型失败: \(error.localizedDescription)"
+            Haptics.error()
         }
     }
 

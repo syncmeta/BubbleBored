@@ -10,8 +10,10 @@ struct ComposerView: View {
     @Binding var input: String
     @Binding var pending: [PendingAttachment]
     @Binding var photoItems: [PhotosPickerItem]
+    @Binding var modelOverride: String
     var canSend: Bool
     var onSend: () -> Void
+    var onModelChange: (String) -> Void
 
     @State private var showActions = false
 
@@ -72,9 +74,14 @@ struct ComposerView: View {
             .background(Theme.Palette.canvas)
         }
         .sheet(isPresented: $showActions) {
-            ChatActionSheet(photoItems: $photoItems)
-                .presentationDragIndicator(.visible)
-                .tint(Theme.Palette.accent)
+            ChatActionSheet(
+                photoItems: $photoItems,
+                modelOverride: $modelOverride,
+                onModelChange: onModelChange
+            )
+            .presentationDetents([.height(180)])
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
         }
     }
 

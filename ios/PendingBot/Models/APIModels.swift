@@ -41,6 +41,9 @@ struct Conversation: Codable, Identifiable, Hashable {
     /// Both nil when the conversation has no messages yet.
     let last_message_content: String?
     let last_message_sender_type: String?
+    /// Per-conversation model override (OpenRouter slug). nil = use the
+    /// bot's configured default.
+    let model_override: String?
 
     var displayTitle: String { title?.isEmpty == false ? title! : "未命名" }
 
@@ -170,7 +173,7 @@ struct DebateConversation: Codable, Identifiable, Hashable {
     let title: String?
     let last_activity_at: Int
     let topic: String?
-    let model_slugs: [String]?
+    let bot_ids: [String]?
 }
 
 struct PortraitConversation: Codable, Identifiable, Hashable {
