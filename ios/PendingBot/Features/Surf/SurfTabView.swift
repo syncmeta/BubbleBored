@@ -92,7 +92,10 @@ private struct NewSurfSheet: View {
     var onClose: (Bool) -> Void
 
     @State private var selectedBot: Bot?
-    @State private var budget: Int = 10
+    @State private var budgetText: String = "0.30"
+    @State private var sources: [Conversation] = []
+    @State private var loadingSources = false
+    @State private var selectedSourceId: String? = nil
     @State private var creating = false
     @State private var error: String?
 
@@ -108,8 +111,26 @@ private struct NewSurfSheet: View {
                 } footer: {
                     Text("Ta 会基于对你的记忆和聊天记录去深挖。")
                 }
-                Section("预算 (调用次数)") {
-                    Stepper("\(budget)", value: $budget, in: 1...50)
+                Section {
+                    Picker("源会话", selection: $selectedSourceId) {
+                        Text("不绑定（自由冲浪）").tag(String?.none)
+                        ForEach(sources) { conv in
+                            Text(conv.displayTitle).tag(Optional(conv.id))
+                        }
+                    }
+                    if loadingSources {
+                        HStack { ProgressView(); Text("加载中…").foregroundStyle(.secondary) }
+                    }
+                } header: {
+                    Text("基于该机器人哪次会话？")
+                } footer: {
+                    Text("不绑定时 planner 几乎无上下文。")
+                }
+                Section {
+                    TextField("0.30", text: $budgetText)
+                        .keyboardType(.decimalPad)
+                } header: {
+                    Text("预算（USD，机器人按此自调节奏）")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red) }
@@ -132,6 +153,21 @@ private struct NewSurfSheet: View {
             .onAppear {
                 if selectedBot == nil { selectedBot = bots.first }
             }
+            .task(id: selectedBot?.id) {
+                selectedSourceId = nil
+                await loadSources()
+            }
+        }
+    }
+
+    private func loadSources() async {
+        guard let api, let bot = selectedBot else { sources = []; return }
+        loadingSources = true; defer { loadingSources = false }
+        do {
+            sources = try await api.get("api/surf/sources",
+                                        query: [URLQueryItem(name: "botId", value: bot.id)])
+        } catch {
+            sources = []
         }
     }
 
@@ -139,13 +175,27 @@ private struct NewSurfSheet: View {
         guard let api, let bot = selectedBot else { return }
         creating = true; defer { creating = false }
         struct Body: Encodable {
+            let autoStart: Bool
             let botId: String
-            let budget: Int
+            let sourceMessageConversationId: String?
+            let costBudgetUsd: Double?
         }
+        let trimmed = budgetText.trimmingCharacters(in: .whitespaces)
+        let parsed = Double(trimmed)
+        if !trimmed.isEmpty && parsed == nil {
+            self.error = "预算需要填一个数字（USD）"
+            return
+        }
+        let body = Body(
+            autoStart: true,
+            botId: bot.id,
+            sourceMessageConversationId: selectedSourceId,
+            costBudgetUsd: parsed.map { max(0.01, $0) }
+        )
         do {
             _ = try await api.post(
                 "api/surf/conversations",
-                body: Body(botId: bot.id, budget: budget)
+                body: body
             ) as EmptyResponse
             Haptics.success()
             dismiss(); onClose(true)

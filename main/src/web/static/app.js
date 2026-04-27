@@ -2546,14 +2546,6 @@ const debateState = {
   es: null,
 };
 
-// Stable color from any string id (mirrors botColor()).
-function modelColor(slug) {
-  let h = 0;
-  for (let i = 0; i < (slug || '').length; i++) h = (h * 31 + slug.charCodeAt(i)) | 0;
-  const hue = Math.abs(h) % 360;
-  return `hsl(${hue}, 60%, 55%)`;
-}
-
 // Hook into loadConversations: when on the debate tab, hit the debate-specific
 // list endpoint that hydrates topic + bot_ids.
 async function loadDebateConversations() {
@@ -2647,76 +2639,6 @@ function updateDebateHeader() {
   meta.textContent = `${ids.length} 个机器人 · ${d.round_count_debate ?? 0} 轮 · ${botNames}`;
 }
 
-// ── Provider brand avatars ──
-// Maps an OpenRouter slug prefix (the part before the `/`) to the model
-// vendor's official-ish logo file (under /logos/) plus a brand color and
-// glyph fallback. `logo` files were sourced from each company's site /
-// the Iconify "logos" set / Simple Icons. When `logo` is absent we render
-// a colored circle with the `text` glyph instead.
-const PROVIDER_BRANDS = {
-  'anthropic':   { logo: 'anthropic',   bg: '#D97757', text: 'A' },
-  'openai':      { logo: 'openai',      bg: '#10A37F', text: 'O' },
-  'deepseek':    { logo: 'deepseek',    bg: '#4D6BFE', text: '深' },
-  'google':      { logo: 'google',      bg: '#1A73E8', text: 'G' },
-  'z-ai':        { logo: 'z-ai',        bg: '#6E45E2', text: '智' },
-  'zhipu':       { logo: 'z-ai',        bg: '#6E45E2', text: '智' },
-  'tencent':     { logo: 'tencent',     bg: '#0052D9', text: '腾' },
-  'minimax':     { logo: 'minimax',     bg: '#E73562', text: 'M' },
-  'x-ai':        { logo: 'x-ai',        bg: '#0E0E0E', text: '𝕏' },
-  'meta-llama':  { logo: 'meta-llama',  bg: '#0866FF', text: 'M' },
-  'mistralai':   { logo: 'mistralai',   bg: '#FA520F', text: 'M' },
-  'mistral':     { logo: 'mistralai',   bg: '#FA520F', text: 'M' },
-  'qwen':        { logo: 'qwen',        bg: '#623AE7', text: '通' },
-  'alibaba':     { logo: 'alibaba',     bg: '#FF6A00', text: '通' },
-  'perplexity':  { logo: 'perplexity',  bg: '#1FB8CD', text: 'PX' },
-  'nvidia':      { logo: 'nvidia',      bg: '#76B900', text: 'N' },
-  'moonshotai':  { logo: 'moonshotai',  bg: '#0F172A', text: '月' },
-  'cohere':      {                       bg: '#39594D', text: 'C' },
-  'baichuan':    {                       bg: '#1F8FFF', text: '百' },
-  '01-ai':       {                       bg: '#1F2937', text: '零' },
-};
-
-function providerKey(slug) {
-  const s = (slug || '').toLowerCase();
-  const slash = s.indexOf('/');
-  return slash > 0 ? s.slice(0, slash) : s;
-}
-
-// Returns { mode, ... } describing how to render the avatar circle.
-//   mode 'logo' → white circle with brand image inside
-//   mode 'glyph' → colored circle with white text
-function providerAvatarHTML(slug, displayName) {
-  const key = providerKey(slug);
-  const brand = PROVIDER_BRANDS[key];
-  if (brand?.logo) {
-    return {
-      mode: 'logo',
-      html: `<img src="/logos/${brand.logo}.svg" alt="${esc(key)}" loading="lazy">`,
-    };
-  }
-  if (brand?.text) {
-    return {
-      mode: 'glyph',
-      bg: brand.bg,
-      html: `<span class="debate-avatar-text">${esc(brand.text)}</span>`,
-    };
-  }
-  // Unknown provider — hashed color + initials from the model name.
-  const src = (displayName || slug || '').trim();
-  const tail = src.includes('/') ? src.split('/').pop() : src;
-  const cleaned = (tail || '').replace(/[^a-zA-Z0-9一-鿿]/g, '');
-  let glyph = '?';
-  if (cleaned) {
-    const m = cleaned.match(/[一-鿿]/);
-    glyph = m ? m[0] : cleaned.slice(0, 2).toUpperCase();
-  }
-  return {
-    mode: 'glyph',
-    bg: modelColor(slug),
-    html: `<span class="debate-avatar-text">${esc(glyph)}</span>`,
-  };
-}
-
 function appendDebateMessage(m) {
   const root = document.getElementById('debate-messages');
   if (!root) return;
@@ -2730,9 +2652,6 @@ function appendDebateMessage(m) {
     const botId = m.sender_id || m.metadata?.bot_id || m.metadata?.slug || '';
     const bot = state.botsById.get(botId);
     const name = m.metadata?.display_name || bot?.display_name || botId;
-    // Use the bot's underlying model slug for the brand avatar so e.g. a
-    // bot named "deepseek-v4-pro" still gets the deepseek logo.
-    const modelSlug = bot?.config?.model || botId;
     el.className = 'debate-msg debater';
     el.dataset.botid = botId;
     // Collapse the avatar + name when the previous bubble is from the same speaker.
@@ -2740,12 +2659,8 @@ function appendDebateMessage(m) {
     if (prev && prev.classList.contains('debater') && prev.dataset.botid === botId) {
       el.classList.add('same-speaker');
     }
-    const av = providerAvatarHTML(modelSlug, name);
-    const avatarAttr = av.mode === 'logo'
-      ? 'class="debate-avatar has-logo"'
-      : `class="debate-avatar" style="background:${av.bg}"`;
     el.innerHTML = `
-      <div ${avatarAttr}>${av.html}</div>
+      <div class="debate-avatar">${botAvatarHTML(botId)}</div>
       <div class="debate-body-wrap">
         <div class="debate-who"><span>${esc(name)}</span></div>
         <div class="debate-body">${esc(m.content)}</div>

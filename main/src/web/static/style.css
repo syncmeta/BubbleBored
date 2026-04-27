@@ -962,34 +962,17 @@ main {
 .debate-avatar {
   grid-area: avatar;
   width: 32px; height: 32px;
-  border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  color: #fff;
   user-select: none;
-  overflow: hidden;
   flex-shrink: 0;
 }
-/* Image-mode: white plate so colored brand SVGs sit cleanly. */
-.debate-avatar.has-logo {
-  background: #fff;
-  border: 1px solid var(--border-light);
-}
-.debate-avatar img {
-  width: 70%;
-  height: 70%;
-  object-fit: contain;
-  display: block;
-  pointer-events: none;
-}
-.debate-avatar svg {
-  width: 62%; height: 62%;
-  display: block;
-}
-.debate-avatar-text {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  line-height: 1;
+/* Match the message-list emoji avatar logic: same chip, sized up for the
+   debate row (28px glyph in a 32px slot). */
+.debate-avatar .bot-avatar.emoji {
+  width: 32px;
+  height: 32px;
+  font-size: 28px;
+  border-radius: 0;
 }
 
 .debate-msg .debate-body-wrap {
