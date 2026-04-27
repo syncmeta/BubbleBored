@@ -3,7 +3,6 @@ import { configManager } from '../../config/loader';
 import { updateSurfState } from '../../db/queries';
 import { messageBus } from '../../bus/router';
 import { activeSurfs, surfsByMessageConv, createSurfConversation, runSurf } from './searcher';
-import { modelFor } from '../models';
 
 // Auto-triggers a surf for active message conversations whose surf cooldown
 // has expired. Each auto-triggered surf creates a new 冲浪 tab conversation
@@ -50,8 +49,7 @@ async function checkAllConversations(): Promise<void> {
       const surfConvId = createSurfConversation({
         botId: conv.bot_id, userId: conv.user_id,
         sourceMessageConvId: conv.id,
-        modelSlug: modelFor(conv.bot_id),
-        budget: botConfig.surfing.maxRequests,
+        costBudgetUsd: botConfig.surfing.costBudgetUsd,
         title: '自动冲浪',
       });
 

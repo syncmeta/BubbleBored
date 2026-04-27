@@ -42,7 +42,6 @@ import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
 import { runSurf, createSurfConversation } from './core/surfing/searcher';
-import { modelFor } from './core/models';
 
 // Initialize
 await configManager.load();
@@ -121,8 +120,7 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
       const surfConvId = createSurfConversation({
         botId, userId,
         sourceMessageConvId: conversationId,
-        modelSlug: modelFor(botId),
-        budget: configManager.getBotConfig(botId).surfing.maxRequests,
+        costBudgetUsd: configManager.getBotConfig(botId).surfing.costBudgetUsd,
       });
       runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })
         .catch(e => {

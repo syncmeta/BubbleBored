@@ -45,7 +45,7 @@ class ConfigManager {
     return {
       id: botId,
       displayName: bot.displayName,
-      model: bot.model ?? this.config.openrouter.defaultModel,
+      model: bot.model ?? this.config.openrouter.models.chat,
       promptFile: bot.promptFile ?? `${botId}.md`,
       accessMode: bot.accessMode ?? d.accessMode,
       creators: bot.creators ?? [],

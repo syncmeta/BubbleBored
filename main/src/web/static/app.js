@@ -3617,6 +3617,8 @@ const surfTabState = {
   current: null,            // hydrated surf conv (with run record)
   modalSelectedBot: '',     // which bot does the surfing (required)
   modalSelectedSource: '',  // optional source message conv id (must belong to selected bot)
+  phases: new Map(),        // per-load phase blocks (rebuilt on selectSurfConv)
+  activePhase: null,        // most-recent phase name (the one untriaged lines append to)
 };
 
 async function loadSurfConversations() {
@@ -3641,6 +3643,13 @@ function statusLabel(status, active) {
   })[status] ?? status;
 }
 
+function formatSurfCost(conv) {
+  const used = Number(conv?.cost_used_usd ?? 0);
+  const budget = Number(conv?.cost_budget_usd ?? 0);
+  if (!budget) return '—';
+  return `$${used.toFixed(3)} / $${budget.toFixed(2)}`;
+}
+
 function renderSurfConvItem(conv) {
   const el = document.createElement('div');
   el.className = 'conv-item';
@@ -3653,12 +3662,12 @@ function renderSurfConvItem(conv) {
   const subtitle = conv.source_message_conv_id
     ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
     : '自由冲浪';
-  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
+  const costHint = formatSurfCost(conv);
 
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(conv.title || '冲浪')}</span>
-      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-subtitle">${esc(subtitle)} · ${esc(costHint)}</span>
       <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
     </span>
     <span class="conv-actions">
@@ -3699,6 +3708,7 @@ async function selectSurfConv(convId) {
     const msgs = await res.json();
     const log = document.getElementById('surf-log');
     log.innerHTML = '';
+    resetSurfPhases();
     // The result is persisted as a sender_type='bot' row; older runs also
     // wrote a duplicate log row tagged surf:surf_result. Skip the log
     // duplicate so existing convs don't show two identical bubbles.
@@ -3706,6 +3716,7 @@ async function selectSurfConv(convId) {
       if ((m.sender_id || '').endsWith(':surf_result') && m.sender_type === 'log') continue;
       appendSurfRow(m);
     }
+    finalizeSurfPhasesIfDone();
     scrollSurfToBottom();
   } catch (e) {
     console.error('load surf msgs:', e);
@@ -3724,7 +3735,7 @@ function updateSurfHeader() {
   title.textContent = c.title || '冲浪';
   const isActive = state.activeSurfs.has(c.id) || c.active;
   const parts = [
-    `模型 ${c.model_slug ?? '—'}`,
+    formatSurfCost(c),
     c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由冲浪',
     `状态 ${statusLabel(c.status, isActive)}`,
   ];
@@ -3734,17 +3745,152 @@ function updateSurfHeader() {
   document.getElementById('surf-rerun-btn').style.display = isActive ? 'none' : '';
 }
 
+// ── Phase-grouped log (Claude Code style: active expanded, completed
+//    auto-collapse to one summary line). Phases are inferred from emit
+//    line prefixes (the agent / journal modules write specific tags).
+//    State lives on surfTabState.phases keyed by phase name; resetSurfPhases
+//    is called whenever a new conv is selected so per-conv groupings don't
+//    bleed.
+
+const SURF_PHASES = {
+  setup:    { icon: '⚙️',  label: '准备' },
+  userlens: { icon: '🧠',  label: '看见这个人' },
+  agent:    { icon: '🌊',  label: '冲浪' },
+  summary:  { icon: '✍️',  label: '写给你' },
+  journal:  { icon: '📓',  label: '日记' },
+  final:    { icon: 'ℹ️',  label: '收尾' },
+};
+const SURF_PHASE_ORDER = ['setup', 'userlens', 'agent', 'summary', 'journal', 'final'];
+
+function classifySurfLine(content) {
+  const c = content || '';
+  if (/^\[userlens\]/.test(c)) return 'userlens';
+  if (/^\[agent\]/.test(c)) return 'agent';
+  if (/^[🔍📖📌✋]/.test(c)) return 'agent';
+  if (/^\[summary\]/.test(c)) return 'summary';
+  if (/^\[journal\]/.test(c)) return 'journal';
+  if (/^Surfing triggered/.test(c) || /^预算/.test(c) || /^上下文：/.test(c)) return 'setup';
+  if (/^本次未交付/.test(c) || /^已中断/.test(c) || /^⚠️/.test(c)) return 'final';
+  return null; // append to most-recent phase
+}
+
+function summarizeSurfPhase(name, lines) {
+  if (lines.length === 0) return '';
+  const last = lines[lines.length - 1];
+  switch (name) {
+    case 'userlens': {
+      const done = lines.find(l => /^\[userlens\] 完成/.test(l));
+      return done ? done.replace(/^\[userlens\] /, '') : (last.length > 60 ? last.slice(0, 60) + '…' : last);
+    }
+    case 'agent': {
+      const done = lines.find(l => /^\[agent\] 完成/.test(l));
+      if (done) return done.replace(/^\[agent\] /, '');
+      const noteCount = lines.filter(l => /^📌/.test(l)).length;
+      const searchCount = lines.filter(l => /^🔍/.test(l)).length;
+      const readCount = lines.filter(l => /^📖/.test(l)).length;
+      return `搜 ${searchCount} · 读 ${readCount} · 笔记 ${noteCount}`;
+    }
+    case 'journal': {
+      const done = lines.find(l => /^\[journal\] 已记/.test(l));
+      return done ? done.replace(/^\[journal\] /, '') : last;
+    }
+    default:
+      return last.length > 60 ? last.slice(0, 60) + '…' : last;
+  }
+}
+
+function resetSurfPhases() {
+  surfTabState.phases = new Map();
+  surfTabState.activePhase = null;
+}
+
+function getOrCreateSurfPhase(name) {
+  let phase = surfTabState.phases.get(name);
+  if (phase) return phase;
+
+  const log = document.getElementById('surf-log');
+  if (!log) return null;
+
+  // Newly active phase collapses the previous active one.
+  if (surfTabState.activePhase && surfTabState.activePhase !== name) {
+    const prev = surfTabState.phases.get(surfTabState.activePhase);
+    if (prev) prev.wrap.dataset.state = 'collapsed';
+  }
+
+  const meta = SURF_PHASES[name] || { icon: '·', label: name };
+  const wrap = document.createElement('div');
+  wrap.className = 'surf-phase';
+  wrap.dataset.phase = name;
+  wrap.dataset.state = 'open';
+  wrap.innerHTML = `
+    <button type="button" class="surf-phase-head">
+      <span class="phase-chevron">▾</span>
+      <span class="phase-icon">${esc(meta.icon)}</span>
+      <span class="phase-label">${esc(meta.label)}</span>
+      <span class="phase-summary"></span>
+    </button>
+    <div class="surf-phase-body"></div>
+  `;
+  const head = wrap.querySelector('.surf-phase-head');
+  head.addEventListener('click', () => {
+    wrap.dataset.state = wrap.dataset.state === 'open' ? 'collapsed' : 'open';
+  });
+
+  // Insert preserving phase order even if events arrive interleaved.
+  const targetIdx = SURF_PHASE_ORDER.indexOf(name);
+  const existing = Array.from(log.querySelectorAll('.surf-phase'));
+  let inserted = false;
+  for (const el of existing) {
+    const idx = SURF_PHASE_ORDER.indexOf(el.dataset.phase);
+    if (idx > targetIdx) {
+      log.insertBefore(wrap, el);
+      inserted = true;
+      break;
+    }
+  }
+  if (!inserted) {
+    // Insert before the result bubble if one is already present.
+    const bubble = log.querySelector('.surf-result-bubble');
+    if (bubble) log.insertBefore(wrap, bubble);
+    else log.appendChild(wrap);
+  }
+
+  phase = {
+    name,
+    wrap,
+    body: wrap.querySelector('.surf-phase-body'),
+    summaryEl: wrap.querySelector('.phase-summary'),
+    lines: [],
+  };
+  surfTabState.phases.set(name, phase);
+  surfTabState.activePhase = name;
+  return phase;
+}
+
+function pushSurfPhaseLine(phase, content, kind) {
+  const line = document.createElement('div');
+  line.className = 'surf-phase-line' + (kind === 'error' ? ' error' : '');
+  line.textContent = content;
+  phase.body.appendChild(line);
+  phase.lines.push(content);
+  phase.summaryEl.textContent = summarizeSurfPhase(phase.name, phase.lines);
+}
+
 function appendSurfRow(m) {
   const log = document.getElementById('surf-log');
   if (!log) return;
 
-  // surf:surf_result kind → render as a chat-style bubble (the deliverable);
-  // sender_type='bot' rows that didn't carry the type tag are also results.
   const isResult =
     (m.sender_type === 'bot') ||
     (m.sender_id || '').endsWith(':surf_result');
 
   if (isResult) {
+    // Result is the deliverable — its arrival means everything before
+    // it is "done", so collapse all lingering phase blocks.
+    for (const phase of surfTabState.phases.values()) {
+      phase.wrap.dataset.state = 'collapsed';
+    }
+    surfTabState.activePhase = null;
     const b = document.createElement('div');
     b.className = 'surf-result-bubble';
     b.textContent = m.content;
@@ -3752,18 +3898,24 @@ function appendSurfRow(m) {
     return;
   }
 
-  const row = document.createElement('div');
   const isError = (m.sender_id || '').endsWith(':error');
-  const isBridges = (m.sender_id || '').endsWith(':surf_bridges');
-  row.className = 'surf-log-line' + (isError ? ' error' : '') + (isBridges ? ' bridges' : '');
-  const ts = m.created_at
-    ? new Date(m.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false })
-    : '';
-  row.innerHTML = `
-    <span class="surf-log-time">${esc(ts)}</span>
-    <span class="surf-log-text">${esc(m.content)}</span>
-  `;
-  log.appendChild(row);
+  const phaseName = classifySurfLine(m.content) ?? surfTabState.activePhase ?? 'setup';
+  const phase = getOrCreateSurfPhase(phaseName);
+  if (!phase) return;
+  pushSurfPhaseLine(phase, m.content, isError ? 'error' : 'info');
+}
+
+// Called after a fresh load of all stored messages — if the run is no
+// longer active, collapse every phase so the user sees only summaries.
+function finalizeSurfPhasesIfDone() {
+  const c = surfTabState.current;
+  if (!c) return;
+  const isActive = state.activeSurfs.has(c.id) || c.active;
+  if (isActive) return;
+  for (const phase of surfTabState.phases.values()) {
+    phase.wrap.dataset.state = 'collapsed';
+  }
+  surfTabState.activePhase = null;
 }
 
 function scrollSurfToBottom() {
@@ -3839,22 +3991,11 @@ async function stopCurrentSurf() {
 
 async function openSurfModal() {
   surfTabState.modalSelectedSource = '';
-  document.getElementById('surf-modal-budget').value = '10';
+  document.getElementById('surf-modal-budget').value = '0.30';
 
   // Default bot: whatever is filtered in the sidebar, else the first configured.
   surfTabState.modalSelectedBot =
     state.botFilter || (state.bots[0]?.id ?? '');
-
-  // Reset vector-direction controls each time the modal opens. Re-running
-  // onSurfDirectionChange() after the radio reset keeps the manual-fields
-  // visibility in sync with the radio (otherwise a leftover state from a
-  // prior open could show the wrong subset).
-  const autoRadio = document.querySelector('input[name="surf-direction"][value="auto"]');
-  if (autoRadio) autoRadio.checked = true;
-  document.getElementById('surf-modal-vector-topic').value = '';
-  document.getElementById('surf-modal-vector-mode').value = 'depth';
-  document.getElementById('surf-modal-vector-fresh').value = '';
-  onSurfDirectionChange();
 
   // Render bot picker; switching bot also reloads the source list (the chosen
   // anchor must belong to the selected bot).
@@ -3896,42 +4037,20 @@ async function reloadSurfModalSources() {
 
 function closeSurfModal(e) { closeModal('surf-modal', e); }
 
-function onSurfDirectionChange() {
-  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
-  document.getElementById('surf-manual-fields').style.display = dir === 'manual' ? 'flex' : 'none';
-  if (dir === 'manual') onSurfModeChange();
-}
-
-function onSurfModeChange() {
-  const mode = document.getElementById('surf-modal-vector-mode').value;
-  document.getElementById('surf-modal-vector-fresh').style.display = mode === 'fresh' ? 'block' : 'none';
-}
-
 async function submitSurfModal() {
   if (!surfTabState.modalSelectedBot) { alert('请选一个机器人'); return; }
   const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
-  const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
+  const costBudgetUsd = budgetRaw ? Math.max(0.01, parseFloat(budgetRaw)) : undefined;
+  if (budgetRaw && !Number.isFinite(costBudgetUsd)) {
+    alert('预算需要填一个数字（USD）');
+    return;
+  }
   const body = {
     autoStart: true,
     botId: surfTabState.modalSelectedBot,
   };
   if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
-  if (budget) body.budget = budget;
-
-  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
-  if (dir === 'manual') {
-    const topic = document.getElementById('surf-modal-vector-topic').value.trim();
-    if (!topic) { alert('请填 topic 或切回自动选'); return; }
-    const mode = document.getElementById('surf-modal-vector-mode').value;
-    const override = { topic, mode };
-    if (mode === 'fresh') {
-      const fresh = document.getElementById('surf-modal-vector-fresh').value.trim();
-      if (fresh) override.freshness_window = fresh;
-    }
-    body.vectorOverride = override;
-  } else if (dir === 'serendipity') {
-    body.forceSerendipity = true;
-  }
+  if (costBudgetUsd) body.costBudgetUsd = costBudgetUsd;
 
   try {
     const res = await fetch('/api/surf/conversations', {
@@ -3991,12 +4110,11 @@ function renderReviewConvItem(conv) {
   const subtitle = conv.source_message_conv_id
     ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
     : '自由回顾';
-  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
   const dot = isPending ? '<span class="conv-pending-dot"></span>' : '';
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(conv.title || '回顾')}</span>
-      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-subtitle">${esc(subtitle)}</span>
       <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
     </span>
     <span class="conv-actions">
@@ -4063,7 +4181,6 @@ function updateReviewHeader() {
   title.textContent = c.title || '回顾';
   const isPending = state.pendingReviews.has(c.id);
   const parts = [
-    `模型 ${c.model_slug ?? '—'}`,
     c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由回顾',
     `状态 ${statusLabel(c.status, isPending)}`,
   ];

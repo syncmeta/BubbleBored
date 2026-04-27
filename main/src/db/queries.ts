@@ -58,7 +58,7 @@ export function deleteUserCascade(userId: string): string[] {
   db.query('DELETE FROM device_tokens WHERE user_id = ?').run(userId);
   db.query('DELETE FROM user_profile WHERE user_id = ?').run(userId);
   db.query('DELETE FROM skills WHERE user_id = ?').run(userId);
-  db.query('DELETE FROM surf_vectors WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM bot_journal_entries WHERE user_id = ?').run(userId);
   db.query('DELETE FROM api_keys WHERE user_id = ?').run(userId);
   // The invite history belongs to the admin who minted invites, not the
   // recipient — null the back-pointer rather than dropping the row.
@@ -426,33 +426,26 @@ export function getAttachmentsForMessages(messageIds: string[]): Record<string, 
 
 // ---------- Surf runs / Review runs (standalone tabs) ----------
 
-export type SurfRunKind = 'vector' | 'serendipity';
-
 export interface SurfRunRow {
   conversation_id: string;
   source_message_conv_id: string | null;
-  model_slug: string;
   status: string;
   started_at: number | null;
   ended_at: number | null;
-  budget: number;
+  cost_budget_usd: number;
+  cost_used_usd: number;
   created_at: number;
-  kind: SurfRunKind;
-  vector_json: string | null;
 }
 
 export function createSurfRun(params: {
   conversationId: string;
   sourceMessageConvId: string | null;
-  modelSlug: string;
-  budget: number;
-  kind?: SurfRunKind;
+  costBudgetUsd: number;
 }): void {
   getDb().query(
-    `INSERT INTO surf_runs (conversation_id, source_message_conv_id, model_slug, budget, kind)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(params.conversationId, params.sourceMessageConvId,
-        params.modelSlug, params.budget, params.kind ?? 'vector');
+    `INSERT INTO surf_runs (conversation_id, source_message_conv_id, cost_budget_usd)
+     VALUES (?, ?, ?)`
+  ).run(params.conversationId, params.sourceMessageConvId, params.costBudgetUsd);
 }
 
 export function getSurfRun(conversationId: string): SurfRunRow | null {
@@ -472,103 +465,59 @@ export function setSurfRunStatus(
   ).run(status, conversationId);
 }
 
-export function setSurfRunKind(conversationId: string, kind: SurfRunKind): void {
+export function addSurfRunCost(conversationId: string, deltaUsd: number): void {
+  if (!Number.isFinite(deltaUsd) || deltaUsd <= 0) return;
   getDb().query(
-    `UPDATE surf_runs SET kind = ? WHERE conversation_id = ?`
-  ).run(kind, conversationId);
+    `UPDATE surf_runs SET cost_used_usd = cost_used_usd + ? WHERE conversation_id = ?`
+  ).run(deltaUsd, conversationId);
 }
 
-export function setSurfRunVectorJson(
-  conversationId: string, vectorJson: string,
-): void {
-  getDb().query(
-    `UPDATE surf_runs SET vector_json = ? WHERE conversation_id = ?`
-  ).run(vectorJson, conversationId);
-}
+// ---------- Bot journal (first-person experience log across conversations) ----------
+//
+// Each surf run produces one entry: a short first-person account of what the
+// bot saw and felt. Pulled into the chat system prompt so the bot can
+// reference its own real experiences in conversation ("前几天我看了一篇…").
+// User-scoped so different people get the bot's experience as it unfolded
+// in their own thread of attention; bot-scoped because the persona is the bot.
 
-// ---------- Surf vectors (per-vector dedup + serendipity counter) ----------
-
-export type SurfMode = 'depth' | 'granular' | 'fresh' | 'serendipity';
-
-export interface SurfVectorRow {
+export interface BotJournalEntryRow {
   id: string;
-  user_id: string;
   bot_id: string;
-  surf_conv_id: string;
-  vector_hash: string;
-  topic: string;
-  mode: SurfMode;
-  why_now: string | null;
-  freshness_window: string | null;
-  was_override: number;
+  user_id: string;
+  surf_conv_id: string | null;
+  content: string;
   created_at: number;
 }
 
-export function recordSurfVector(params: {
+export function createBotJournalEntry(params: {
   id: string;
-  userId: string;
   botId: string;
-  surfConvId: string;
-  vectorHash: string;
-  topic: string;
-  mode: SurfMode;
-  whyNow?: string | null;
-  freshnessWindow?: string | null;
-  wasOverride?: boolean;
+  userId: string;
+  surfConvId?: string | null;
+  content: string;
 }): void {
   getDb().query(
-    `INSERT INTO surf_vectors
-       (id, user_id, bot_id, surf_conv_id, vector_hash, topic, mode,
-        why_now, freshness_window, was_override)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO bot_journal_entries (id, bot_id, user_id, surf_conv_id, content)
+     VALUES (?, ?, ?, ?, ?)`
   ).run(
-    params.id, params.userId, params.botId, params.surfConvId,
-    params.vectorHash, params.topic, params.mode,
-    params.whyNow ?? null, params.freshnessWindow ?? null,
-    params.wasOverride ? 1 : 0,
+    params.id, params.botId, params.userId,
+    params.surfConvId ?? null, params.content,
   );
 }
 
-export function recentSurfVectors(
-  userId: string, botId: string, days: number,
-): SurfVectorRow[] {
-  const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
-  return getDb().query<SurfVectorRow, [string, string, number]>(
-    `SELECT * FROM surf_vectors
-     WHERE user_id = ? AND bot_id = ? AND created_at >= ?
-     ORDER BY created_at DESC`
-  ).all(userId, botId, cutoff);
-}
-
-// Counts surf runs in the recent past — used to decide whether the next
-// Counts how many runs since the last serendipity-kind run for this user/bot.
-// Used by the picker to decide whether it's time for another serendipity.
-// Returns Number.MAX_SAFE_INTEGER if no serendipity has ever fired (so the
-// first qualifying run after install can still trigger one).
-export function runsSinceLastSerendipity(
-  userId: string, botId: string,
-): number {
-  const db = getDb();
-  const last = db.query<{ created_at: number }, [string, string]>(
-    `SELECT sr.created_at FROM surf_runs sr
-       JOIN conversations c ON sr.conversation_id = c.id
-     WHERE c.user_id = ? AND c.bot_id = ? AND sr.kind = 'serendipity'
-     ORDER BY sr.created_at DESC LIMIT 1`
-  ).get(userId, botId);
-  if (!last) return Number.MAX_SAFE_INTEGER;
-  const row = db.query<{ n: number }, [string, string, number]>(
-    `SELECT COUNT(*) as n FROM surf_runs sr
-       JOIN conversations c ON sr.conversation_id = c.id
-     WHERE c.user_id = ? AND c.bot_id = ? AND sr.created_at > ?
-       AND sr.status IN ('done', 'running')`
-  ).get(userId, botId, last.created_at);
-  return row?.n ?? 0;
+export function recentBotJournalEntries(
+  botId: string, userId: string, limit: number,
+): BotJournalEntryRow[] {
+  return getDb().query<BotJournalEntryRow, [string, string, number]>(
+    `SELECT * FROM bot_journal_entries
+     WHERE bot_id = ? AND user_id = ?
+     ORDER BY created_at DESC LIMIT ?`
+  ).all(botId, userId, limit);
 }
 
 export interface ReviewRunRow {
   conversation_id: string;
   source_message_conv_id: string | null;
-  model_slug: string;
   status: string;
   started_at: number | null;
   ended_at: number | null;
@@ -578,12 +527,11 @@ export interface ReviewRunRow {
 export function createReviewRun(params: {
   conversationId: string;
   sourceMessageConvId: string | null;
-  modelSlug: string;
 }): void {
   getDb().query(
-    `INSERT INTO review_runs (conversation_id, source_message_conv_id, model_slug)
-     VALUES (?, ?, ?)`
-  ).run(params.conversationId, params.sourceMessageConvId, params.modelSlug);
+    `INSERT INTO review_runs (conversation_id, source_message_conv_id)
+     VALUES (?, ?)`
+  ).run(params.conversationId, params.sourceMessageConvId);
 }
 
 export function getReviewRun(conversationId: string): ReviewRunRow | null {

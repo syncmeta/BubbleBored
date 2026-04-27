@@ -4,6 +4,7 @@ import { annotateMessage } from './time';
 import { readAttachmentFile } from './attachments';
 import { getCachedPerceptionBlock, refreshPerceptionInBackground } from './perception';
 import { buildSkillsPromptBlock } from './skills';
+import { buildJournalPromptBlock } from './surfing/journal';
 import { messageBus } from '../bus/router';
 import type { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/resources/chat/completions';
 
@@ -72,7 +73,7 @@ export async function buildPrompt(params: {
   // 'wechat' (default): casual multi-bubble + [SILENT] protocol.
   // 'normal': straightforward AI assistant — single message, normal punctuation.
   tone?: ChatTone;
-}): Promise<ChatCompletionMessageParam[]> {
+}): Promise<{ messages: ChatCompletionMessageParam[]; hasInlineImages: boolean }> {
   const botConfig = configManager.getBotConfig(params.botId);
 
   // Read prompts fresh (no cache). The "normal AI" tone swaps in a different
@@ -115,6 +116,14 @@ export async function buildPrompt(params: {
     // resolutions, not ambient sensor data.
     const reflBlock = buildSelfReflectionBlock(params.botId, userId);
     if (reflBlock) system += '\n\n' + reflBlock;
+
+    // Surfing journal — bot's own first-person experiences across conversations.
+    // Lets the bot reference real things it has seen ("前几天我刷到一个东西…")
+    // without us having to push them at the user.
+    const journal = buildJournalPromptBlock(
+      params.botId, userId, botConfig.surfing.journalEntriesInChat,
+    );
+    if (journal.block) system += '\n\n' + journal.block;
   }
 
   // Append the AI-generated perception block last so the model treats it as
@@ -224,5 +233,5 @@ export async function buildPrompt(params: {
     messages.push({ role, content: parts });
   }
 
-  return messages;
+  return { messages, hasInlineImages: inlineImageMsgIds.size > 0 };
 }

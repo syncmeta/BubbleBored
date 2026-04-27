@@ -7,7 +7,7 @@ import {
   createPortrait, type PortraitKind,
 } from '../../db/queries';
 import { getUserProfile } from '../../honcho/memory';
-import { modelFor } from '../models';
+import { modelForTask } from '../models';
 
 const PROMPT_FILES: Record<PortraitKind, string> = {
   moments: 'portrait/moments.md',
@@ -98,7 +98,9 @@ export async function generatePortrait(input: GenerateInput): Promise<GenerateRe
   }
 
   const systemPrompt = await configManager.readPrompt(PROMPT_FILES[input.kind]);
-  const model = input.model ?? modelFor(sourceConv.bot_id);
+  // Portrait is "人的分析" — pulls the system-wide humanAnalysis slot
+  // unless the caller specifically pinned a model (UI override path).
+  const model = input.model ?? modelForTask('humanAnalysis');
 
   const userMessage = [
     profileText ? profileText + '\n' : '',

@@ -758,6 +758,64 @@ main {
 }
 .surf-log-line .surf-log-text { flex: 1; }
 
+/* ── Surf phase blocks (Claude Code-style collapsible groups) ── */
+.surf-phase {
+  border: 1px solid var(--border-light, #e5e7eb);
+  border-radius: 8px;
+  background: var(--bg-soft, transparent);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.surf-phase-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+.surf-phase-head:hover { background: var(--bg-hover, rgba(0,0,0,0.04)); }
+.surf-phase-head .phase-chevron {
+  font-size: 10px;
+  color: var(--text-4);
+  transition: transform 120ms ease;
+  width: 10px;
+  text-align: center;
+}
+.surf-phase[data-state="collapsed"] .phase-chevron { transform: rotate(-90deg); }
+.surf-phase-head .phase-icon { font-size: 13px; }
+.surf-phase-head .phase-label {
+  font-weight: 600;
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+.surf-phase-head .phase-summary {
+  color: var(--text-3);
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.surf-phase-body {
+  padding: 4px 10px 10px 28px;
+  border-top: 1px solid var(--border-light, #e5e7eb);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.surf-phase[data-state="collapsed"] .surf-phase-body { display: none; }
+.surf-phase-line {
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+.surf-phase-line.error { color: var(--red, #dc2626); }
+
 .surf-result-bubble,
 .review-result-bubble {
   align-self: flex-start;
@@ -1946,31 +2004,6 @@ main {
 .bot-pick-pill .bot-avatar {
   width: 18px; height: 18px; font-size: 10px;
 }
-
-.surf-direction { display: flex; flex-direction: column; gap: 6px; }
-.surf-dir-row {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 13px; color: var(--text-1); cursor: pointer;
-  padding: 4px 0;
-}
-.surf-dir-row input[type="radio"] { margin: 0; }
-.surf-manual-fields {
-  display: flex; flex-direction: column; gap: 8px;
-  margin: 4px 0 6px 22px;
-  padding: 10px;
-  background: var(--bg);
-  border: 1px solid var(--border-light);
-  border-radius: var(--r-sm, 6px);
-}
-.surf-manual-fields select {
-  font: inherit;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  background: var(--bg);
-  color: var(--text-1);
-}
-.surf-manual-fields select:focus { border-color: var(--accent-muted); outline: none; }
 
 /* ── Reusable searchable model picker (model-picker.js) ── */
 

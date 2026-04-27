@@ -9,7 +9,7 @@
 import { chatCompletion } from '../../llm/client';
 import { logAudit } from '../../llm/audit';
 import { findConversationById, getMessages, listConversationsByUser } from '../../db/queries';
-import { modelFor } from '../models';
+import { modelForTask } from '../models';
 import { getWeather } from './weather';
 
 interface PerceptionParts {
@@ -69,7 +69,8 @@ async function inferTaskPhase(conversationId: string, botId: string, userId: str
     `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
   ).join('\n');
 
-  const model = modelFor(botId);
+  // Perception is "agent 决策" — pulls the system-wide agentDecision slot.
+  const model = modelForTask('agentDecision');
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({
@@ -129,7 +130,8 @@ async function inferCrossFocus(userId: string, botId: string): Promise<string> {
   }
 
   // Cheap LLM summary — same model as task-phase
-  const model = modelFor(botId);
+  // Perception is "agent 决策" — pulls the system-wide agentDecision slot.
+  const model = modelForTask('agentDecision');
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({
