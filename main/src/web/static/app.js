@@ -2181,6 +2181,10 @@ function getDefaultDebateBotIds() {
   return state.bots.map(b => b.id);
 }
 function getDebateMaxMsgs() {
+  // Prefer the per-session value stamped at creation time; fall back to the
+  // localStorage knob (used as the modal default) and finally the global cap.
+  const sessionVal = debateState.currentDebate?.max_messages;
+  if (Number.isFinite(sessionVal) && sessionVal > 0) return Math.min(sessionVal, 200);
   const v = parseInt(localStorage.getItem('debate-max-msgs') || '', 10);
   return Number.isFinite(v) && v > 0 ? Math.min(v, 200) : DEFAULT_DEBATE_MAX_MSGS;
 }
@@ -2551,11 +2555,18 @@ function renderDebateModalBots() {
     row.className = 'debate-bot-row';
     const checked = debateState.pickedBotIds.has(b.id) ? 'checked' : '';
     const model = b.config?.model || '';
+    // Bot name + the model it currently runs as two separate pill tags so it's
+    // obvious which underlying brain each participant is using.
+    const modelTag = model
+      ? `<span class="debate-bot-tag model" title="${esc(model)}">${esc(model)}</span>`
+      : '';
     row.innerHTML = `
       <input type="checkbox" data-bot-id="${esc(b.id)}" ${checked}>
       <span class="bot-avatar emoji" style="background:${botColor(b.id)}">${botEmoji(b.id)}</span>
-      <span class="debate-bot-name">${esc(b.display_name || b.id)}</span>
-      <span class="debate-bot-model">${esc(model)}</span>
+      <span class="debate-bot-tags">
+        <span class="debate-bot-tag name">${esc(b.display_name || b.id)}</span>
+        ${modelTag}
+      </span>
     `;
     const cb = row.querySelector('input');
     cb.addEventListener('change', () => {
@@ -2597,6 +2608,7 @@ async function submitDebateModal() {
       body: JSON.stringify({
         topic: topic || null,
         botIds: ids,
+        maxMessages,
       }),
     });
     const data = await res.json();
@@ -2607,7 +2619,10 @@ async function submitDebateModal() {
     closeDebateModal();
     await loadDebateConversations();
     renderConvList();
-    selectDebateConv(data.id);
+    await selectDebateConv(data.id);
+    // Kick off the first round immediately — saves the user one click for the
+    // common "create then talk" path.
+    runDebateRoundClick();
   } catch (e) {
     alert('创建失败: ' + e.message);
   }
@@ -2632,7 +2647,7 @@ function connectDebateEvents() {
       }
     } catch {}
   });
-  debateState.es.addEventListener('done', (e) => {
+  debateState.es.addEventListener('done', async (e) => {
     try {
       const data = JSON.parse(e.data);
       if (state.currentConversationId === data.conversationId) {
@@ -2641,10 +2656,13 @@ function connectDebateEvents() {
           ? `Round ${data.round} 已暂停 · ${data.delivered} 条`
           : `Round ${data.round} 完成 · ${data.delivered} 条`;
         setDebateStatus(tail);
-        if (debateState.currentDebate) {
-          debateState.currentDebate.round_count_debate = data.round;
-          updateDebateHeader();
-        }
+        // Re-fetch the conv so the auto-generated round title (and bumped
+        // round count) shows up in the header without a manual refresh.
+        try {
+          const res = await fetch(`/api/debate/conversations/${data.conversationId}`);
+          debateState.currentDebate = await res.json();
+        } catch {}
+        updateDebateHeader();
       }
       if (state.currentTab === 'debate') {
         loadDebateConversations().then(renderConvList);
