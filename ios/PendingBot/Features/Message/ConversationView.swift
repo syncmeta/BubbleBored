@@ -27,6 +27,11 @@ struct ConversationView: View {
     // when the bot reply arrives. Displayed as an inline log above the
     // pending-typing row, mirroring the web's `.surf-log` panel.
     @State private var searchLog: [String] = []
+    // When a bot reply lands, the in-flight searchLog is pinned to that
+    // message's id and rendered as a collapsed chip above its bubble — so
+    // the search trace doesn't disappear, it just folds away. Session-only;
+    // not persisted across reloads (server doesn't store it yet).
+    @State private var pinnedToolLogs: [String: [String]] = [:]
     // Skill summaries for the chat-header chip count + popover. Loaded on
     // view appear and refreshed when the popover sheet closes.
     @State private var skills: [SkillSummary] = []
@@ -80,7 +85,8 @@ struct ConversationView: View {
                             BubbleView(message: msg,
                                        botName: botName,
                                        conversationID: conversation.id,
-                                       serverURL: account?.serverURL)
+                                       serverURL: account?.serverURL,
+                                       toolLog: pinnedToolLogs[msg.id])
                                 .id(msg.id)
                                 .contextMenu {
                                     Button {
@@ -222,9 +228,15 @@ struct ConversationView: View {
             // whole message lands in one frame. Append (or replace if we
             // already have a row with this id from a previous load).
             pending = false
-            searchLog.removeAll()
             guard let content = event.content, !content.isEmpty else { return }
             let id = event.messageId ?? "remote-\(UUID().uuidString)"
+            // Pin the in-flight search trace to this bot message id so the
+            // chip survives `searchLog.removeAll()` below — the user can
+            // expand it later instead of having it vanish on completion.
+            if !searchLog.isEmpty {
+                pinnedToolLogs[id] = searchLog
+            }
+            searchLog.removeAll()
             if let idx = messages.firstIndex(where: { $0.id == id }) {
                 messages[idx] = ChatMessage(
                     id: id, conversation_id: conversation.id,
