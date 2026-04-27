@@ -218,7 +218,7 @@ struct ConversationView: View {
                     attachments: messages[idx].attachments
                 )
             } else {
-                withAnimation(.easeOut(duration: 0.28)) {
+                withAnimation(.easeOut(duration: 0.22)) {
                     messages.append(ChatMessage(
                         id: id, conversation_id: conversation.id,
                         sender_type: "bot", sender_id: event.senderId ?? "",
