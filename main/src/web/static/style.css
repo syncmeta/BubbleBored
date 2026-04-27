@@ -567,6 +567,8 @@ main {
   font-size: 12.5px;
   line-height: 1.7;
 }
+
+/* review tab still uses the flat-line layout */
 .surf-log-line {
   display: flex; gap: 12px;
   color: var(--text-2);
@@ -583,6 +585,64 @@ main {
   padding-top: 1px;
 }
 .surf-log-line .surf-log-text { flex: 1; }
+
+/* ── Surf phase blocks (Claude Code-style collapsible groups) ── */
+.surf-phase {
+  border: 1px solid var(--border-light, #e5e7eb);
+  border-radius: 8px;
+  background: var(--bg-soft, transparent);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.surf-phase-head {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+.surf-phase-head:hover { background: var(--bg-hover, rgba(0,0,0,0.04)); }
+.surf-phase-head .phase-chevron {
+  font-size: 10px;
+  color: var(--text-4);
+  transition: transform 120ms ease;
+  width: 10px;
+  text-align: center;
+}
+.surf-phase[data-state="collapsed"] .phase-chevron { transform: rotate(-90deg); }
+.surf-phase-head .phase-icon { font-size: 13px; }
+.surf-phase-head .phase-label {
+  font-weight: 600;
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+.surf-phase-head .phase-summary {
+  color: var(--text-3);
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.surf-phase-body {
+  padding: 4px 10px 10px 28px;
+  border-top: 1px solid var(--border-light, #e5e7eb);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.surf-phase[data-state="collapsed"] .surf-phase-body { display: none; }
+.surf-phase-line {
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+.surf-phase-line.error { color: var(--red, #dc2626); }
 
 .surf-result-bubble,
 .review-result-bubble {
