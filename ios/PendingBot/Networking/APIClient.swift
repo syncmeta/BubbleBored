@@ -50,6 +50,14 @@ struct APIClient {
         _ = try await sendRaw(req)
     }
 
+    /// Fire-and-forget POST that doesn't care about the response body. Used
+    /// for control endpoints like /pause where the only thing that matters is
+    /// the HTTP status code.
+    func postVoid(_ path: String) async throws {
+        let req = try makeRequest(method: "POST", path: path, query: [], body: nil as Empty?)
+        _ = try await sendRaw(req)
+    }
+
     // ── Multipart upload — used by POST /api/upload ────────────────────────
 
     func upload<T: Decodable>(_ path: String, fileData: Data, fileName: String, mime: String,

@@ -292,14 +292,14 @@
           <div class="input-outer">
             <div class="input-wrap">
               <textarea id="debate-clarify-input" placeholder="辟谣 / 注入观点（可选）" rows="1"></textarea>
-              <button id="debate-inject-btn" class="btn-soft" onclick="injectDebateClarification()" title="注入这段并自动开下一轮">注入并下一轮</button>
-              <button id="debate-pause-btn" onclick="pauseDebateRoundClick()" aria-label="暂停" title="暂停（说完当前这条就停）" style="display:none">
+              <button id="debate-inject-btn" class="btn-soft" onclick="injectDebateClarification()" title="注入这段并继续议论">注入并继续</button>
+              <button id="debate-pause-btn" onclick="pauseDebateRoundClick()" aria-label="停止" title="停止（说完当前这条就停）" style="display:none">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <rect x="6" y="5" width="4" height="14" rx="1"/>
                   <rect x="14" y="5" width="4" height="14" rx="1"/>
                 </svg>
               </button>
-              <button id="debate-round-btn" onclick="runDebateRoundClick()" aria-label="下一轮议论">
+              <button id="debate-round-btn" onclick="runDebateRoundClick()" aria-label="继续议论" title="继续">
                 <svg width="16" height="16"><use href="#icon-rerun"/></svg>
               </button>
             </div>

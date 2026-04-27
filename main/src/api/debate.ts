@@ -28,6 +28,7 @@ debateRoutes.get('/conversations', (c) => {
       topic: settings?.topic ?? null,
       bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
       round_count_debate: settings?.round_count ?? 0,
+      max_messages: settings?.max_messages ?? null,
     };
   });
   return c.json(out);
@@ -35,7 +36,7 @@ debateRoutes.get('/conversations', (c) => {
 
 debateRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
-    topic?: string; botIds: string[];
+    topic?: string; botIds: string[]; maxMessages?: number;
   }>();
   if (!Array.isArray(body.botIds) || body.botIds.length < 2) {
     return c.json({ error: 'need at least 2 botIds' }, 400);
@@ -48,9 +49,13 @@ debateRoutes.post('/conversations', async (c) => {
   const ownerBotId = resolveBotId({ explicit: body.botIds[0] });
 
   const id = randomUUID();
-  const title = body.topic?.trim() || '议论';
-  createConversation(id, ownerBotId, user.id, title, 'debate');
-  createDebateSettings(id, body.botIds, body.topic?.trim() || null);
+  // Title starts blank; the orchestrator generates one from the first round's
+  // transcript using the same prompt as 消息 titles.
+  createConversation(id, ownerBotId, user.id, '', 'debate');
+  const maxMessages = Number.isFinite(body.maxMessages) && Number(body.maxMessages) > 0
+    ? Math.min(Math.floor(Number(body.maxMessages)), 200)
+    : null;
+  createDebateSettings(id, body.botIds, body.topic?.trim() || null, maxMessages);
 
   const conv = findConversationById(id);
   const settings = getDebateSettings(id);
@@ -59,6 +64,7 @@ debateRoutes.post('/conversations', async (c) => {
     topic: settings?.topic ?? null,
     bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
     round_count_debate: settings?.round_count ?? 0,
+    max_messages: settings?.max_messages ?? null,
   });
 });
 
@@ -87,6 +93,7 @@ debateRoutes.get('/conversations/:id', (c) => {
     topic: settings?.topic ?? null,
     bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
     round_count_debate: settings?.round_count ?? 0,
+    max_messages: settings?.max_messages ?? null,
   });
 });
 
@@ -105,6 +112,10 @@ debateRoutes.post('/conversations/:id/round', async (c) => {
     const body = await c.req.json<{ maxMessages?: number }>();
     if (typeof body?.maxMessages === 'number') maxMessages = body.maxMessages;
   } catch {}
+  if (maxMessages === undefined) {
+    const settings = getDebateSettings(conv.id);
+    if (settings?.max_messages != null) maxMessages = settings.max_messages;
+  }
 
   return streamingRound(conv, maxMessages);
 });
@@ -146,7 +157,13 @@ debateRoutes.post('/conversations/:id/clarify', async (c) => {
     return c.json({ ok: true, messageId });
   }
 
-  return streamingRound(conv, body.maxMessages, {
+  let max = body.maxMessages;
+  if (max === undefined) {
+    const settings = getDebateSettings(conv.id);
+    if (settings?.max_messages != null) max = settings.max_messages;
+  }
+
+  return streamingRound(conv, max, {
     initialMessage: { id: messageId, sender_type: 'user', sender_id: 'clarify', content },
   });
 });

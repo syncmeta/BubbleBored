@@ -647,16 +647,18 @@ export interface DebateSettingsRow {
   bot_ids: string;
   topic: string | null;
   round_count: number;
+  max_messages: number | null;
   created_at: number;
   updated_at: number;
 }
 
 export function createDebateSettings(
   conversationId: string, botIds: string[], topic: string | null,
+  maxMessages: number | null = null,
 ): void {
   getDb().query(
-    `INSERT INTO debate_settings (conversation_id, bot_ids, topic) VALUES (?, ?, ?)`
-  ).run(conversationId, JSON.stringify(botIds), topic);
+    `INSERT INTO debate_settings (conversation_id, bot_ids, topic, max_messages) VALUES (?, ?, ?, ?)`
+  ).run(conversationId, JSON.stringify(botIds), topic, maxMessages);
 }
 
 export function getDebateSettings(conversationId: string): DebateSettingsRow | null {

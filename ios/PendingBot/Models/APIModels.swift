@@ -174,6 +174,9 @@ struct DebateConversation: Codable, Identifiable, Hashable {
     let last_activity_at: Int
     let topic: String?
     let bot_ids: [String]?
+    /// Per-session cap on messages per round. nil = orchestrator default.
+    let max_messages: Int?
+    let round_count_debate: Int?
 }
 
 struct PortraitConversation: Codable, Identifiable, Hashable {
