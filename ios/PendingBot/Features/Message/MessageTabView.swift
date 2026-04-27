@@ -10,9 +10,16 @@ struct MessageTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var creatingForBot: Bot?
+    // Path-based nav so we can drive the bottom-tab-bar visibility from the
+    // root: hiding via `.toolbar(.hidden, for: .tabBar)` on the destination
+    // view evaluates only after push/pop commits, which makes the tab bar
+    // snap back in *after* the back transition finishes. With the modifier
+    // on the NavigationStack and keyed to `path.isEmpty`, the system slides
+    // it in/out alongside the navigation transition.
+    @State private var path: [Conversation] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "消息") {
                     Menu {
@@ -52,13 +59,7 @@ struct MessageTabView: View {
                                         Task { await delete(conv) }
                                     },
                                 ]) {
-                                    NavigationLink {
-                                        ConversationView(conversation: conv, bot: bot(for: conv)) {
-                                            reload()
-                                        }
-                                        .toolbar(.hidden, for: .tabBar)
-                                        .onAppear { unread.markRead(conv.id) }
-                                    } label: {
+                                    NavigationLink(value: conv) {
                                         ConversationListRow(
                                             conv: conv,
                                             bot: bot(for: conv),
@@ -78,10 +79,17 @@ struct MessageTabView: View {
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: Conversation.self) { conv in
+                ConversationView(conversation: conv, bot: bot(for: conv)) {
+                    reload()
+                }
+                .onAppear { unread.markRead(conv.id) }
+            }
             .alert("出错了", isPresented: .constant(error != nil), actions: {
                 Button("好") { error = nil }
             }, message: { Text(error ?? "") })
         }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
         .task { await load() }
     }
 

@@ -9,9 +9,13 @@ struct ReviewTabView: View {
     @State private var bots: [Bot] = []
     @State private var creating = false
     @State private var error: String?
+    // Path-based nav so `.toolbar(.hidden, for: .tabBar)` lives on the
+    // NavigationStack root and animates with push/pop (see MessageTabView
+    // for the rationale).
+    @State private var path: [ReviewConversation] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "回顾") {
                     Button { creating = true } label: {
@@ -27,10 +31,7 @@ struct ReviewTabView: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
-                                NavigationLink {
-                                    ReviewRunView(conversation: conv) { Task { await load() } }
-                                        .toolbar(.hidden, for: .tabBar)
-                                } label: {
+                                NavigationLink(value: conv) {
                                     runRow(title: conv.title ?? "回顾",
                                            subtitle: conv.status,
                                            active: false,
@@ -53,6 +54,9 @@ struct ReviewTabView: View {
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: ReviewConversation.self) { conv in
+                ReviewRunView(conversation: conv) { Task { await load() } }
+            }
             .sheet(isPresented: $creating) {
                 NewReviewSheet(bots: bots) { didCreate in
                     creating = false
@@ -60,6 +64,7 @@ struct ReviewTabView: View {
                 }
             }
         }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
         .task { await load() }
     }
 

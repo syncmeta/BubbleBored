@@ -9,9 +9,13 @@ struct SurfTabView: View {
     @State private var bots: [Bot] = []
     @State private var error: String?
     @State private var creating = false
+    // Path-based nav so `.toolbar(.hidden, for: .tabBar)` lives on the
+    // NavigationStack root and animates with push/pop (see MessageTabView
+    // for the rationale).
+    @State private var path: [SurfConversation] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "冲浪") {
                     Button { creating = true } label: {
@@ -27,10 +31,7 @@ struct SurfTabView: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
-                                NavigationLink {
-                                    SurfRunView(conversation: conv) { reload() }
-                                        .toolbar(.hidden, for: .tabBar)
-                                } label: {
+                                NavigationLink(value: conv) {
                                     runRow(title: conv.title ?? "未命名",
                                            subtitle: conv.model_slug,
                                            active: conv.active == true,
@@ -53,6 +54,9 @@ struct SurfTabView: View {
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: SurfConversation.self) { conv in
+                SurfRunView(conversation: conv) { reload() }
+            }
             .sheet(isPresented: $creating) {
                 NewSurfSheet(bots: bots) { didCreate in
                     creating = false
@@ -60,6 +64,7 @@ struct SurfTabView: View {
                 }
             }
         }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
         .task { await load() }
     }
 

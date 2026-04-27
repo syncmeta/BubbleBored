@@ -52,7 +52,6 @@ struct DebateTabView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: DebateRoute.self) { route in
                 DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
-                    .toolbar(.hidden, for: .tabBar)
             }
             .sheet(isPresented: $creating) {
                 NewDebateSheet(bots: bots) { result in
@@ -68,6 +67,10 @@ struct DebateTabView: View {
                 }
             }
         }
+        // Drive tab-bar visibility from the NavigationStack root so it
+        // slides in/out alongside push/pop instead of snapping back at
+        // the end of the back transition.
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
         .task { await load() }
     }
 
