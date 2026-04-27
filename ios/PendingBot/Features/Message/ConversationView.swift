@@ -254,7 +254,7 @@ struct ConversationView: View {
             Haptics.tap()
             chatTone = (chatTone == "normal") ? "wechat" : "normal"
         } label: {
-            Text(chatTone == "normal" ? "普通AI" : "微信")
+            Text(chatTone == "normal" ? "普通AI语气" : "微信语气")
                 .font(Theme.Fonts.rounded(size: 11, weight: .medium))
                 .foregroundStyle(chatTone == "normal" ? Theme.Palette.ink : Theme.Palette.inkMuted)
                 .padding(.horizontal, 8)
@@ -271,7 +271,7 @@ struct ConversationView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("切换语气")
-        .accessibilityValue(chatTone == "normal" ? "普通AI" : "微信聊天")
+        .accessibilityValue(chatTone == "normal" ? "普通AI语气" : "微信语气")
     }
 
     // ── Send ────────────────────────────────────────────────────────────────

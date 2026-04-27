@@ -1096,11 +1096,11 @@ function renderToneButton() {
   const btn = document.getElementById('tone-btn');
   if (!btn) return;
   const isNormal = state.chatTone === 'normal';
-  btn.textContent = isNormal ? '普通AI' : '微信';
+  btn.textContent = isNormal ? '普通AI语气' : '微信语气';
   btn.classList.toggle('tone-normal', isNormal);
   btn.title = isNormal
-    ? '当前：普通AI（单条消息、像 ChatGPT 一样回复）— 点击切换为「微信聊天」'
-    : '当前：微信聊天（短句、多条气泡）— 点击切换为「普通AI」';
+    ? '当前：普通AI语气（单条消息、像 ChatGPT 一样回复）— 点击切换为「微信语气」'
+    : '当前：微信语气（短句、多条气泡）— 点击切换为「普通AI语气」';
 }
 
 function toggleChatTone() {
