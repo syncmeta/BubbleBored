@@ -10,7 +10,6 @@ import {
   createReviewConversation, runReview, continueReview,
   reviewsByMessageConv, getPendingReviews,
 } from '../core/review';
-import { modelFor } from '../core/models';
 import {
   makeReplyFn, getOrCreateUser, findUser, resolveBotId,
   sseStream, assertFeatureType,
@@ -29,7 +28,6 @@ reviewRoutes.get('/conversations', (c) => {
     const run = getReviewRun(conv.id);
     return {
       ...conv,
-      model_slug: run?.model_slug ?? null,
       source_message_conv_id: run?.source_message_conv_id ?? null,
       status: run?.status ?? 'unknown',
       has_pending: pending.has(conv.id),
@@ -46,7 +44,6 @@ reviewRoutes.get('/conversations/:id', (c) => {
   const run = getReviewRun(id);
   return c.json({
     ...conv,
-    model_slug: run?.model_slug ?? null,
     source_message_conv_id: run?.source_message_conv_id ?? null,
     status: run?.status ?? 'unknown',
   });
@@ -68,7 +65,6 @@ reviewRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
     botId?: string;
     sourceMessageConversationId?: string;
-    modelSlug?: string;
     title?: string;
     autoStart?: boolean;
   }>();
@@ -88,12 +84,9 @@ reviewRoutes.post('/conversations', async (c) => {
     fromSourceConvId: sourceConvId,
   });
 
-  const modelSlug = body.modelSlug?.trim() || modelFor(botId);
-
   const reviewConvId = createReviewConversation({
     botId, userId: user.id,
     sourceMessageConvId: sourceConvId,
-    modelSlug,
     title: body.title ?? null,
   });
 
@@ -114,7 +107,6 @@ reviewRoutes.post('/conversations', async (c) => {
   return c.json({
     id: reviewConvId, botId,
     sourceMessageConversationId: sourceConvId,
-    modelSlug,
   });
 });
 

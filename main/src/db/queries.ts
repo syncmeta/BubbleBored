@@ -518,7 +518,6 @@ export function recentBotJournalEntries(
 export interface ReviewRunRow {
   conversation_id: string;
   source_message_conv_id: string | null;
-  model_slug: string;
   status: string;
   started_at: number | null;
   ended_at: number | null;
@@ -528,12 +527,11 @@ export interface ReviewRunRow {
 export function createReviewRun(params: {
   conversationId: string;
   sourceMessageConvId: string | null;
-  modelSlug: string;
 }): void {
   getDb().query(
-    `INSERT INTO review_runs (conversation_id, source_message_conv_id, model_slug)
-     VALUES (?, ?, ?)`
-  ).run(params.conversationId, params.sourceMessageConvId, params.modelSlug);
+    `INSERT INTO review_runs (conversation_id, source_message_conv_id)
+     VALUES (?, ?)`
+  ).run(params.conversationId, params.sourceMessageConvId);
 }
 
 export function getReviewRun(conversationId: string): ReviewRunRow | null {

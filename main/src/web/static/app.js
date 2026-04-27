@@ -3947,12 +3947,11 @@ function renderReviewConvItem(conv) {
   const subtitle = conv.source_message_conv_id
     ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
     : '自由回顾';
-  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
   const dot = isPending ? '<span class="conv-pending-dot"></span>' : '';
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(conv.title || '回顾')}</span>
-      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-subtitle">${esc(subtitle)}</span>
       <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
     </span>
     <span class="conv-actions">
@@ -4019,7 +4018,6 @@ function updateReviewHeader() {
   title.textContent = c.title || '回顾';
   const isPending = state.pendingReviews.has(c.id);
   const parts = [
-    `模型 ${c.model_slug ?? '—'}`,
     c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由回顾',
     `状态 ${statusLabel(c.status, isPending)}`,
   ];

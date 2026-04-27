@@ -577,4 +577,31 @@ function runMigrations(db: Database): void {
     `);
     db.exec('PRAGMA user_version = 21');
   }
+
+  // v22: review_runs drops model_slug. Mirrors the surf rebuild — "回顾"
+  // is classified as humanAnalysis and pulls models.humanAnalysis at run
+  // time; freezing a model at create time would let the per-run value
+  // drift from the actual call.
+  if (userVersion < 22) {
+    const cols = db.query(`PRAGMA table_info(review_runs)`).all() as Array<{ name: string }>;
+    if (cols.some(c => c.name === 'model_slug')) {
+      db.exec(`
+        CREATE TABLE review_runs_new (
+          conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+          source_message_conv_id TEXT REFERENCES conversations(id),
+          status TEXT NOT NULL DEFAULT 'pending',
+          started_at INTEGER,
+          ended_at INTEGER,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        INSERT INTO review_runs_new
+          (conversation_id, source_message_conv_id, status, started_at, ended_at, created_at)
+          SELECT conversation_id, source_message_conv_id, status, started_at, ended_at, created_at
+          FROM review_runs;
+        DROP TABLE review_runs;
+        ALTER TABLE review_runs_new RENAME TO review_runs;
+      `);
+    }
+    db.exec('PRAGMA user_version = 22');
+  }
 }

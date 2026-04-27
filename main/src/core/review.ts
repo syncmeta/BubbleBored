@@ -9,7 +9,7 @@ import {
 } from '../db/queries';
 import { getUserProfile, recordBotMessage } from '../honcho/memory';
 import { runSearchLoop } from './search/loop';
-import { modelFor } from './models';
+import { modelForTask } from './models';
 import type { OutboundMessage } from '../bus/types';
 
 export const reviewEvents = new EventEmitter();
@@ -72,7 +72,6 @@ export function createReviewConversation(params: {
   botId: string;
   userId: string;
   sourceMessageConvId: string | null;
-  modelSlug: string;
   title?: string | null;
 }): string {
   const id = randomUUID();
@@ -81,7 +80,6 @@ export function createReviewConversation(params: {
   createReviewRun({
     conversationId: id,
     sourceMessageConvId: params.sourceMessageConvId,
-    modelSlug: params.modelSlug,
   });
   return id;
 }
@@ -141,7 +139,10 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     }
 
     const reviewPrompt = await configManager.readPrompt('review.md');
-    const model = run.model_slug || modelFor(reviewConv.bot_id);
+    // Review is "人的分析" — pulls models.humanAnalysis at run time so a
+    // re-run picks up whichever model is currently configured for the
+    // category (no per-run frozen value).
+    const model = modelForTask('humanAnalysis');
     emit(reviewConvId, `模型：${model}`);
 
     const historyMessages = history.map((m: any) => ({
@@ -336,7 +337,6 @@ export async function checkAndTriggerReview(
     botId,
     userId: conv.user_id,
     sourceMessageConvId: messageConvId,
-    modelSlug: modelFor(botId),
     title: manual ? '回顾' : '自动回顾',
   });
   reviewsByMessageConv.set(messageConvId, reviewConvId);
@@ -398,7 +398,7 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
 
   try {
     const followupPrompt = await configManager.readPrompt('review-followup.md');
-    const model = run.model_slug || modelFor(reviewConv.bot_id);
+    const model = modelForTask('humanAnalysis');
 
     // Source-conv reference (the conversation being reviewed). Same 30-msg
     // slice runReview uses, rendered as plain text so we can stuff it into
