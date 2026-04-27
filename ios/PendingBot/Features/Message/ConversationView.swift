@@ -105,14 +105,10 @@ struct ConversationView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.22)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
+                    scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: searchLog.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.22)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
+                    scrollToBottom(proxy: proxy)
                 }
             }
 
@@ -175,6 +171,21 @@ struct ConversationView: View {
     }
 
     // ── Inbound from WebSocket ──────────────────────────────────────────────
+
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        // Defer one runloop so LazyVStack has measured any just-appended row;
+        // scrolling synchronously inside the same state-change tick lands on a
+        // stale offset and the list visibly jumps past the bottom.
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.22)) {
+                if let lastId = messages.last?.id {
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                } else {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+        }
+    }
 
     private func handle(_ event: InboundMessage) {
         guard event.conversationId == conversation.id else { return }
