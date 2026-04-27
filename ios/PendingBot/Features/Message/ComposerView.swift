@@ -14,7 +14,7 @@ struct ComposerView: View {
     var enabledSkillCount: Int = 0
     var canSend: Bool
     var onSend: () -> Void
-    var onModelChange: (String) -> Void
+    var onApplyModel: (String?, ModelPickScope) -> Void
     var onOpenSkills: () -> Void = {}
 
     @State private var showActions = false
@@ -103,7 +103,7 @@ struct ComposerView: View {
                     photoItems: $photoItems,
                     modelOverride: $modelOverride,
                     enabledSkillCount: enabledSkillCount,
-                    onModelChange: onModelChange,
+                    onApplyModel: onApplyModel,
                     onOpenSkills: {
                         showActions = false
                         onOpenSkills()

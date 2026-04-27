@@ -7,15 +7,26 @@ import PhotosUI
 /// keyboard would have been. `onDismiss` lets the host close the panel
 /// (e.g. after a photo pick) without the panel needing its own modal
 /// context.
+/// Where to apply a model pick from the composer's "模型选择" tile.
+enum ModelPickScope { case conversation, bot }
+
 struct ChatActionSheet: View {
     @Binding var photoItems: [PhotosPickerItem]
     @Binding var modelOverride: String
     var enabledSkillCount: Int = 0
-    var onModelChange: (String) -> Void
+    var onApplyModel: (String?, ModelPickScope) -> Void
     var onOpenSkills: () -> Void = {}
     var onDismiss: () -> Void = {}
 
     @State private var showModelPicker = false
+    // Pending pick waiting for the user to choose scope (conversation vs bot).
+    // nil slug = "clear" (revert to default), still needs the same scope ask.
+    @State private var pendingPick: PickPayload?
+
+    private struct PickPayload: Identifiable {
+        let id = UUID()
+        let slug: String?
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,7 +43,7 @@ struct ChatActionSheet: View {
                     showModelPicker = true
                     Haptics.tap()
                 } label: {
-                    actionTileLabel(icon: "cube.transparent", label: modelLabel)
+                    actionTileLabel(icon: "cube.transparent", label: "模型选择")
                 }
                 .buttonStyle(.plain)
 
@@ -61,23 +72,41 @@ struct ChatActionSheet: View {
                 initial: modelOverride,
                 allowsClear: true,
                 onPick: { picked in
-                    let next = picked ?? ""
-                    modelOverride = next
-                    onModelChange(next)
                     showModelPicker = false
+                    // Defer to a scope confirmation — same dialog whether the
+                    // user picked a slug or chose "跟随机器人默认" (nil).
+                    pendingPick = PickPayload(slug: picked)
                 }
             )
             .presentationDragIndicator(.visible)
             .tint(Theme.Palette.accent)
         }
+        .confirmationDialog(
+            pendingPick?.slug.map { "应用「\(shortSlug($0))」到…" } ?? "清除模型选择…",
+            isPresented: Binding(
+                get: { pendingPick != nil },
+                set: { if !$0 { pendingPick = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("仅本次会话") {
+                if let p = pendingPick { onApplyModel(p.slug, .conversation) }
+                pendingPick = nil
+            }
+            Button("这个机器人（仅自己）") {
+                if let p = pendingPick { onApplyModel(p.slug, .bot) }
+                pendingPick = nil
+            }
+            Button("取消", role: .cancel) { pendingPick = nil }
+        } message: {
+            Text(pendingPick?.slug == nil
+                 ? "选择「仅本次会话」会清掉本会话的临时指定；选择「这个机器人」会把你为这个机器人指定的模型也一并清掉，回到机器人默认。"
+                 : "选择「仅本次会话」只影响当前对话；选择「这个机器人」会改你这台号上这个机器人的默认模型，对所有未单独指定的会话生效。")
+        }
     }
 
-    private var modelLabel: String {
-        if modelOverride.isEmpty { return "模型选择" }
-        // Slug is a "provider/model[:variant]" string — drop the provider so
-        // the tile label stays one line.
-        let tail = modelOverride.split(separator: "/").last.map(String.init) ?? modelOverride
-        return tail
+    private func shortSlug(_ slug: String) -> String {
+        slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
     private func actionTileLabel(icon: String, label: String) -> some View {

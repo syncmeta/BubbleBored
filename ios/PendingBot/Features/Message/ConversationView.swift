@@ -38,8 +38,22 @@ struct ConversationView: View {
     // Per-user 联网 toggle. When on, every send carries metadata.webSearch=true.
     @AppStorage("bb_webSearch") private var webSearch = false
 
+    /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
+    /// override if set, otherwise the bot's resolved model (which itself
+    /// already accounts for the user's per-bot pin from 我 → 机器人管理).
     private var botName: String {
-        bot?.nameWithModel ?? conversation.bot_name ?? conversation.bot_id
+        let base = bot?.display_name ?? conversation.bot_name ?? conversation.bot_id
+        let tag: String? = {
+            let trimmed = modelOverride.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return shortSlug(trimmed) }
+            return bot?.modelTag
+        }()
+        guard let tag else { return base }
+        return "\(base) · \(tag)"
+    }
+
+    private func shortSlug(_ slug: String) -> String {
+        slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
     init(conversation: Conversation, bot: Bot?, onChange: @escaping () -> Void = {}) {
@@ -126,7 +140,9 @@ struct ConversationView: View {
                 enabledSkillCount: skills.filter { $0.enabled }.count,
                 canSend: canSend,
                 onSend: { Task { await send() } },
-                onModelChange: { slug in Task { await persistModelOverride(slug) } },
+                onApplyModel: { slug, scope in
+                    Task { await applyModelPick(slug: slug, scope: scope) }
+                },
                 onOpenSkills: { showingSkills = true }
             )
         }
@@ -445,21 +461,61 @@ struct ConversationView: View {
         }
     }
 
-    /// Persist the conversation's per-conversation model override. Empty
-    /// slug → null on the server (clears the override).
-    private func persistModelOverride(_ slug: String) async {
+    /// Apply a model pick from the composer's "模型选择" tile. The user
+    /// chose a scope:
+    ///   - `.conversation` — only this conversation; sets/clears the
+    ///     per-conversation override on the server.
+    ///   - `.bot` — this bot for this user across all conversations; sets
+    ///     the per-user-per-bot override AND clears the per-conv override
+    ///     so this conversation actually picks up the new default.
+    private func applyModelPick(slug: String?, scope: ModelPickScope) async {
+        let normalized = slug.flatMap { $0.isEmpty ? nil : $0 }
+        switch scope {
+        case .conversation:
+            modelOverride = normalized ?? ""
+            await patchConversationModel(slug: normalized)
+        case .bot:
+            // Clear the per-conv pin so the new bot default wins here too.
+            modelOverride = ""
+            await patchConversationModel(slug: nil)
+            await patchBotUserModel(slug: normalized)
+        }
+    }
+
+    private func patchConversationModel(slug: String?) async {
         guard let api else { return }
         struct Body: Encodable { let modelOverride: String? }
-        let payload = Body(modelOverride: slug.isEmpty ? nil : slug)
         do {
             _ = try await api.patch(
                 "api/mobile/conversations/\(conversation.id)",
-                body: payload
+                body: Body(modelOverride: slug)
             ) as EmptyResponse
             Haptics.success()
             onChange()
         } catch {
             self.error = "更换模型失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
+    }
+
+    private func patchBotUserModel(slug: String?) async {
+        guard let api else { return }
+        let botId = bot?.id ?? conversation.bot_id
+        struct Body: Encodable { let model: String? }
+        struct Reply: Decodable { let ok: Bool; let user_model: String? }
+        do {
+            _ = try await api.patch(
+                "api/mobile/bots/\(botId)",
+                body: Body(model: slug)
+            ) as Reply
+            Haptics.success()
+            // Bot.model is a let on a struct passed in from the parent — we
+            // can't mutate it locally. The parent list refreshes via
+            // onChange() (covers both list refresh and reopened-conversation
+            // flows); next reopen will reflect the new resolved model.
+            onChange()
+        } catch {
+            self.error = "更换机器人模型失败: \(error.localizedDescription)"
             Haptics.error()
         }
     }
