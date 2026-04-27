@@ -23,9 +23,20 @@ struct ConversationView: View {
     @State private var modelOverride: String = ""    // "" = use bot default
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
+    // Transient surf_status events from the in-flight 联网 search. Cleared
+    // when the bot reply arrives. Displayed as an inline log above the
+    // pending-typing row, mirroring the web's `.surf-log` panel.
+    @State private var searchLog: [String] = []
+    // Skill summaries for the chat-header chip count + popover. Loaded on
+    // view appear and refreshed when the popover sheet closes.
+    @State private var skills: [SkillSummary] = []
+    @State private var showingSkills = false
+    @State private var saveAsSkillBody: String?
     // Per-user tone preference, persisted globally across conversations.
     // 'wechat' = casual multi-bubble (default); 'normal' = single-message AI.
     @AppStorage("bb_chatTone") private var chatTone = "wechat"
+    // Per-user 联网 toggle. When on, every send carries metadata.webSearch=true.
+    @AppStorage("bb_webSearch") private var webSearch = false
 
     private var botName: String {
         bot?.nameWithModel ?? conversation.bot_name ?? conversation.bot_id
@@ -68,11 +79,24 @@ struct ConversationView: View {
                                         ShareLink(item: msg.content) {
                                             Label("分享", systemImage: "square.and.arrow.up")
                                         }
+                                        Button {
+                                            saveAsSkillBody = msg.content
+                                            Haptics.tap()
+                                        } label: {
+                                            Label("保存为技能", systemImage: "square.and.arrow.down.on.square")
+                                        }
                                     }
                                     Button(role: .destructive) {
                                         Task { await deleteMessage(msg) }
                                     } label: { Label("删除", systemImage: "trash") }
                                 }
+                        }
+
+                        if !searchLog.isEmpty {
+                            searchLogPanel
+                                .id("searchlog")
+                                .padding(.horizontal, Theme.Metrics.gutter)
+                                .padding(.top, 4)
                         }
 
                         Color.clear.frame(height: 8).id("bottom")
@@ -81,6 +105,11 @@ struct ConversationView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: searchLog.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
@@ -105,7 +134,27 @@ struct ConversationView: View {
             ws.bind(account: account)
             modelOverride = conversation.model_override ?? ""
             await loadHistory()
+            await loadSkills()
             ws.connect()
+        }
+        .sheet(isPresented: $showingSkills) {
+            NavigationStack {
+                SkillsView()
+            }
+            .tint(Theme.Palette.accent)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .onDisappear { Task { await loadSkills() } }
+        }
+        .sheet(item: Binding(
+            get: { saveAsSkillBody.map { SkillDraft(body: $0) } },
+            set: { saveAsSkillBody = $0?.body }
+        )) { draft in
+            SkillEditorSheet(mode: .createPrefilled(body: draft.body)) {
+                Task { await loadSkills() }
+            }
+            .tint(Theme.Palette.accent)
+            .presentationDragIndicator(.visible)
         }
         .onDisappear {
             ws.disconnect()
@@ -133,11 +182,19 @@ struct ConversationView: View {
         case "bot_typing":
             // Server toggles the typing indicator with active=true/false.
             pending = event.active ?? false
+        case "surf_status":
+            // 联网 search progress — accumulate into the inline log so the
+            // user sees "搜索中…" / "搜索完成" while the LLM warms up. Cleared
+            // when the actual bot reply arrives.
+            if let content = event.content, !content.isEmpty {
+                searchLog.append(content)
+            }
         case "message":
             // Full bot reply — server-side bots aren't token-streamed, the
             // whole message lands in one frame. Append (or replace if we
             // already have a row with this id from a previous load).
             pending = false
+            searchLog.removeAll()
             guard let content = event.content, !content.isEmpty else { return }
             let id = event.messageId ?? "remote-\(UUID().uuidString)"
             if let idx = messages.firstIndex(where: { $0.id == id }) {
@@ -238,7 +295,11 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
-            toneToggle
+            HStack(spacing: 6) {
+                skillsChip
+                webSearchToggle
+                toneToggle
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: pending)
         .padding(.horizontal, Theme.Metrics.gutter)
@@ -254,24 +315,102 @@ struct ConversationView: View {
             Haptics.tap()
             chatTone = (chatTone == "normal") ? "wechat" : "normal"
         } label: {
-            Text(chatTone == "normal" ? "普通AI语气" : "微信语气")
-                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                .foregroundStyle(chatTone == "normal" ? Theme.Palette.ink : Theme.Palette.inkMuted)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().fill(Theme.Palette.canvas.opacity(0.001))
-                )
-                .overlay(
-                    Capsule().strokeBorder(
-                        chatTone == "normal" ? Theme.Palette.ink.opacity(0.35) : Theme.Palette.inkMuted.opacity(0.25),
-                        lineWidth: 0.8
-                    )
-                )
+            chipText(label: chatTone == "normal" ? "普通AI" : "微信",
+                     active: chatTone == "normal")
         }
         .buttonStyle(.plain)
         .accessibilityLabel("切换语气")
         .accessibilityValue(chatTone == "normal" ? "普通AI语气" : "微信语气")
+    }
+
+    // 联网 toggle. When on, every send carries `metadata.webSearch=true` and
+    // the server runs a one-shot Jina search before invoking the LLM.
+    // Persisted globally — matches the web client's mental model.
+    private var webSearchToggle: some View {
+        Button {
+            Haptics.tap()
+            webSearch.toggle()
+        } label: {
+            chipText(label: "联网", active: webSearch)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("联网搜索")
+        .accessibilityValue(webSearch ? "已开启" : "已关闭")
+    }
+
+    // Chat-header skills chip — shows the count of currently-enabled skills.
+    // Tap opens the full skills management sheet so the user can toggle /
+    // edit without leaving the conversation.
+    private var skillsChip: some View {
+        let enabledCount = skills.filter { $0.enabled }.count
+        return Button {
+            Haptics.tap()
+            showingSkills = true
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "puzzlepiece.extension")
+                    .font(.system(size: 10, weight: .medium))
+                if enabledCount > 0 {
+                    Text("\(enabledCount)")
+                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                }
+            }
+            .foregroundStyle(enabledCount > 0 ? Theme.Palette.accent : Theme.Palette.inkMuted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .overlay(
+                Capsule().strokeBorder(
+                    enabledCount > 0 ? Theme.Palette.accent.opacity(0.5)
+                                     : Theme.Palette.inkMuted.opacity(0.25),
+                    lineWidth: 0.8
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .opacity(skills.isEmpty ? 0 : 1)
+        .accessibilityLabel("已启用 \(enabledCount) 个技能")
+    }
+
+    // Shared chip styling so the row reads as one cohesive control group.
+    private func chipText(label: String, active: Bool) -> some View {
+        Text(label)
+            .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+            .foregroundStyle(active ? Theme.Palette.accent : Theme.Palette.inkMuted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .overlay(
+                Capsule().strokeBorder(
+                    active ? Theme.Palette.accent.opacity(0.5)
+                           : Theme.Palette.inkMuted.opacity(0.25),
+                    lineWidth: 0.8
+                )
+            )
+    }
+
+    // Inline list of recent surf_status events while a 联网 search is in
+    // flight. Mirrors the `.surf-log` panel on web — disappears when the
+    // bot reply arrives (handle() clears `searchLog`).
+    private var searchLogPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(searchLog.enumerated()), id: \.offset) { _, line in
+                HStack(spacing: 6) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                    Text(line)
+                        .font(Theme.Fonts.rounded(size: 12, weight: .regular))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted.opacity(0.6))
+        )
     }
 
     // ── Send ────────────────────────────────────────────────────────────────
@@ -303,7 +442,8 @@ struct ConversationView: View {
                 conversationId: conversation.id,
                 content: text,
                 attachmentIds: attachIds,
-                tone: chatTone
+                tone: chatTone,
+                webSearch: webSearch
             ))
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
@@ -313,6 +453,16 @@ struct ConversationView: View {
     }
 
     // ── REST: history + delete ─────────────────────────────────────────────
+
+    private func loadSkills() async {
+        guard let api else { return }
+        do {
+            self.skills = try await api.get("api/skills")
+        } catch {
+            // Non-fatal — chip just stays empty if the request fails.
+            print("[skills] load failed: \(error)")
+        }
+    }
 
     private func loadHistory() async {
         guard let api else { return }
@@ -390,6 +540,13 @@ struct PendingAttachment: Identifiable, Hashable {
     let id: String
     let mime: String
     let size: Int
+}
+
+/// Identifiable wrapper so a `String` body can drive a `.sheet(item:)` —
+/// SwiftUI wants an `Identifiable` payload to disambiguate presentations.
+private struct SkillDraft: Identifiable {
+    let body: String
+    var id: String { String(body.hashValue) }
 }
 
 // ── WebSocket holder ────────────────────────────────────────────────────────

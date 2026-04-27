@@ -4,7 +4,9 @@ import SwiftUI
 ///   • Bot — borderless, left-aligned, avatar + name row, then content.
 ///   • User — right-aligned, soft-tinted bubble with rounded radius.
 ///
-/// Markdown is inline-only on bot messages; user input is plain text.
+/// Bot messages render full Markdown (headings, lists, fenced code with a
+/// copy/run toolbar, tables, blockquotes) via `MarkdownText`. User input is
+/// plain text — they just typed it, no need to interpret syntax.
 struct BubbleView: View {
     let message: ChatMessage
     let botName: String
@@ -13,13 +15,6 @@ struct BubbleView: View {
     /// fresh random emoji + pastel.
     let conversationID: String
     let serverURL: URL?
-
-    private var attributed: AttributedString {
-        (try? AttributedString(
-            markdown: message.content,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(message.content)
-    }
 
     private var hasText: Bool { !message.content.isEmpty }
 
@@ -41,10 +36,7 @@ struct BubbleView: View {
                 }
 
                 if hasText {
-                    Text(attributed)
-                        .textSelection(.enabled)
-                        .font(Theme.Fonts.body)
-                        .foregroundStyle(Theme.Palette.ink)
+                    MarkdownText(text: message.content, allowCodeRun: true)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)

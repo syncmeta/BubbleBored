@@ -56,6 +56,10 @@ const state = {
   // Chat tone — 'wechat' (multi-bubble, casual) or 'normal' (single-message AI).
   // Default to 'wechat' to preserve existing behaviour.
   chatTone: localStorage.getItem('bb_chatTone') === 'normal' ? 'normal' : 'wechat',
+  // 联网搜索 toggle. When on, every send carries metadata.webSearch=true and
+  // the backend runs a one-shot Jina search before invoking the LLM.
+  // Persisted across reloads — matches ChatGPT's "🔍 search" mental model.
+  webSearch: localStorage.getItem('bb_webSearch') === '1',
   ws: null,
   reconnectTimer: null,
   reconnectDelay: 1000,
@@ -330,6 +334,8 @@ async function init() {
   setupInput();
   setupGlobalHandlers();
   renderToneButton();
+  renderWebSearchButton();
+  renderSkillsChip();
   startRelativeTimeTick();
 }
 
@@ -722,6 +728,8 @@ function updateChatHeader(conv) {
   botEl.innerHTML = `${botAvatarHTML(conv.bot_id)}<span>${esc(botName)}</span>`;
 
   renderToneButton();
+  renderWebSearchButton();
+  renderSkillsChip();
   refreshAttachAvailability(bot);
 }
 
@@ -1109,6 +1117,23 @@ function toggleChatTone() {
   renderToneButton();
 }
 
+// ── 联网搜索 toggle ──
+
+function renderWebSearchButton() {
+  const btn = document.getElementById('websearch-btn');
+  if (!btn) return;
+  btn.classList.toggle('on', state.webSearch);
+  btn.title = state.webSearch
+    ? '联网搜索：开 — 每次发送都会先搜一遍网络再让机器人作答（点击关闭）'
+    : '联网搜索：关 — 机器人只用自身知识作答（点击打开）';
+}
+
+function toggleWebSearch() {
+  state.webSearch = !state.webSearch;
+  localStorage.setItem('bb_webSearch', state.webSearch ? '1' : '0');
+  renderWebSearchButton();
+}
+
 // ── Reset ──
 
 async function resetCurrentConversation() {
@@ -1248,6 +1273,288 @@ function renderTypingIndicator() {
 
 // ── Messages ──
 
+// Markdown rendering: each bubble is a self-contained markdown island.
+// Backend already segments on \n\n with code-fence awareness so cross-segment
+// list/heading state never leaks. The raw source is parked on
+// `textEl.dataset.raw` so edit mode can show plain text and so we can
+// re-render after cancel without an extra round-trip.
+
+let _markedConfigured = false;
+function _configureMarked() {
+  if (_markedConfigured || !window.marked) return;
+  // breaks: a single \n becomes <br> — matches chat-style line breaks where
+  // people don't double-newline between thoughts. gfm covers tables / strike
+  // / task lists.
+  window.marked.setOptions({ breaks: true, gfm: true });
+  // Override the link renderer to (a) gate href schemes (no javascript:,
+  // data:, vbscript:) and (b) open external links in a new tab safely.
+  // marked v12 passes a token object to renderer.link.
+  const renderer = new window.marked.Renderer();
+  renderer.link = function ({ href, title, tokens }) {
+    const text = this.parser.parseInline(tokens);
+    const safe = _safeHref(href);
+    const t = title ? ` title="${_escAttr(title)}"` : '';
+    if (!safe) return `<span class="md-bad-link">${text}</span>`;
+    return `<a href="${_escAttr(safe)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+  };
+  // Mark fenced code blocks with the language so the toolbar can decide
+  // whether to show a Run button.
+  renderer.code = function ({ text, lang }) {
+    const cls = lang ? ` class="language-${_escAttr(String(lang).toLowerCase())}"` : '';
+    return `<pre><code${cls}>${_escHtml(text)}</code></pre>`;
+  };
+  window.marked.use({ renderer });
+  _markedConfigured = true;
+}
+
+function _safeHref(href) {
+  if (!href) return null;
+  const trimmed = String(href).trim();
+  // Reject control chars that browsers might normalize away.
+  if (/[ -]/.test(trimmed)) return null;
+  // Allow relative refs (starting with /, #, ?) and explicit http/https/mailto/tel.
+  if (/^(https?:|mailto:|tel:|\/|#|\?)/i.test(trimmed)) return trimmed;
+  // Bare domain — treat as https.
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) return 'https://' + trimmed;
+  return null;
+}
+
+function _escHtml(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function _escAttr(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const _DOMPURIFY_CONFIG = {
+  // Allow the standard markdown-friendly tag set; explicitly forbid <iframe>
+  // (the code-runner injects its own iframes via createElement, never via
+  // sanitized content) and <style>/<form>/<input>.
+  ALLOWED_TAGS: [
+    'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'ins', 'kbd',
+    'li', 'mark', 'ol', 'p', 'pre', 's', 'samp', 'small', 'span', 'strong',
+    'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
+    'u', 'ul', 'details', 'summary',
+  ],
+  ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'src', 'alt', 'class', 'colspan', 'rowspan', 'open'],
+  // DOMPurify rejects javascript:/data: in href/src by default; this just
+  // adds an extra safety net so authors can't sneak in vbscript: either.
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[/#?])/i,
+  ALLOW_DATA_ATTR: false,
+};
+
+function renderMarkdownInto(textEl, raw) {
+  const text = raw == null ? '' : String(raw);
+  textEl.dataset.raw = text;
+  if (!text) {
+    textEl.textContent = '';
+    return;
+  }
+  if (!window.marked || !window.DOMPurify) {
+    textEl.textContent = text;
+    return;
+  }
+  _configureMarked();
+  let html;
+  try {
+    html = window.marked.parse(text);
+  } catch (e) {
+    console.warn('marked parse error:', e);
+    textEl.textContent = text;
+    return;
+  }
+  textEl.innerHTML = window.DOMPurify.sanitize(html, _DOMPURIFY_CONFIG);
+  enhanceCodeBlocks(textEl);
+}
+
+function getMessageRaw(textEl) {
+  if (!textEl) return '';
+  return textEl.dataset.raw ?? textEl.textContent ?? '';
+}
+
+// Languages we can run client-side. Anything else gets the copy button only.
+const RUNNABLE_LANGS = new Set(['js', 'javascript', 'html']);
+
+function _codeLangFromEl(codeEl) {
+  const cls = codeEl.className || '';
+  const m = cls.match(/language-([\w+-]+)/);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function enhanceCodeBlocks(scope) {
+  const pres = scope.querySelectorAll('pre');
+  for (const pre of pres) {
+    if (pre.dataset.enhanced) continue;
+    pre.dataset.enhanced = '1';
+    const codeEl = pre.querySelector('code');
+    if (!codeEl) continue;
+    const lang = _codeLangFromEl(codeEl);
+
+    const bar = document.createElement('div');
+    bar.className = 'code-toolbar';
+    if (lang) {
+      const tag = document.createElement('span');
+      tag.className = 'code-lang';
+      tag.textContent = lang;
+      bar.appendChild(tag);
+    }
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'code-btn';
+    copyBtn.textContent = '复制';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(codeEl.textContent ?? '');
+        copyBtn.textContent = '已复制';
+        setTimeout(() => { copyBtn.textContent = '复制'; }, 1200);
+      } catch {
+        copyBtn.textContent = '复制失败';
+        setTimeout(() => { copyBtn.textContent = '复制'; }, 1500);
+      }
+    });
+    bar.appendChild(copyBtn);
+
+    if (RUNNABLE_LANGS.has(lang)) {
+      const runBtn = document.createElement('button');
+      runBtn.type = 'button';
+      runBtn.className = 'code-btn run';
+      runBtn.textContent = '▶ 运行';
+      runBtn.addEventListener('click', () => runCodeBlock(pre, codeEl, lang));
+      bar.appendChild(runBtn);
+    }
+
+    pre.insertBefore(bar, pre.firstChild);
+  }
+}
+
+// Run a code block in a sandboxed iframe. JS / HTML only — anything else is
+// rejected by enhanceCodeBlocks before this is reached. The iframe has
+// allow-scripts but NOT allow-same-origin, so it's a fresh cross-origin
+// realm with no access to cookies / localStorage / parent DOM. Output is
+// captured by overriding console.* before user code runs and posted back
+// via window.parent.postMessage. A 5s timeout kills runaway loops.
+const RUN_TIMEOUT_MS = 5000;
+
+function runCodeBlock(pre, codeEl, lang) {
+  const source = codeEl.textContent ?? '';
+
+  // One output panel per <pre>; subsequent runs overwrite the previous output.
+  let panel = pre.nextElementSibling;
+  if (!panel || !panel.classList?.contains('code-output')) {
+    panel = document.createElement('div');
+    panel.className = 'code-output';
+    pre.insertAdjacentElement('afterend', panel);
+  }
+  panel.textContent = '运行中…';
+  panel.classList.remove('error');
+
+  const runId = 'r_' + Math.random().toString(36).slice(2, 10);
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.style.display = 'none';
+  iframe.dataset.runId = runId;
+
+  let lines = [];
+  let killed = false;
+  const flush = () => {
+    panel.textContent = lines.join('\n') || '(无输出)';
+  };
+
+  const onMessage = (ev) => {
+    if (ev.source !== iframe.contentWindow) return;
+    const data = ev.data;
+    if (!data || data.runId !== runId) return;
+    if (data.type === 'log') {
+      lines.push(data.text);
+      flush();
+    } else if (data.type === 'error') {
+      lines.push('✗ ' + data.text);
+      panel.classList.add('error');
+      flush();
+      cleanup();
+    } else if (data.type === 'done') {
+      if (lines.length === 0) panel.textContent = '(无输出)';
+      cleanup();
+    }
+  };
+  const cleanup = () => {
+    if (killed) return;
+    killed = true;
+    window.removeEventListener('message', onMessage);
+    clearTimeout(timer);
+    setTimeout(() => iframe.remove(), 50);
+  };
+  window.addEventListener('message', onMessage);
+
+  const timer = setTimeout(() => {
+    if (killed) return;
+    lines.push('⏱ 超时（5s），已中断');
+    panel.classList.add('error');
+    flush();
+    cleanup();
+  }, RUN_TIMEOUT_MS);
+
+  // Build the iframe's HTML. For HTML blocks, we render the source as the
+  // page body so the user can preview a snippet. For JS, we wrap the source
+  // in a try/catch and pipe console.log/info/warn/error/dir back via
+  // postMessage. JSON-stringify args to keep transport simple.
+  const isHtml = lang === 'html';
+  const escSource = source
+    .replace(/<\/script>/gi, '<\\/script>')
+    .replace(/<!--/g, '<\\!--');
+  const RUN_ID_LITERAL = JSON.stringify(runId);
+  const bootstrap = `
+    (function(){
+      var RID=${RUN_ID_LITERAL};
+      function fmt(a){
+        if (a instanceof Error) return a.stack || (a.name+': '+a.message);
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a, function(k,v){
+          if (typeof v === 'function') return '[Function '+(v.name||'')+']';
+          if (typeof v === 'undefined') return '[undefined]';
+          return v;
+        }, 2); } catch(_) { return String(a); }
+      }
+      function send(type, text){
+        try { parent.postMessage({runId:RID, type:type, text:text}, '*'); } catch(_){}
+      }
+      ['log','info','warn','error','debug','dir'].forEach(function(k){
+        var prev = console[k];
+        console[k] = function(){
+          var parts = [];
+          for (var i=0;i<arguments.length;i++) parts.push(fmt(arguments[i]));
+          send('log', parts.join(' '));
+          if (prev) try { prev.apply(console, arguments); } catch(_){}
+        };
+      });
+      window.addEventListener('error', function(ev){
+        send('error', (ev.error && (ev.error.stack || ev.error.message)) || ev.message || 'unknown error');
+      });
+      window.addEventListener('unhandledrejection', function(ev){
+        send('error', 'Unhandled rejection: ' + fmt(ev.reason));
+      });
+    })();`;
+
+  let srcdoc;
+  if (isHtml) {
+    srcdoc = `<!doctype html><html><head><meta charset="utf-8"><script>${bootstrap}<\/script></head><body>\n${escSource}\n<script>parent.postMessage({runId:${RUN_ID_LITERAL}, type:'done'}, '*');<\/script></body></html>`;
+  } else {
+    srcdoc = `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${bootstrap}
+try {
+${escSource}
+} catch (e) {
+  parent.postMessage({runId:${RUN_ID_LITERAL}, type:'error', text:(e && (e.stack||e.message))||String(e)}, '*');
+}
+parent.postMessage({runId:${RUN_ID_LITERAL}, type:'done'}, '*');
+<\/script></body></html>`;
+  }
+  iframe.srcdoc = srcdoc;
+  document.body.appendChild(iframe);
+}
+
 // opts.attachments: [{ id, mime, url, width?, height? }]
 // opts.clientKey: marker for optimistic bubbles awaiting server ack
 function appendMessage(type, content, msgId, opts) {
@@ -1270,7 +1577,7 @@ function appendMessage(type, content, msgId, opts) {
   if (hasText) {
     const textEl = document.createElement('div');
     textEl.className = 'msg-text';
-    textEl.textContent = content;
+    renderMarkdownInto(textEl, content);
     bubble.appendChild(textEl);
   }
 
@@ -1305,6 +1612,29 @@ function appendMessage(type, content, msgId, opts) {
     `;
     regen.addEventListener('click', () => regenerateFromUserMessage(msgId, wrap, regen));
     actions.appendChild(regen);
+  }
+
+  if (type === 'bot' && hasText) {
+    // Quick "save as skill" for any bot bubble — captures its raw markdown
+    // body as a skill draft. Backend already exists; this is just a faster
+    // path than copy-pasting into the 「我」 tab form.
+    const save = document.createElement('button');
+    save.className = 'msg-save-skill';
+    save.type = 'button';
+    save.title = '保存为技能';
+    save.setAttribute('aria-label', '保存为技能');
+    save.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+    `;
+    save.addEventListener('click', () => {
+      const textEl = bubble.querySelector('.msg-text');
+      openSaveAsSkillModal(getMessageRaw(textEl));
+    });
+    actions.appendChild(save);
   }
 
   const del = document.createElement('button');
@@ -1354,7 +1684,13 @@ function enterEditMode(msgId, wrap) {
     bubble.appendChild(textEl);
   }
 
-  const originalText = textEl.textContent ?? '';
+  // Edit mode shows raw markdown, not the rendered HTML — otherwise the
+  // user would be poking at <strong>/<a> nodes instead of the source they
+  // typed. Park the rendered HTML on the side so we can restore it on cancel.
+  const originalText = getMessageRaw(textEl);
+  const renderedHTML = textEl.innerHTML;
+  textEl.textContent = originalText;
+  delete textEl.dataset.raw;
 
   textEl.setAttribute('contenteditable', 'plaintext-only');
   // Fallback for browsers without plaintext-only support: plain contenteditable.
@@ -1365,7 +1701,7 @@ function enterEditMode(msgId, wrap) {
   textEl.classList.add('editing-text');
   wrap.classList.add('editing');
 
-  edits.set(msgId, { original: originalText, wrap, textEl });
+  edits.set(msgId, { original: originalText, renderedHTML, wrap, textEl });
 
   const onInput = () => {
     const current = textEl.textContent ?? '';
@@ -1404,23 +1740,33 @@ function placeCaretAtEnd(el) {
 function exitEditModeSingle(msgId, { commit = false } = {}) {
   const e = edits.get(msgId);
   if (!e) return;
-  const { wrap, textEl, original, onInput, onKey } = e;
+  const { wrap, textEl, original, renderedHTML, onInput, onKey } = e;
   if (onInput) textEl.removeEventListener('input', onInput);
   if (onKey) textEl.removeEventListener('keydown', onKey);
   textEl.removeAttribute('contenteditable');
   textEl.classList.remove('editing-text');
   wrap.classList.remove('editing', 'edited');
   if (!commit) {
-    // Restore original text on cancel.
-    textEl.textContent = original;
+    // Restore the rendered markdown HTML on cancel.
+    if (renderedHTML !== undefined) {
+      textEl.innerHTML = renderedHTML;
+      textEl.dataset.raw = original;
+    } else {
+      textEl.textContent = original;
+    }
   }
   // If this was an image-only bubble that we added a blank .msg-text to,
   // remove it on commit/cancel if it's still empty to keep the bubble
-  // compact like before.
+  // compact like before. Done BEFORE re-rendering markdown so the textContent
+  // check sees the raw user-typed value, not whatever marked produces.
   const bubble = wrap.querySelector('.msg');
-  if (bubble?.classList.contains('has-images') && textEl.textContent === '') {
+  if (bubble?.classList.contains('has-images') && (textEl.textContent ?? '').trim() === '') {
     textEl.remove();
     bubble.classList.add('image-only');
+  } else if (commit) {
+    // Re-render the new raw text as markdown so the bubble matches what
+    // every other rendered bubble looks like.
+    renderMarkdownInto(textEl, textEl.textContent ?? '');
   }
   edits.delete(msgId);
 }
@@ -1737,7 +2083,7 @@ function sendMessage() {
       botId: conv?.bot_id,
       conversationId: state.currentConversationId,
       content,
-      metadata: { tone: state.chatTone },
+      metadata: { tone: state.chatTone, webSearch: state.webSearch },
     };
     const ids = readyAtts.map(a => a.attachmentId);
     if (ids.length > 0) payload.attachmentIds = ids;
@@ -3524,6 +3870,7 @@ async function toggleSkillEnabled(id, enabled) {
     });
     const card = document.querySelector(`.skill-card[data-id="${id}"]`);
     if (card) card.classList.toggle('enabled', enabled);
+    invalidateSkillsCache();
   } catch (e) {
     alert('保存失败：' + e.message);
     loadMySkills();
@@ -3606,7 +3953,224 @@ async function createSkillFromForm() {
     document.getElementById('me-skill-new-desc').value = '';
     document.getElementById('me-skill-new-body').value = '';
     loadMySkills();
+    invalidateSkillsCache();
   } catch (e) { alert('创建失败：' + e.message); }
+}
+
+// ── Skills chip + popover (chat header) ─────────────────────────────────
+// A small chat-header pill that shows how many skills are currently enabled
+// and opens a popover for quick toggles, mirroring the same /api/skills
+// endpoints the 「我」 tab uses. The cache is shared so toggling in either
+// place updates the other on next render. The popover has a "前往「我」"
+// link for richer editing (description / body / preset reseed).
+
+let _skillsCache = null; // [{ id, name, description, enabled, ... }]
+let _skillsCacheAt = 0;
+const _SKILLS_CACHE_TTL = 30_000;
+
+function invalidateSkillsCache() {
+  _skillsCache = null;
+  _skillsCacheAt = 0;
+  renderSkillsChip();
+}
+
+async function fetchSkillsCached(force) {
+  const fresh = !force && _skillsCache && (Date.now() - _skillsCacheAt) < _SKILLS_CACHE_TTL;
+  if (fresh) return _skillsCache;
+  try {
+    const res = await fetch('/api/skills');
+    const rows = await res.json();
+    if (Array.isArray(rows)) {
+      _skillsCache = rows;
+      _skillsCacheAt = Date.now();
+    }
+  } catch (e) {
+    console.warn('skills fetch failed:', e);
+  }
+  return _skillsCache ?? [];
+}
+
+async function renderSkillsChip() {
+  const btn = document.getElementById('skills-chip-btn');
+  if (!btn) return;
+  const skills = await fetchSkillsCached(false);
+  const enabledCount = skills.filter(s => s.enabled).length;
+  // Show the icon always when rendered; show count only when > 0 so
+  // "🧩 0" doesn't shout. Hidden entirely if there are no skills at all.
+  if (skills.length === 0) {
+    btn.textContent = '';
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  btn.textContent = enabledCount > 0 ? `🧩 ${enabledCount}` : '🧩';
+  btn.classList.toggle('on', enabledCount > 0);
+}
+
+async function toggleSkillsPopover(ev) {
+  if (ev) ev.stopPropagation();
+  const existing = document.querySelector('.skills-popover');
+  if (existing) { existing.remove(); return; }
+
+  const btn = document.getElementById('skills-chip-btn');
+  if (!btn) return;
+  const skills = await fetchSkillsCached(true);
+
+  const pop = document.createElement('div');
+  pop.className = 'skills-popover';
+  pop.innerHTML = `
+    <div class="skills-popover-head">
+      <span>本次对话使用的技能</span>
+      <button type="button" class="skills-popover-manage">前往「我」管理 →</button>
+    </div>
+    <div class="skills-popover-body"></div>
+    <div class="skills-popover-foot">
+      启用项会拼进系统提示词，按需生效
+    </div>
+  `;
+
+  const body = pop.querySelector('.skills-popover-body');
+  if (skills.length === 0) {
+    body.innerHTML = '<div class="me-section-status">还没有技能 — 去「我」标签里添加</div>';
+  } else {
+    for (const s of skills) {
+      const row = document.createElement('label');
+      row.className = 'skills-popover-row';
+      row.innerHTML = `
+        <input type="checkbox" ${s.enabled ? 'checked' : ''}>
+        <span class="skills-popover-name">${esc(s.name)}</span>
+        ${s.description ? `<span class="skills-popover-desc">${esc(s.description)}</span>` : ''}
+      `;
+      const cb = row.querySelector('input');
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        await toggleSkillEnabled(s.id, cb.checked);
+        s.enabled = cb.checked;
+        cb.disabled = false;
+        renderSkillsChip();
+      });
+      body.appendChild(row);
+    }
+  }
+
+  pop.querySelector('.skills-popover-manage').addEventListener('click', () => {
+    pop.remove();
+    switchTab('me');
+    setTimeout(() => {
+      const sect = document.getElementById('me-skills');
+      if (sect) sect.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  });
+
+  // Anchor below the chip
+  const rect = btn.getBoundingClientRect();
+  pop.style.top = `${rect.bottom + 6}px`;
+  pop.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+  document.body.appendChild(pop);
+
+  // Dismiss on outside-click. Wait one tick so the click that opened us
+  // doesn't immediately close.
+  setTimeout(() => {
+    const onDoc = (e) => {
+      if (!pop.contains(e.target) && e.target !== btn) {
+        pop.remove();
+        document.removeEventListener('mousedown', onDoc);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+  }, 0);
+}
+
+// ── Save-as-skill quick path ────────────────────────────────────────────
+// Click the 💾 icon on a bot reply to capture its body as a new skill,
+// pre-filled in a modal. Reuses POST /api/skills.
+
+function openSaveAsSkillModal(prefillBody) {
+  // Reuse / lazily insert a single shared modal.
+  let modal = document.getElementById('save-skill-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'save-skill-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-card" onclick="event.stopPropagation()">
+        <div class="modal-head">
+          <span>保存为技能</span>
+          <button class="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="me-section-hint" style="margin-top:0">技能正文在每次对话开始时拼进系统提示词。先填一句"什么时候用这个技能"，再让机器人按需调用。</p>
+          <label class="modal-label">名称（小写，连字符分隔）</label>
+          <input type="text" id="save-skill-name" maxlength="64" placeholder="my-skill" autocomplete="off">
+          <label class="modal-label">一句话描述</label>
+          <input type="text" id="save-skill-desc" maxlength="280" placeholder="什么时候用这个技能" autocomplete="off">
+          <label class="modal-label">正文（Markdown）</label>
+          <textarea id="save-skill-body" rows="10" placeholder="技能指令…"></textarea>
+          <label class="modal-label" style="margin-top:8px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="save-skill-enabled" checked>
+            <span>立即启用</span>
+          </label>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn-ghost" id="save-skill-cancel">取消</button>
+          <button type="button" class="btn-primary" id="save-skill-submit">保存</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeSaveAsSkillModal();
+    });
+    modal.querySelector('.modal-close').addEventListener('click', closeSaveAsSkillModal);
+    modal.querySelector('#save-skill-cancel').addEventListener('click', closeSaveAsSkillModal);
+    modal.querySelector('#save-skill-submit').addEventListener('click', submitSaveAsSkillModal);
+  }
+  modal.querySelector('#save-skill-name').value = '';
+  modal.querySelector('#save-skill-desc').value = '';
+  modal.querySelector('#save-skill-body').value = prefillBody ?? '';
+  modal.querySelector('#save-skill-enabled').checked = true;
+  modal.style.display = 'flex';
+  setTimeout(() => modal.querySelector('#save-skill-name').focus(), 30);
+}
+
+function closeSaveAsSkillModal() {
+  const modal = document.getElementById('save-skill-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitSaveAsSkillModal() {
+  const modal = document.getElementById('save-skill-modal');
+  if (!modal) return;
+  const name = modal.querySelector('#save-skill-name').value.trim();
+  const description = modal.querySelector('#save-skill-desc').value.trim();
+  const body = modal.querySelector('#save-skill-body').value;
+  const enabled = modal.querySelector('#save-skill-enabled').checked;
+  if (!name) {
+    alert('请填名称');
+    modal.querySelector('#save-skill-name').focus();
+    return;
+  }
+  const submit = modal.querySelector('#save-skill-submit');
+  submit.disabled = true;
+  try {
+    const r = await fetch('/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, body, enabled }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${r.status}`);
+    }
+    closeSaveAsSkillModal();
+    invalidateSkillsCache();
+    // If the 「我」 tab is currently visible, refresh its list too.
+    if (state.currentTab === 'me') loadMySkills();
+  } catch (e) {
+    alert('保存失败：' + e.message);
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

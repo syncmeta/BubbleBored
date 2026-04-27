@@ -197,3 +197,35 @@ struct Portrait: Codable, Identifiable, Hashable {
     let content_json: String?
     let created_at: Int
 }
+
+// ── Skills ──────────────────────────────────────────────────────────────────
+
+/// Index-row shape returned by `GET /api/skills` — body is omitted for size.
+/// `is_preset` flags rows seeded from the bundled anthropic/skills bundle.
+struct SkillSummary: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let description: String
+    let enabled: Bool
+    let source: String?
+    let source_url: String?
+    let license: String?
+    let is_preset: Bool
+    let body_length: Int
+    let updated_at: Int
+}
+
+/// Full skill row including the markdown body. Returned by `GET /api/skills/:id`.
+struct SkillDetail: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let description: String
+    let enabled: Bool
+    let source: String?
+    let source_url: String?
+    let license: String?
+    let is_preset: Bool
+    let body_length: Int
+    let updated_at: Int
+    let body: String
+}

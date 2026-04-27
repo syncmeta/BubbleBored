@@ -12,6 +12,19 @@ export interface StreamMeta {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost?: number };
 }
 
+/// Accumulator the caller passes in to collect any tool-call deltas the model
+/// emits over the stream. OpenRouter (like OpenAI) streams tool calls as
+/// chunks of `{index, id?, function:{name?, arguments?}}` — the same call
+/// arrives across many deltas, keyed by `index`. After the stream ends, the
+/// caller inspects this map to decide whether a tool round happened and to
+/// pull out the assembled call arguments.
+export interface ToolCallAccum {
+  index: number;
+  id: string;
+  name: string;
+  args: string;
+}
+
 // Splits streamed output into segments on \n\n (blank line).
 // Triple-backtick fenced blocks are preserved as a single segment —
 // any \n\n inside ```...``` does NOT split, so quoted/long content is safe.
@@ -22,7 +35,14 @@ export async function* streamWithSplit(
   stream: Stream<ChatCompletionChunk>,
   onSegmentReady: (segmentIndex: number, fullText: string) => void,
   meta?: StreamMeta,
-  options?: { disableSplit?: boolean },
+  options?: {
+    disableSplit?: boolean;
+    /// When provided, tool-call deltas from the underlying chunks are merged
+    /// into this map (keyed by the SDK's per-call `index`). The caller owns
+    /// the map and reads it once iteration finishes — content deltas keep
+    /// flowing through the generator unchanged either way.
+    toolCallSink?: Map<number, ToolCallAccum>;
+  },
 ): AsyncGenerator<StreamSegment> {
   const disableSplit = options?.disableSplit === true;
   let currentSegment = 0;
@@ -49,6 +69,8 @@ export async function* streamWithSplit(
     }
   }
 
+  const toolCallSink = options?.toolCallSink;
+
   for await (const chunk of stream) {
     // Capture generation ID and usage from chunks
     if (meta) {
@@ -56,7 +78,27 @@ export async function* streamWithSplit(
       if (chunk.usage) meta.usage = chunk.usage as any;
     }
 
-    const content = chunk.choices[0]?.delta?.content;
+    const delta = chunk.choices[0]?.delta as
+      | { content?: string; tool_calls?: Array<{
+          index?: number; id?: string;
+          function?: { name?: string; arguments?: string };
+        }> }
+      | undefined;
+
+    // Tool calls arrive incrementally — id + name in the first delta, then
+    // arguments dribble in across subsequent deltas under the same index.
+    if (toolCallSink && delta?.tool_calls?.length) {
+      for (const tcd of delta.tool_calls) {
+        const idx = tcd.index ?? 0;
+        const existing = toolCallSink.get(idx) ?? { index: idx, id: '', name: '', args: '' };
+        if (tcd.id) existing.id = tcd.id;
+        if (tcd.function?.name) existing.name = tcd.function.name;
+        if (tcd.function?.arguments) existing.args += tcd.function.arguments;
+        toolCallSink.set(idx, existing);
+      }
+    }
+
+    const content = delta?.content;
     if (!content) continue;
 
     for (const char of content) {

@@ -31,6 +31,7 @@ struct MeTabView: View {
                             profileCard
                             serverCard
                             auditCard
+                            skillsCard
                             portraitCard
                             picksCard
                             signOutCard
@@ -176,6 +177,38 @@ struct MeTabView: View {
                             .font(Theme.Fonts.rounded(size: 15, weight: .medium))
                             .foregroundStyle(Theme.Palette.ink)
                         Text("用量、费用、最近调用")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var skillsCard: some View {
+        card(title: "技能",
+             footer: "启用的技能会拼进系统提示词，机器人按需调用。预设来自 anthropic/skills（Apache-2.0）。")
+        {
+            NavigationLink {
+                SkillsView()
+                    .toolbar(.hidden, for: .tabBar)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.Palette.accentBg))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("技能管理")
+                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.Palette.ink)
+                        Text("列表 · 启用 · 编辑")
                             .font(Theme.Fonts.caption)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }

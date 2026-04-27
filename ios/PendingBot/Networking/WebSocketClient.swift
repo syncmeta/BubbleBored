@@ -122,6 +122,24 @@ enum WSError: Error { case notConnected }
 
 // ── Wire types ──────────────────────────────────────────────────────────────
 
+/// Heterogeneous metadata value — the backend reads `tone: "normal"` (string)
+/// alongside `webSearch: true` (bool). A flat `[String: String]` would have
+/// to stringify the bool, but the backend's check is `=== true` so a string
+/// "true" wouldn't match. Keep the wire types honest by encoding each value
+/// in its native shape.
+enum MetaValue: Encodable {
+    case string(String)
+    case bool(Bool)
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .string(let s): try c.encode(s)
+        case .bool(let b):   try c.encode(b)
+        }
+    }
+}
+
 /// Outbound — what we send to /ws/mobile.
 struct OutboundMessage: Encodable {
     let type: String                // "chat" | "typing_tick"
@@ -129,16 +147,21 @@ struct OutboundMessage: Encodable {
     let conversationId: String?
     let content: String?
     let attachmentIds: [String]?
-    let metadata: [String: String]?
+    let metadata: [String: MetaValue]?
 
     static func chat(botId: String, conversationId: String, content: String,
-                     attachmentIds: [String] = [], tone: String? = nil) -> Self {
-        // Mirror the web client: only attach the `tone` key when the caller
-        // explicitly opts in. Backend defaults to 'wechat' when absent, so
-        // older clients (and Telegram/Feishu paths) keep their behaviour.
-        let metadata: [String: String]? = tone.map { ["tone": $0] }
+                     attachmentIds: [String] = [],
+                     tone: String? = nil,
+                     webSearch: Bool = false) -> Self {
+        // Mirror the web client: only attach optional metadata keys when the
+        // caller explicitly opts in. Backend defaults are correct when absent,
+        // so older clients (and Telegram/Feishu paths) keep their behaviour.
+        var meta: [String: MetaValue] = [:]
+        if let tone { meta["tone"] = .string(tone) }
+        if webSearch { meta["webSearch"] = .bool(true) }
         return Self(type: "chat", botId: botId, conversationId: conversationId,
-                    content: content, attachmentIds: attachmentIds, metadata: metadata)
+                    content: content, attachmentIds: attachmentIds,
+                    metadata: meta.isEmpty ? nil : meta)
     }
 
     static func typingTick(conversationId: String) -> Self {
@@ -149,6 +172,7 @@ struct OutboundMessage: Encodable {
 
 /// Inbound — what the server sends back. Loose decoding so unknown variants
 /// don't crash. Field set mirrors `OutboundMessage` in main/src/bus/types.ts.
+/// `surf_status` events reuse the `content` field (no extra columns needed).
 struct InboundMessage: Decodable {
     let type: String
     let conversationId: String?

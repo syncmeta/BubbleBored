@@ -490,6 +490,12 @@
           <!-- 语气：在「微信语气」和「普通AI语气」之间切换 -->
           <button id="tone-btn" class="chat-action chat-action-text" onclick="toggleChatTone()" title="切换语气：微信语气 / 普通AI语气"></button>
 
+          <!-- 联网：发送时实时搜一遍网络，把结果交给机器人参考再回答 -->
+          <button id="websearch-btn" class="chat-action chat-action-text" onclick="toggleWebSearch()" title="联网搜索（每次发送时实时搜一次网，再让机器人作答）">联网</button>
+
+          <!-- 技能：当前启用的 N 个技能，点开管理 -->
+          <button id="skills-chip-btn" class="chat-action chat-action-text" onclick="toggleSkillsPopover(event)" title="管理本次对话使用的技能"></button>
+
           <!-- 冲浪：触发一次冲浪。结果会进 冲浪 tab 的会话，并把最终消息也回到本聊天里。 -->
           <div class="chat-action-group">
             <button id="surf-btn" class="chat-action" onclick="triggerSurfForCurrent()" title="开一段冲浪（会进入「冲浪」tab 的新会话）">
@@ -579,6 +585,8 @@
       </div>
     </div>
   </div>
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
   <script src="/model-picker.js"></script>
   <script src="/app.js"></script>
 </body>
