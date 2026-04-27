@@ -567,6 +567,180 @@ main {
   font-size: 12.5px;
   line-height: 1.7;
 }
+
+#review-log {
+  /* Cards inside the review log are sans-serif; the monospace look only
+     applies to plain log rows that fall through to .surf-log-line. */
+  gap: 8px;
+}
+
+/* ── Review step card (process beat — Claude Code Desktop style) ──────────
+   Expand-while-running, collapse-when-done. The whole card is a click target
+   that toggles its collapsed state, so a user can re-open a finished step
+   to see the detail line again. */
+.review-step-card {
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 12.5px;
+  overflow: hidden;
+  transition: background 0.15s ease;
+}
+.review-step-card .rsc-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.review-step-card .rsc-icon {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+.review-step-card.running .rsc-icon {
+  border: 2px solid var(--accent-muted);
+  border-top-color: var(--accent);
+  animation: rsc-spin 0.85s linear infinite;
+}
+.review-step-card.done .rsc-icon {
+  background: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.review-step-card.done .rsc-icon::after {
+  content: ""; width: 4px; height: 7px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: translate(0px, -1px) rotate(45deg);
+  position: absolute;
+}
+.review-step-card.error .rsc-icon {
+  background: var(--red, #dc2626);
+  display: flex; align-items: center; justify-content: center;
+}
+.review-step-card.error .rsc-icon::after {
+  content: "!"; color: #fff; font-size: 10px; font-weight: 700;
+  font-family: -apple-system, sans-serif;
+}
+@keyframes rsc-spin {
+  to { transform: rotate(360deg); }
+}
+.review-step-card .rsc-title {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.review-step-card.done .rsc-title { color: var(--text-2); font-weight: 400; }
+.review-step-card .rsc-status {
+  font-size: 11px;
+  color: var(--text-4);
+}
+.review-step-card .rsc-detail {
+  padding: 0 12px 10px 34px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.review-step-card:not(.has-detail) .rsc-detail { display: none; }
+.review-step-card.collapsed .rsc-detail { display: none; }
+
+/* ── Review result card (one of the 6 retrospective tiles) ───────────── */
+.review-result-card {
+  margin-top: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+.review-result-card.side-you { border-left: 3px solid #4f9cf9; }
+.review-result-card.side-me  { border-left: 3px solid #f0a84a; }
+
+.review-result-card .rrc-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px 6px;
+}
+.review-result-card .rrc-side {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.review-result-card .rrc-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-2);
+}
+.review-result-card .rrc-badge.accent-limit { background: #fde7e7; color: #b54141; }
+.review-result-card .rrc-badge.accent-grow  { background: #e3f4e7; color: #2f7a47; }
+.review-result-card .rrc-badge.accent-keep  { background: #e7f0fb; color: #2f5fa3; }
+@media (prefers-color-scheme: dark) {
+  .review-result-card .rrc-badge.accent-limit { background: rgba(220, 80, 80, 0.18); color: #ff9d9d; }
+  .review-result-card .rrc-badge.accent-grow  { background: rgba(80, 180, 100, 0.18); color: #97e0a8; }
+  .review-result-card .rrc-badge.accent-keep  { background: rgba(80, 130, 200, 0.20); color: #a4c4ee; }
+}
+.review-result-card .rrc-title {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.review-result-card .rrc-body {
+  padding: 4px 14px 12px;
+}
+.review-result-card .rrc-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  line-height: 1.65;
+}
+.review-result-card .rrc-list li { margin: 2px 0; }
+.review-result-card .rrc-empty {
+  color: var(--text-4);
+  font-size: 12.5px;
+  font-style: italic;
+  padding-left: 4px;
+}
+
+/* ── Review closing line (last word, optional) ───────────── */
+.review-closing-card {
+  margin-top: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+.review-closing-card.pass {
+  color: var(--text-4);
+  font-size: 12px;
+  font-style: italic;
+  padding: 8px 4px;
+}
+.review-closing-card.note {
+  align-self: flex-start;
+  max-width: 88%;
+  padding: 12px 16px;
+  border-radius: 14px 14px 14px 4px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-muted);
+  color: var(--text-1);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.review-closing-card .rcc-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
 .surf-log-line {
   display: flex; gap: 12px;
   color: var(--text-2);
