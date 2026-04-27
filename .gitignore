@@ -15,6 +15,10 @@ main/.env
 # macOS
 .DS_Store
 
+# Xcode user-specific state
+**/xcuserdata/
+*.xcuserstate
+
 # Bun
 main/bun.lock
 
