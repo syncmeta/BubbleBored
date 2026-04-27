@@ -91,6 +91,15 @@ function runMigrations(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_type, created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_model ON audit_log(model, created_at);
 
+    -- Self-heal: model_assignments was added in v10 but some pre-v10 DBs
+    -- already had user_version > 10 from earlier schema iterations, so the
+    -- gated block below never fired for them. Idempotent CREATE here ensures
+    -- the table exists regardless of the recorded migration version.
+    CREATE TABLE IF NOT EXISTS model_assignments (
+      task_type TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
   // NOTE: indexes/tables that depend on the v16 schema (audit_log.user_id +
   // the invites table) are created inside the v16 migration block below so
