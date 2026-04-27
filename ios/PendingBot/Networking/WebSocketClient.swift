@@ -151,14 +151,9 @@ struct OutboundMessage: Encodable {
 
     static func chat(botId: String, conversationId: String, content: String,
                      attachmentIds: [String] = [],
-                     tone: String? = nil,
-                     webSearch: Bool = false) -> Self {
-        // Mirror the web client: only attach optional metadata keys when the
-        // caller explicitly opts in. Backend defaults are correct when absent,
-        // so older clients (and Telegram/Feishu paths) keep their behaviour.
+                     tone: String? = nil) -> Self {
         var meta: [String: MetaValue] = [:]
         if let tone { meta["tone"] = .string(tone) }
-        if webSearch { meta["webSearch"] = .bool(true) }
         return Self(type: "chat", botId: botId, conversationId: conversationId,
                     content: content, attachmentIds: attachmentIds,
                     metadata: meta.isEmpty ? nil : meta)

@@ -35,8 +35,6 @@ struct ConversationView: View {
     // Per-user tone preference, persisted globally across conversations.
     // 'wechat' = casual multi-bubble (default); 'normal' = single-message AI.
     @AppStorage("bb_chatTone") private var chatTone = "wechat"
-    // Per-user 联网 toggle. When on, every send carries metadata.webSearch=true.
-    @AppStorage("bb_webSearch") private var webSearch = false
 
     private var botName: String {
         bot?.nameWithModel ?? conversation.bot_name ?? conversation.bot_id
@@ -297,7 +295,6 @@ struct ConversationView: View {
             Spacer(minLength: 0)
             HStack(spacing: 6) {
                 skillsChip
-                webSearchToggle
                 toneToggle
             }
         }
@@ -321,21 +318,6 @@ struct ConversationView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("切换语气")
         .accessibilityValue(chatTone == "normal" ? "普通AI语气" : "微信语气")
-    }
-
-    // 联网 toggle. When on, every send carries `metadata.webSearch=true` and
-    // the server runs a one-shot Jina search before invoking the LLM.
-    // Persisted globally — matches the web client's mental model.
-    private var webSearchToggle: some View {
-        Button {
-            Haptics.tap()
-            webSearch.toggle()
-        } label: {
-            chipText(label: "联网", active: webSearch)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("联网搜索")
-        .accessibilityValue(webSearch ? "已开启" : "已关闭")
     }
 
     // Chat-header skills chip — shows the count of currently-enabled skills.
@@ -387,30 +369,58 @@ struct ConversationView: View {
             )
     }
 
-    // Inline list of recent surf_status events while a 联网 search is in
-    // flight. Mirrors the `.surf-log` panel on web — disappears when the
-    // bot reply arrives (handle() clears `searchLog`).
+    // Inline list of recent surf_status events while the server is doing a
+    // web lookup. Disappears when the bot reply arrives (handle() clears
+    // `searchLog`). Editorial timeline style — accent dots, per-line fade-in,
+    // older lines softened so the latest status reads as the focal point.
     private var searchLogPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(searchLog.enumerated()), id: \.offset) { _, line in
-                HStack(spacing: 6) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                    Text(line)
-                        .font(Theme.Fonts.rounded(size: 12, weight: .regular))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(2)
+        let entries = Array(searchLog.enumerated())
+        let latestIndex = entries.last?.offset ?? 0
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                PulsingGlobe()
+                Text("联网检索")
+                    .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.accent)
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(entries, id: \.offset) { idx, line in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(idx == latestIndex
+                                  ? Theme.Palette.accent.opacity(0.8)
+                                  : Theme.Palette.inkMuted.opacity(0.35))
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 7)
+                        Text(line)
+                            .font(Theme.Fonts.rounded(size: 13, weight: .regular))
+                            .foregroundStyle(idx == latestIndex
+                                             ? Theme.Palette.ink.opacity(0.85)
+                                             : Theme.Palette.inkMuted.opacity(0.7))
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    ))
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Theme.Palette.surfaceMuted.opacity(0.6))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.Palette.surfaceMuted.opacity(0.55))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Theme.Palette.accent.opacity(0.12), lineWidth: 0.6)
+        )
+        .animation(.easeOut(duration: 0.28), value: searchLog.count)
     }
 
     // ── Send ────────────────────────────────────────────────────────────────
@@ -442,8 +452,7 @@ struct ConversationView: View {
                 conversationId: conversation.id,
                 content: text,
                 attachmentIds: attachIds,
-                tone: chatTone,
-                webSearch: webSearch
+                tone: chatTone
             ))
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
@@ -533,6 +542,30 @@ struct ConversationView: View {
             }
         }
         photoPickerItems = []
+    }
+}
+
+/// Soft pulsing globe — telegraphs that a web lookup is in flight without
+/// the harshness of a spinner. Two stacked breathing strokes around a
+/// muted-accent globe glyph.
+private struct PulsingGlobe: View {
+    @State private var pulse = false
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Theme.Palette.accent.opacity(pulse ? 0.0 : 0.35), lineWidth: 1)
+                .frame(width: 22, height: 22)
+                .scaleEffect(pulse ? 1.4 : 0.9)
+            Image(systemName: "globe")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.accent.opacity(0.9))
+        }
+        .frame(width: 22, height: 22)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                pulse = true
+            }
+        }
     }
 }
 
