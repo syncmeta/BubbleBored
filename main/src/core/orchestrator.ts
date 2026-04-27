@@ -221,7 +221,7 @@ export async function handleUserMessage(params: {
   // bot's own personality model.
   const chatModel = hasInlineImages
     ? modelForTask('vision')
-    : modelFor(botId, conversationId);
+    : modelFor({ botId, userId, conversationId });
   console.log(`[chat] prompt: ${promptMessages.length} messages, model: ${chatModel}${hasInlineImages ? ' (vision routed)' : ''}`);
 
   // 联网 toggle exposes `search_web`. The model chooses whether and what to

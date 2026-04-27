@@ -665,4 +665,22 @@ function runMigrations(db: Database): void {
     `);
     db.exec('PRAGMA user_version = 25');
   }
+
+  // v26: per-user, per-bot model override. Lets a user pick a different
+  // model for "their" copy of a bot without touching the global bot config
+  // or every conversation. Resolution order in modelFor() becomes:
+  //   per-conv override > per-user-per-bot override > bot.model > config fallback
+  // NULL/missing row = "use the bot's default". (user_id, bot_id) is the PK.
+  if (userVersion < 26) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_bot_model_overrides (
+        user_id TEXT NOT NULL REFERENCES users(id),
+        bot_id TEXT NOT NULL REFERENCES bots(id),
+        model TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (user_id, bot_id)
+      );
+    `);
+    db.exec('PRAGMA user_version = 26');
+  }
 }

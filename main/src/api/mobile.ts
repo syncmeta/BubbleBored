@@ -6,6 +6,7 @@ import {
   updateConversationTitle, setConversationModelOverride, deleteConversation,
   getMessages, resetConversation, deleteMessage,
   getAttachmentsForMessages,
+  getUserBotModel, setUserBotModel,
 } from '../db/queries';
 import { configManager } from '../config/loader';
 import { getDb } from '../db/index';
@@ -41,26 +42,53 @@ mobileApiRoutes.use('*', requireAuthMiddleware);
 
 // ── Bots ────────────────────────────────────────────────────────────────────
 
-// Returns public-facing bot info (id, display_name, model). The model slug
-// drives the dynamic "name · model" tag the client renders alongside each bot.
+// Returns public-facing bot info (id, display_name, model). `model` is the
+// resolved per-user model — the user's per-bot override if set, otherwise
+// the bot's config default. `user_model` carries the raw override (or null)
+// so the UI can show "跟随机器人默认" vs an explicit pick. `default_model`
+// is the bot's own default, used by the bot-management screen to label what
+// "follow default" actually means.
 mobileApiRoutes.get('/bots', (c) => {
+  const user = c.get('authUser');
   const bots = listBots();
   const out = bots.map((b: any) => {
     let accessMode: string | undefined;
-    let model: string | undefined;
+    let defaultModel: string | undefined;
     try {
       const cfg = configManager.getBotConfig(b.id);
       accessMode = cfg.accessMode;
-      model = cfg.model;
+      defaultModel = cfg.model;
     } catch { /* ignore */ }
+    const userModel = getUserBotModel(user.id, b.id);
     return {
       id: b.id,
       display_name: b.display_name,
       access_mode: accessMode,
-      model,
+      model: userModel ?? defaultModel,
+      default_model: defaultModel,
+      user_model: userModel,
     };
   });
   return c.json(out);
+});
+
+// Per-user-per-bot model override. PATCH with { model: "<slug>" } to pin,
+// { model: null } (or empty string) to clear and fall back to the bot's
+// default. The override is scoped to the calling user only — no cross-user
+// effect — and never touches the bot config on disk.
+mobileApiRoutes.patch('/bots/:id', async (c) => {
+  const user = c.get('authUser');
+  const botId = c.req.param('id');
+  if (!findBot(botId)) return c.json({ error: 'bot not found' }, 404);
+  const body = await c.req.json<{ model?: string | null }>();
+  if (body.model === undefined) {
+    return c.json({ error: 'model field required (string or null)' }, 400);
+  }
+  const slug = typeof body.model === 'string' && body.model.trim()
+    ? body.model.trim()
+    : null;
+  setUserBotModel(user.id, botId, slug);
+  return c.json({ ok: true, user_model: slug });
 });
 
 // Convenience: who am I? Lets the app show "logged in as <name>" in settings.
