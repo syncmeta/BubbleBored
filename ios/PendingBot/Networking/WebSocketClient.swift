@@ -132,9 +132,13 @@ struct OutboundMessage: Encodable {
     let metadata: [String: String]?
 
     static func chat(botId: String, conversationId: String, content: String,
-                     attachmentIds: [String] = []) -> Self {
-        Self(type: "chat", botId: botId, conversationId: conversationId,
-             content: content, attachmentIds: attachmentIds, metadata: nil)
+                     attachmentIds: [String] = [], tone: String? = nil) -> Self {
+        // Mirror the web client: only attach the `tone` key when the caller
+        // explicitly opts in. Backend defaults to 'wechat' when absent, so
+        // older clients (and Telegram/Feishu paths) keep their behaviour.
+        let metadata: [String: String]? = tone.map { ["tone": $0] }
+        return Self(type: "chat", botId: botId, conversationId: conversationId,
+                    content: content, attachmentIds: attachmentIds, metadata: metadata)
     }
 
     static func typingTick(conversationId: String) -> Self {

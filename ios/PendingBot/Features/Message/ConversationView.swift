@@ -22,6 +22,9 @@ struct ConversationView: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
+    // Per-user tone preference, persisted globally across conversations.
+    // 'wechat' = casual multi-bubble (default); 'normal' = single-message AI.
+    @AppStorage("bb_chatTone") private var chatTone = "wechat"
 
     private var botName: String {
         bot?.nameWithModel ?? conversation.bot_name ?? conversation.bot_id
@@ -231,11 +234,40 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
+            toneToggle
         }
         .animation(.easeInOut(duration: 0.2), value: pending)
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    // Compact tone toggle in the chat header. Tap to flip between
+    // 「微信」(wechat — casual, multi-bubble) and 「普通AI」(normal —
+    // single-message ChatGPT-style). State is global across conversations.
+    private var toneToggle: some View {
+        Button {
+            Haptics.tap()
+            chatTone = (chatTone == "normal") ? "wechat" : "normal"
+        } label: {
+            Text(chatTone == "normal" ? "普通AI" : "微信")
+                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                .foregroundStyle(chatTone == "normal" ? Theme.Palette.ink : Theme.Palette.inkMuted)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(Theme.Palette.canvas.opacity(0.001))
+                )
+                .overlay(
+                    Capsule().strokeBorder(
+                        chatTone == "normal" ? Theme.Palette.ink.opacity(0.35) : Theme.Palette.inkMuted.opacity(0.25),
+                        lineWidth: 0.8
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("切换语气")
+        .accessibilityValue(chatTone == "normal" ? "普通AI" : "微信聊天")
     }
 
     // ── Send ────────────────────────────────────────────────────────────────
@@ -266,7 +298,8 @@ struct ConversationView: View {
                 botId: conversation.bot_id,
                 conversationId: conversation.id,
                 content: text,
-                attachmentIds: attachIds
+                attachmentIds: attachIds,
+                tone: chatTone
             ))
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
