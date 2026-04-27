@@ -1248,6 +1248,288 @@ function renderTypingIndicator() {
 
 // ── Messages ──
 
+// Markdown rendering: each bubble is a self-contained markdown island.
+// Backend already segments on \n\n with code-fence awareness so cross-segment
+// list/heading state never leaks. The raw source is parked on
+// `textEl.dataset.raw` so edit mode can show plain text and so we can
+// re-render after cancel without an extra round-trip.
+
+let _markedConfigured = false;
+function _configureMarked() {
+  if (_markedConfigured || !window.marked) return;
+  // breaks: a single \n becomes <br> — matches chat-style line breaks where
+  // people don't double-newline between thoughts. gfm covers tables / strike
+  // / task lists.
+  window.marked.setOptions({ breaks: true, gfm: true });
+  // Override the link renderer to (a) gate href schemes (no javascript:,
+  // data:, vbscript:) and (b) open external links in a new tab safely.
+  // marked v12 passes a token object to renderer.link.
+  const renderer = new window.marked.Renderer();
+  renderer.link = function ({ href, title, tokens }) {
+    const text = this.parser.parseInline(tokens);
+    const safe = _safeHref(href);
+    const t = title ? ` title="${_escAttr(title)}"` : '';
+    if (!safe) return `<span class="md-bad-link">${text}</span>`;
+    return `<a href="${_escAttr(safe)}"${t} target="_blank" rel="noopener noreferrer">${text}</a>`;
+  };
+  // Mark fenced code blocks with the language so the toolbar can decide
+  // whether to show a Run button.
+  renderer.code = function ({ text, lang }) {
+    const cls = lang ? ` class="language-${_escAttr(String(lang).toLowerCase())}"` : '';
+    return `<pre><code${cls}>${_escHtml(text)}</code></pre>`;
+  };
+  window.marked.use({ renderer });
+  _markedConfigured = true;
+}
+
+function _safeHref(href) {
+  if (!href) return null;
+  const trimmed = String(href).trim();
+  // Reject control chars that browsers might normalize away.
+  if (/[ -]/.test(trimmed)) return null;
+  // Allow relative refs (starting with /, #, ?) and explicit http/https/mailto/tel.
+  if (/^(https?:|mailto:|tel:|\/|#|\?)/i.test(trimmed)) return trimmed;
+  // Bare domain — treat as https.
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) return 'https://' + trimmed;
+  return null;
+}
+
+function _escHtml(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function _escAttr(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const _DOMPURIFY_CONFIG = {
+  // Allow the standard markdown-friendly tag set; explicitly forbid <iframe>
+  // (the code-runner injects its own iframes via createElement, never via
+  // sanitized content) and <style>/<form>/<input>.
+  ALLOWED_TAGS: [
+    'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'ins', 'kbd',
+    'li', 'mark', 'ol', 'p', 'pre', 's', 'samp', 'small', 'span', 'strong',
+    'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr',
+    'u', 'ul', 'details', 'summary',
+  ],
+  ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'src', 'alt', 'class', 'colspan', 'rowspan', 'open'],
+  // DOMPurify rejects javascript:/data: in href/src by default; this just
+  // adds an extra safety net so authors can't sneak in vbscript: either.
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[/#?])/i,
+  ALLOW_DATA_ATTR: false,
+};
+
+function renderMarkdownInto(textEl, raw) {
+  const text = raw == null ? '' : String(raw);
+  textEl.dataset.raw = text;
+  if (!text) {
+    textEl.textContent = '';
+    return;
+  }
+  if (!window.marked || !window.DOMPurify) {
+    textEl.textContent = text;
+    return;
+  }
+  _configureMarked();
+  let html;
+  try {
+    html = window.marked.parse(text);
+  } catch (e) {
+    console.warn('marked parse error:', e);
+    textEl.textContent = text;
+    return;
+  }
+  textEl.innerHTML = window.DOMPurify.sanitize(html, _DOMPURIFY_CONFIG);
+  enhanceCodeBlocks(textEl);
+}
+
+function getMessageRaw(textEl) {
+  if (!textEl) return '';
+  return textEl.dataset.raw ?? textEl.textContent ?? '';
+}
+
+// Languages we can run client-side. Anything else gets the copy button only.
+const RUNNABLE_LANGS = new Set(['js', 'javascript', 'html']);
+
+function _codeLangFromEl(codeEl) {
+  const cls = codeEl.className || '';
+  const m = cls.match(/language-([\w+-]+)/);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function enhanceCodeBlocks(scope) {
+  const pres = scope.querySelectorAll('pre');
+  for (const pre of pres) {
+    if (pre.dataset.enhanced) continue;
+    pre.dataset.enhanced = '1';
+    const codeEl = pre.querySelector('code');
+    if (!codeEl) continue;
+    const lang = _codeLangFromEl(codeEl);
+
+    const bar = document.createElement('div');
+    bar.className = 'code-toolbar';
+    if (lang) {
+      const tag = document.createElement('span');
+      tag.className = 'code-lang';
+      tag.textContent = lang;
+      bar.appendChild(tag);
+    }
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'code-btn';
+    copyBtn.textContent = '复制';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(codeEl.textContent ?? '');
+        copyBtn.textContent = '已复制';
+        setTimeout(() => { copyBtn.textContent = '复制'; }, 1200);
+      } catch {
+        copyBtn.textContent = '复制失败';
+        setTimeout(() => { copyBtn.textContent = '复制'; }, 1500);
+      }
+    });
+    bar.appendChild(copyBtn);
+
+    if (RUNNABLE_LANGS.has(lang)) {
+      const runBtn = document.createElement('button');
+      runBtn.type = 'button';
+      runBtn.className = 'code-btn run';
+      runBtn.textContent = '▶ 运行';
+      runBtn.addEventListener('click', () => runCodeBlock(pre, codeEl, lang));
+      bar.appendChild(runBtn);
+    }
+
+    pre.insertBefore(bar, pre.firstChild);
+  }
+}
+
+// Run a code block in a sandboxed iframe. JS / HTML only — anything else is
+// rejected by enhanceCodeBlocks before this is reached. The iframe has
+// allow-scripts but NOT allow-same-origin, so it's a fresh cross-origin
+// realm with no access to cookies / localStorage / parent DOM. Output is
+// captured by overriding console.* before user code runs and posted back
+// via window.parent.postMessage. A 5s timeout kills runaway loops.
+const RUN_TIMEOUT_MS = 5000;
+
+function runCodeBlock(pre, codeEl, lang) {
+  const source = codeEl.textContent ?? '';
+
+  // One output panel per <pre>; subsequent runs overwrite the previous output.
+  let panel = pre.nextElementSibling;
+  if (!panel || !panel.classList?.contains('code-output')) {
+    panel = document.createElement('div');
+    panel.className = 'code-output';
+    pre.insertAdjacentElement('afterend', panel);
+  }
+  panel.textContent = '运行中…';
+  panel.classList.remove('error');
+
+  const runId = 'r_' + Math.random().toString(36).slice(2, 10);
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.style.display = 'none';
+  iframe.dataset.runId = runId;
+
+  let lines = [];
+  let killed = false;
+  const flush = () => {
+    panel.textContent = lines.join('\n') || '(无输出)';
+  };
+
+  const onMessage = (ev) => {
+    if (ev.source !== iframe.contentWindow) return;
+    const data = ev.data;
+    if (!data || data.runId !== runId) return;
+    if (data.type === 'log') {
+      lines.push(data.text);
+      flush();
+    } else if (data.type === 'error') {
+      lines.push('✗ ' + data.text);
+      panel.classList.add('error');
+      flush();
+      cleanup();
+    } else if (data.type === 'done') {
+      if (lines.length === 0) panel.textContent = '(无输出)';
+      cleanup();
+    }
+  };
+  const cleanup = () => {
+    if (killed) return;
+    killed = true;
+    window.removeEventListener('message', onMessage);
+    clearTimeout(timer);
+    setTimeout(() => iframe.remove(), 50);
+  };
+  window.addEventListener('message', onMessage);
+
+  const timer = setTimeout(() => {
+    if (killed) return;
+    lines.push('⏱ 超时（5s），已中断');
+    panel.classList.add('error');
+    flush();
+    cleanup();
+  }, RUN_TIMEOUT_MS);
+
+  // Build the iframe's HTML. For HTML blocks, we render the source as the
+  // page body so the user can preview a snippet. For JS, we wrap the source
+  // in a try/catch and pipe console.log/info/warn/error/dir back via
+  // postMessage. JSON-stringify args to keep transport simple.
+  const isHtml = lang === 'html';
+  const escSource = source
+    .replace(/<\/script>/gi, '<\\/script>')
+    .replace(/<!--/g, '<\\!--');
+  const RUN_ID_LITERAL = JSON.stringify(runId);
+  const bootstrap = `
+    (function(){
+      var RID=${RUN_ID_LITERAL};
+      function fmt(a){
+        if (a instanceof Error) return a.stack || (a.name+': '+a.message);
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a, function(k,v){
+          if (typeof v === 'function') return '[Function '+(v.name||'')+']';
+          if (typeof v === 'undefined') return '[undefined]';
+          return v;
+        }, 2); } catch(_) { return String(a); }
+      }
+      function send(type, text){
+        try { parent.postMessage({runId:RID, type:type, text:text}, '*'); } catch(_){}
+      }
+      ['log','info','warn','error','debug','dir'].forEach(function(k){
+        var prev = console[k];
+        console[k] = function(){
+          var parts = [];
+          for (var i=0;i<arguments.length;i++) parts.push(fmt(arguments[i]));
+          send('log', parts.join(' '));
+          if (prev) try { prev.apply(console, arguments); } catch(_){}
+        };
+      });
+      window.addEventListener('error', function(ev){
+        send('error', (ev.error && (ev.error.stack || ev.error.message)) || ev.message || 'unknown error');
+      });
+      window.addEventListener('unhandledrejection', function(ev){
+        send('error', 'Unhandled rejection: ' + fmt(ev.reason));
+      });
+    })();`;
+
+  let srcdoc;
+  if (isHtml) {
+    srcdoc = `<!doctype html><html><head><meta charset="utf-8"><script>${bootstrap}<\/script></head><body>\n${escSource}\n<script>parent.postMessage({runId:${RUN_ID_LITERAL}, type:'done'}, '*');<\/script></body></html>`;
+  } else {
+    srcdoc = `<!doctype html><html><head><meta charset="utf-8"></head><body><script>${bootstrap}
+try {
+${escSource}
+} catch (e) {
+  parent.postMessage({runId:${RUN_ID_LITERAL}, type:'error', text:(e && (e.stack||e.message))||String(e)}, '*');
+}
+parent.postMessage({runId:${RUN_ID_LITERAL}, type:'done'}, '*');
+<\/script></body></html>`;
+  }
+  iframe.srcdoc = srcdoc;
+  document.body.appendChild(iframe);
+}
+
 // opts.attachments: [{ id, mime, url, width?, height? }]
 // opts.clientKey: marker for optimistic bubbles awaiting server ack
 function appendMessage(type, content, msgId, opts) {
@@ -1270,7 +1552,7 @@ function appendMessage(type, content, msgId, opts) {
   if (hasText) {
     const textEl = document.createElement('div');
     textEl.className = 'msg-text';
-    textEl.textContent = content;
+    renderMarkdownInto(textEl, content);
     bubble.appendChild(textEl);
   }
 
@@ -1354,7 +1636,13 @@ function enterEditMode(msgId, wrap) {
     bubble.appendChild(textEl);
   }
 
-  const originalText = textEl.textContent ?? '';
+  // Edit mode shows raw markdown, not the rendered HTML — otherwise the
+  // user would be poking at <strong>/<a> nodes instead of the source they
+  // typed. Park the rendered HTML on the side so we can restore it on cancel.
+  const originalText = getMessageRaw(textEl);
+  const renderedHTML = textEl.innerHTML;
+  textEl.textContent = originalText;
+  delete textEl.dataset.raw;
 
   textEl.setAttribute('contenteditable', 'plaintext-only');
   // Fallback for browsers without plaintext-only support: plain contenteditable.
@@ -1365,7 +1653,7 @@ function enterEditMode(msgId, wrap) {
   textEl.classList.add('editing-text');
   wrap.classList.add('editing');
 
-  edits.set(msgId, { original: originalText, wrap, textEl });
+  edits.set(msgId, { original: originalText, renderedHTML, wrap, textEl });
 
   const onInput = () => {
     const current = textEl.textContent ?? '';
@@ -1404,23 +1692,33 @@ function placeCaretAtEnd(el) {
 function exitEditModeSingle(msgId, { commit = false } = {}) {
   const e = edits.get(msgId);
   if (!e) return;
-  const { wrap, textEl, original, onInput, onKey } = e;
+  const { wrap, textEl, original, renderedHTML, onInput, onKey } = e;
   if (onInput) textEl.removeEventListener('input', onInput);
   if (onKey) textEl.removeEventListener('keydown', onKey);
   textEl.removeAttribute('contenteditable');
   textEl.classList.remove('editing-text');
   wrap.classList.remove('editing', 'edited');
   if (!commit) {
-    // Restore original text on cancel.
-    textEl.textContent = original;
+    // Restore the rendered markdown HTML on cancel.
+    if (renderedHTML !== undefined) {
+      textEl.innerHTML = renderedHTML;
+      textEl.dataset.raw = original;
+    } else {
+      textEl.textContent = original;
+    }
   }
   // If this was an image-only bubble that we added a blank .msg-text to,
   // remove it on commit/cancel if it's still empty to keep the bubble
-  // compact like before.
+  // compact like before. Done BEFORE re-rendering markdown so the textContent
+  // check sees the raw user-typed value, not whatever marked produces.
   const bubble = wrap.querySelector('.msg');
-  if (bubble?.classList.contains('has-images') && textEl.textContent === '') {
+  if (bubble?.classList.contains('has-images') && (textEl.textContent ?? '').trim() === '') {
     textEl.remove();
     bubble.classList.add('image-only');
+  } else if (commit) {
+    // Re-render the new raw text as markdown so the bubble matches what
+    // every other rendered bubble looks like.
+    renderMarkdownInto(textEl, textEl.textContent ?? '');
   }
   edits.delete(msgId);
 }
