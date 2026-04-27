@@ -5,6 +5,7 @@ import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
 import { buildPrompt, type ChatTone } from './prompt-builder';
 import { checkSilent } from './silent';
+import { augmentWithWebSearch } from './search/augment';
 import {
   insertMessage, updateConversationRound, updateConversationActivity,
   resetSurfInterval, findConversationById, bindAttachmentsToMessage,
@@ -119,12 +120,18 @@ export async function handleUserMessage(params: {
   // omitted so existing channels (Telegram/Feishu) keep their current
   // behaviour.
   tone?: ChatTone;
+  // 联网搜索: when true, run a one-shot Jina search_web on the user's text
+  // before the LLM call and inject the result as extra system context. The
+  // search activity is reported live via surf_status so the chat shows a
+  // "searching…" log above the bot reply (reuses the existing surf-log UI).
+  webSearch?: boolean;
   // Re-run the LLM for an existing user message without inserting a new row,
   // binding attachments, or bumping the round counter. The caller is
   // responsible for having already deleted the stale bot reply(ies) from DB.
   regenerate?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, userMessages, replyFn, extraContext, tone, regenerate } = params;
+  const { conversationId, botId, userId, userMessages, replyFn, extraContext: extraContextIn, tone, webSearch, regenerate } = params;
+  let extraContext = extraContextIn;
   // Per-gen start timestamp — isInterrupted/hasFreshInterrupt ignore signals
   // raised before this, so we don't need to wipe the map at entry and can't
   // accidentally swallow a just-arrived signal.
@@ -188,6 +195,24 @@ export async function handleUserMessage(params: {
 
       if (botConfig.surfing.enabled) {
         resetSurfInterval(conversationId, botConfig.surfing.initialIntervalSec);
+      }
+    }
+  }
+
+  // 联网搜索: run search BEFORE building the prompt so findings are part
+  // of the same system message. Result merges into extraContext (if the
+  // caller already passed something, the search block is appended after).
+  if (webSearch && userMessages.length > 0) {
+    const queryText = userMessages.map(e => e.content).filter(Boolean).join('\n').trim();
+    if (queryText) {
+      const augment = await augmentWithWebSearch({
+        userId, conversationId, query: queryText,
+        emitLog: (content) => replyFn({ type: 'surf_status', conversationId, content }),
+      });
+      if (augment.context) {
+        extraContext = extraContext
+          ? `${extraContext}\n\n${augment.context}`
+          : augment.context;
       }
     }
   }

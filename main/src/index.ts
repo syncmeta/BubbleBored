@@ -142,6 +142,11 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   const toneRaw = metadata && typeof metadata.tone === 'string' ? metadata.tone : undefined;
   const tone = toneRaw === 'normal' || toneRaw === 'wechat' ? toneRaw : undefined;
 
+  // 联网搜索 toggle from the web composer. Other channels (Telegram/Feishu)
+  // omit metadata so they always run without it. Per-message — the chat-page
+  // toggle is sent fresh on every send.
+  const webSearch = metadata && metadata.webSearch === true;
+
   // Pass through debounce. Each entry the user sent becomes its own DB row —
   // only at LLM-request time do consecutive user rows get joined with \n\n.
   debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (entries) => {
@@ -149,6 +154,7 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
       conversationId, botId, userId,
       userMessages: entries,
       tone,
+      webSearch,
       replyFn,
     }).catch(e => {
       console.error('[orchestrator] error:', e);

@@ -56,6 +56,10 @@ const state = {
   // Chat tone — 'wechat' (multi-bubble, casual) or 'normal' (single-message AI).
   // Default to 'wechat' to preserve existing behaviour.
   chatTone: localStorage.getItem('bb_chatTone') === 'normal' ? 'normal' : 'wechat',
+  // 联网搜索 toggle. When on, every send carries metadata.webSearch=true and
+  // the backend runs a one-shot Jina search before invoking the LLM.
+  // Persisted across reloads — matches ChatGPT's "🔍 search" mental model.
+  webSearch: localStorage.getItem('bb_webSearch') === '1',
   ws: null,
   reconnectTimer: null,
   reconnectDelay: 1000,
@@ -330,6 +334,8 @@ async function init() {
   setupInput();
   setupGlobalHandlers();
   renderToneButton();
+  renderWebSearchButton();
+  renderSkillsChip();
   startRelativeTimeTick();
 }
 
@@ -722,6 +728,8 @@ function updateChatHeader(conv) {
   botEl.innerHTML = `${botAvatarHTML(conv.bot_id)}<span>${esc(botName)}</span>`;
 
   renderToneButton();
+  renderWebSearchButton();
+  renderSkillsChip();
   refreshAttachAvailability(bot);
 }
 
@@ -1107,6 +1115,23 @@ function toggleChatTone() {
   state.chatTone = state.chatTone === 'normal' ? 'wechat' : 'normal';
   localStorage.setItem('bb_chatTone', state.chatTone);
   renderToneButton();
+}
+
+// ── 联网搜索 toggle ──
+
+function renderWebSearchButton() {
+  const btn = document.getElementById('websearch-btn');
+  if (!btn) return;
+  btn.classList.toggle('on', state.webSearch);
+  btn.title = state.webSearch
+    ? '联网搜索：开 — 每次发送都会先搜一遍网络再让机器人作答（点击关闭）'
+    : '联网搜索：关 — 机器人只用自身知识作答（点击打开）';
+}
+
+function toggleWebSearch() {
+  state.webSearch = !state.webSearch;
+  localStorage.setItem('bb_webSearch', state.webSearch ? '1' : '0');
+  renderWebSearchButton();
 }
 
 // ── Reset ──
@@ -1589,6 +1614,29 @@ function appendMessage(type, content, msgId, opts) {
     actions.appendChild(regen);
   }
 
+  if (type === 'bot' && hasText) {
+    // Quick "save as skill" for any bot bubble — captures its raw markdown
+    // body as a skill draft. Backend already exists; this is just a faster
+    // path than copy-pasting into the 「我」 tab form.
+    const save = document.createElement('button');
+    save.className = 'msg-save-skill';
+    save.type = 'button';
+    save.title = '保存为技能';
+    save.setAttribute('aria-label', '保存为技能');
+    save.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+    `;
+    save.addEventListener('click', () => {
+      const textEl = bubble.querySelector('.msg-text');
+      openSaveAsSkillModal(getMessageRaw(textEl));
+    });
+    actions.appendChild(save);
+  }
+
   const del = document.createElement('button');
   del.className = 'msg-del';
   del.type = 'button';
@@ -2035,7 +2083,7 @@ function sendMessage() {
       botId: conv?.bot_id,
       conversationId: state.currentConversationId,
       content,
-      metadata: { tone: state.chatTone },
+      metadata: { tone: state.chatTone, webSearch: state.webSearch },
     };
     const ids = readyAtts.map(a => a.attachmentId);
     if (ids.length > 0) payload.attachmentIds = ids;
@@ -3804,6 +3852,7 @@ async function toggleSkillEnabled(id, enabled) {
     });
     const card = document.querySelector(`.skill-card[data-id="${id}"]`);
     if (card) card.classList.toggle('enabled', enabled);
+    invalidateSkillsCache();
   } catch (e) {
     alert('保存失败：' + e.message);
     loadMySkills();
@@ -3886,7 +3935,224 @@ async function createSkillFromForm() {
     document.getElementById('me-skill-new-desc').value = '';
     document.getElementById('me-skill-new-body').value = '';
     loadMySkills();
+    invalidateSkillsCache();
   } catch (e) { alert('创建失败：' + e.message); }
+}
+
+// ── Skills chip + popover (chat header) ─────────────────────────────────
+// A small chat-header pill that shows how many skills are currently enabled
+// and opens a popover for quick toggles, mirroring the same /api/skills
+// endpoints the 「我」 tab uses. The cache is shared so toggling in either
+// place updates the other on next render. The popover has a "前往「我」"
+// link for richer editing (description / body / preset reseed).
+
+let _skillsCache = null; // [{ id, name, description, enabled, ... }]
+let _skillsCacheAt = 0;
+const _SKILLS_CACHE_TTL = 30_000;
+
+function invalidateSkillsCache() {
+  _skillsCache = null;
+  _skillsCacheAt = 0;
+  renderSkillsChip();
+}
+
+async function fetchSkillsCached(force) {
+  const fresh = !force && _skillsCache && (Date.now() - _skillsCacheAt) < _SKILLS_CACHE_TTL;
+  if (fresh) return _skillsCache;
+  try {
+    const res = await fetch('/api/skills');
+    const rows = await res.json();
+    if (Array.isArray(rows)) {
+      _skillsCache = rows;
+      _skillsCacheAt = Date.now();
+    }
+  } catch (e) {
+    console.warn('skills fetch failed:', e);
+  }
+  return _skillsCache ?? [];
+}
+
+async function renderSkillsChip() {
+  const btn = document.getElementById('skills-chip-btn');
+  if (!btn) return;
+  const skills = await fetchSkillsCached(false);
+  const enabledCount = skills.filter(s => s.enabled).length;
+  // Show the icon always when rendered; show count only when > 0 so
+  // "🧩 0" doesn't shout. Hidden entirely if there are no skills at all.
+  if (skills.length === 0) {
+    btn.textContent = '';
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  btn.textContent = enabledCount > 0 ? `🧩 ${enabledCount}` : '🧩';
+  btn.classList.toggle('on', enabledCount > 0);
+}
+
+async function toggleSkillsPopover(ev) {
+  if (ev) ev.stopPropagation();
+  const existing = document.querySelector('.skills-popover');
+  if (existing) { existing.remove(); return; }
+
+  const btn = document.getElementById('skills-chip-btn');
+  if (!btn) return;
+  const skills = await fetchSkillsCached(true);
+
+  const pop = document.createElement('div');
+  pop.className = 'skills-popover';
+  pop.innerHTML = `
+    <div class="skills-popover-head">
+      <span>本次对话使用的技能</span>
+      <button type="button" class="skills-popover-manage">前往「我」管理 →</button>
+    </div>
+    <div class="skills-popover-body"></div>
+    <div class="skills-popover-foot">
+      启用项会拼进系统提示词，按需生效
+    </div>
+  `;
+
+  const body = pop.querySelector('.skills-popover-body');
+  if (skills.length === 0) {
+    body.innerHTML = '<div class="me-section-status">还没有技能 — 去「我」标签里添加</div>';
+  } else {
+    for (const s of skills) {
+      const row = document.createElement('label');
+      row.className = 'skills-popover-row';
+      row.innerHTML = `
+        <input type="checkbox" ${s.enabled ? 'checked' : ''}>
+        <span class="skills-popover-name">${esc(s.name)}</span>
+        ${s.description ? `<span class="skills-popover-desc">${esc(s.description)}</span>` : ''}
+      `;
+      const cb = row.querySelector('input');
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        await toggleSkillEnabled(s.id, cb.checked);
+        s.enabled = cb.checked;
+        cb.disabled = false;
+        renderSkillsChip();
+      });
+      body.appendChild(row);
+    }
+  }
+
+  pop.querySelector('.skills-popover-manage').addEventListener('click', () => {
+    pop.remove();
+    switchTab('me');
+    setTimeout(() => {
+      const sect = document.getElementById('me-skills');
+      if (sect) sect.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  });
+
+  // Anchor below the chip
+  const rect = btn.getBoundingClientRect();
+  pop.style.top = `${rect.bottom + 6}px`;
+  pop.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+  document.body.appendChild(pop);
+
+  // Dismiss on outside-click. Wait one tick so the click that opened us
+  // doesn't immediately close.
+  setTimeout(() => {
+    const onDoc = (e) => {
+      if (!pop.contains(e.target) && e.target !== btn) {
+        pop.remove();
+        document.removeEventListener('mousedown', onDoc);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+  }, 0);
+}
+
+// ── Save-as-skill quick path ────────────────────────────────────────────
+// Click the 💾 icon on a bot reply to capture its body as a new skill,
+// pre-filled in a modal. Reuses POST /api/skills.
+
+function openSaveAsSkillModal(prefillBody) {
+  // Reuse / lazily insert a single shared modal.
+  let modal = document.getElementById('save-skill-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'save-skill-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-card" onclick="event.stopPropagation()">
+        <div class="modal-head">
+          <span>保存为技能</span>
+          <button class="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <p class="me-section-hint" style="margin-top:0">技能正文在每次对话开始时拼进系统提示词。先填一句"什么时候用这个技能"，再让机器人按需调用。</p>
+          <label class="modal-label">名称（小写，连字符分隔）</label>
+          <input type="text" id="save-skill-name" maxlength="64" placeholder="my-skill" autocomplete="off">
+          <label class="modal-label">一句话描述</label>
+          <input type="text" id="save-skill-desc" maxlength="280" placeholder="什么时候用这个技能" autocomplete="off">
+          <label class="modal-label">正文（Markdown）</label>
+          <textarea id="save-skill-body" rows="10" placeholder="技能指令…"></textarea>
+          <label class="modal-label" style="margin-top:8px;display:flex;gap:6px;align-items:center">
+            <input type="checkbox" id="save-skill-enabled" checked>
+            <span>立即启用</span>
+          </label>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn-ghost" id="save-skill-cancel">取消</button>
+          <button type="button" class="btn-primary" id="save-skill-submit">保存</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeSaveAsSkillModal();
+    });
+    modal.querySelector('.modal-close').addEventListener('click', closeSaveAsSkillModal);
+    modal.querySelector('#save-skill-cancel').addEventListener('click', closeSaveAsSkillModal);
+    modal.querySelector('#save-skill-submit').addEventListener('click', submitSaveAsSkillModal);
+  }
+  modal.querySelector('#save-skill-name').value = '';
+  modal.querySelector('#save-skill-desc').value = '';
+  modal.querySelector('#save-skill-body').value = prefillBody ?? '';
+  modal.querySelector('#save-skill-enabled').checked = true;
+  modal.style.display = 'flex';
+  setTimeout(() => modal.querySelector('#save-skill-name').focus(), 30);
+}
+
+function closeSaveAsSkillModal() {
+  const modal = document.getElementById('save-skill-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitSaveAsSkillModal() {
+  const modal = document.getElementById('save-skill-modal');
+  if (!modal) return;
+  const name = modal.querySelector('#save-skill-name').value.trim();
+  const description = modal.querySelector('#save-skill-desc').value.trim();
+  const body = modal.querySelector('#save-skill-body').value;
+  const enabled = modal.querySelector('#save-skill-enabled').checked;
+  if (!name) {
+    alert('请填名称');
+    modal.querySelector('#save-skill-name').focus();
+    return;
+  }
+  const submit = modal.querySelector('#save-skill-submit');
+  submit.disabled = true;
+  try {
+    const r = await fetch('/api/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, body, enabled }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${r.status}`);
+    }
+    closeSaveAsSkillModal();
+    invalidateSkillsCache();
+    // If the 「我」 tab is currently visible, refresh its list too.
+    if (state.currentTab === 'me') loadMySkills();
+  } catch (e) {
+    alert('保存失败：' + e.message);
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
