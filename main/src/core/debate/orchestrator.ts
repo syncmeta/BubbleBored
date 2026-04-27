@@ -219,13 +219,12 @@ export async function runDebateRound(
     }
 
     if (out.passed || !out.text.trim()) {
+      // PASS is a legitimate choice, not a failure — don't bump
+      // consecutiveFailures (which is reserved for hard errors). The pass
+      // still counts toward maxMessages because the for-loop step increment
+      // consumes a turn slot regardless.
       emit(conversationId, `[${out.displayName}] 跳过（[PASS]）`);
-      consecutiveFailures++;
       lastBotId = botId;
-      if (consecutiveFailures >= failureLimit) {
-        emit(conversationId, '没人想接话了，本轮提前结束');
-        break;
-      }
       continue;
     }
 
