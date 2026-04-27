@@ -2,7 +2,7 @@ import SwiftUI
 import PhotosUI
 
 /// Bottom-of-screen input bar — capsule field flanked by circle buttons.
-/// Matches the BubbleBored composer:
+/// Matches the PendingBot composer:
 ///   • Left  — circle attach button (hairline border, surface fill)
 ///   • Center — capsule textfield (1–6 lines, hairline border)
 ///   • Right — circle send button (state-aware: accent on, muted off)

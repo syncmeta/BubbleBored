@@ -16,7 +16,7 @@ enum ImportFlow {
             case .unrecognized: return "无法识别这条链接"
             case .redeemFailed(let e): return "导入失败: \(e.localizedDescription)"
             case .localNetworkUnreachable:
-                return "连不上服务器。请确认与服务器在同一局域网，并允许 PendingBot 的本地网络权限（设置 → PendingBot → 本地网络）。"
+                return "连不上服务器。请确认与服务器在同一局域网，并允许大绿豆的本地网络权限（设置 → 大绿豆 → 本地网络）。"
             }
         }
     }

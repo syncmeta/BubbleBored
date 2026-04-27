@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One place to change the look. Mirrors the design language used across
-/// the BubbleBored reference + the web `tokens.css`: deep-jade accent on
+/// the PendingBot reference + the web `tokens.css`: deep-jade accent on
 /// warm-ink neutrals, editorial serif for titles, rounded sans for chrome.
 ///
 /// Light-only theme — the brand is two anchor colors (#044735 + #fdfcfa)

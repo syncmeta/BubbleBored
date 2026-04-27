@@ -1,4 +1,4 @@
-# PendingBot
+# 大绿豆 · PendingBot
 
 [English](README_EN.md)
 

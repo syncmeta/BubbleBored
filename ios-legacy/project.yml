@@ -64,7 +64,7 @@ targets:
     info:
       path: PendingBot/Resources/Info.plist
       properties:
-        CFBundleDisplayName: PendingBot
+        CFBundleDisplayName: 大绿豆
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # 跳过 App Store Connect 上传后那个 "Missing Compliance / Manage" 步骤。
@@ -98,7 +98,7 @@ targets:
         # / 192.168.x / 169.254.x / *.local). The system prompt blocks the call
         # until the user responds; we proactively warm it from ImportFlow so
         # the redeem doesn't time out before they tap "允许".
-        NSLocalNetworkUsageDescription: 用于连接你部署在局域网内的 PendingBot 服务器（公网部署不需要这个权限）。
+        NSLocalNetworkUsageDescription: 用于连接你部署在局域网内的大绿豆服务器（公网部署不需要这个权限）。
         # Custom URL scheme — share-link landing pages redirect to
         # pendingbot://import?... when Universal Links don't fire.
         CFBundleURLTypes:

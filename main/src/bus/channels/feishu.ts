@@ -97,7 +97,7 @@ export class FeishuChannel implements Channel {
     if (!content) return;
 
     if (content === '/start') {
-      this.sendText(senderId, 'PendingBot 已连接，直接发消息开始聊天。');
+      this.sendText(senderId, '大绿豆已连接，直接发消息开始聊天。');
       return;
     }
 

@@ -411,7 +411,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`[server] BubbleBored running at http://localhost:${port}`);
+console.log(`[server] PendingBot running at http://localhost:${port}`);
 
 // Start Telegram channels after server is up
 for (const ch of telegramChannels) {

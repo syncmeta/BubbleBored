@@ -1,4 +1,4 @@
-# PendingBot iOS
+# 大绿豆 iOS · PendingBot
 
 原生 SwiftUI thin client。和 `main/` 服务端通过 Bearer Key 鉴权,数据按
 key 隔离。覆盖六个 tab:消息 / 议论 / 冲浪 / 回顾 / 画像 / 你。

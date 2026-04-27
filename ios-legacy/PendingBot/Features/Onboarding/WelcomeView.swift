@@ -22,7 +22,7 @@ struct WelcomeView: View {
                     .shadow(color: .black.opacity(0.05), radius: 14, y: 4)
 
                 VStack(spacing: 4) {
-                    Text("PendingBot")
+                    Text("大绿豆")
                         .font(Theme.Fonts.serif(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                     Text("主动、自然、不谄媚\n帮人审视自我、探索未知的 AI 们")
@@ -50,7 +50,7 @@ struct WelcomeView: View {
             .padding(.bottom, 24)
 
             VStack(spacing: 4) {
-                Text("现在没有上线运营，这只是个客户端\n需要连接到自己电脑的 PendingBot 才能用\n钥匙用来验证身份，区分你和别人")
+                Text("现在没有上线运营，这只是个客户端\n需要连接到自己电脑的大绿豆才能用\n钥匙用来验证身份，区分你和别人")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
                     .multilineTextAlignment(.center)

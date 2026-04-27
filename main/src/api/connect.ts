@@ -59,14 +59,14 @@ function landingHtml(token: string, host: string, isWechat: boolean): string {
   const wechatHint = isWechat ? `
     <div class="hint">
       <p>📱 请点击右上角 <b>···</b> → <b>在 Safari 中打开</b></p>
-      <p>这样才能正确跳转到 PendingBot</p>
+      <p>这样才能正确跳转到大绿豆</p>
     </div>` : '';
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>导入到 PendingBot</title>
+  <title>导入到大绿豆</title>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
@@ -96,11 +96,11 @@ function landingHtml(token: string, host: string, isWechat: boolean): string {
   </style>
 </head>
 <body>
-  <h1>🌊 导入 PendingBot 服务器</h1>
+  <h1>🌊 导入大绿豆服务器</h1>
   <p class="sub">将 <code>${host}</code> 添加到 iPhone 应用</p>
   ${wechatHint}
   <div class="card">
-    <a class="btn btn-primary" href="${deepLink}">在 PendingBot 中打开</a>
+    <a class="btn btn-primary" href="${deepLink}">在大绿豆中打开</a>
   </div>
   <p class="meta">如果按钮无效,请把这条链接发到 iPhone 的 Safari 中打开</p>
   <script>

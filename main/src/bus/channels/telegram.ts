@@ -78,7 +78,7 @@ export class TelegramChannel implements Channel {
     const text = msg.text.trim();
 
     if (text === '/start') {
-      this.sendText(chatId, 'PendingBot 已连接，直接发消息开始聊天。');
+      this.sendText(chatId, '大绿豆已连接，直接发消息开始聊天。');
       return;
     }
 

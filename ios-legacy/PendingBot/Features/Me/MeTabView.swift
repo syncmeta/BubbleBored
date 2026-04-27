@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 我 — profile, 当前服务器, 画像, AI 收藏. Visual language mirrors the
-/// BubbleBored settings sheet: canvas background, vertical stack of
+/// PendingBot settings sheet: canvas background, vertical stack of
 /// `card(title, footer, content)` blocks, serif headings, hairline-bordered
 /// surface fills, rounded labels.
 struct MeTabView: View {
@@ -377,7 +377,7 @@ struct MeTabView: View {
         }
     }
 
-    // ── Card chrome (mirrors BubbleBored SettingsView.card) ─────────────────
+    // ── Card chrome (mirrors PendingBot SettingsView.card) ─────────────────
 
     @ViewBuilder
     private func card<Content: View>(
