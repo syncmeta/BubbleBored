@@ -800,6 +800,34 @@ export function deleteSkill(id: string): void {
   getDb().query(`DELETE FROM skills WHERE id = ?`).run(id);
 }
 
+// ---------- Per-user per-bot model override ----------
+//
+// One row per (user, bot) the user has explicitly pinned a model on. Absence
+// = "follow the bot's default." Set/cleared from 我 → 机器人管理 → bot.
+
+export function getUserBotModel(userId: string, botId: string): string | null {
+  const row = getDb().query<{ model: string }, [string, string]>(
+    `SELECT model FROM user_bot_model_overrides WHERE user_id = ? AND bot_id = ?`
+  ).get(userId, botId);
+  return row?.model ?? null;
+}
+
+export function setUserBotModel(userId: string, botId: string, model: string | null): void {
+  if (model === null || model.trim() === '') {
+    getDb().query(
+      `DELETE FROM user_bot_model_overrides WHERE user_id = ? AND bot_id = ?`
+    ).run(userId, botId);
+    return;
+  }
+  getDb().query(
+    `INSERT INTO user_bot_model_overrides (user_id, bot_id, model)
+     VALUES (?, ?, ?)
+     ON CONFLICT(user_id, bot_id) DO UPDATE SET
+       model = excluded.model,
+       updated_at = unixepoch()`
+  ).run(userId, botId, model.trim());
+}
+
 // ---------- Portraits ----------
 
 export type PortraitKind = 'moments' | 'memos' | 'schedule' | 'alarms' | 'bills';

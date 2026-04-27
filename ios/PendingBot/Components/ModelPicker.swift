@@ -5,7 +5,7 @@ import SwiftUI
 /// "use the bot's default" — rendered as a muted placeholder.
 struct ModelPickerButton: View {
     @Binding var slug: String
-    var placeholder: String = "默认模型"
+    var placeholder: String = "模型选择"
 
     @State private var showSheet = false
 

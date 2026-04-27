@@ -5,7 +5,12 @@ import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
 import { buildPrompt, type ChatTone } from './prompt-builder';
 import { checkSilent } from './silent';
-import { SEARCH_WEB_TOOL, runSearchToolCall, buildToolRoundMessages } from './search/tool';
+import { SEARCH_WEB_TOOL, runSearchToolCall } from './search/tool';
+import {
+  LOAD_SKILL_TOOL, runLoadSkillToolCall, makeSkillBodyCache,
+} from './skills-tool';
+import { listEnabledSkillsForUser } from '../db/queries';
+import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ToolCallAccum } from '../llm/stream';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
@@ -216,14 +221,21 @@ export async function handleUserMessage(params: {
   // bot's own personality model.
   const chatModel = hasInlineImages
     ? modelForTask('vision')
-    : modelFor(botId, conversationId);
+    : modelFor({ botId, userId, conversationId });
   console.log(`[chat] prompt: ${promptMessages.length} messages, model: ${chatModel}${hasInlineImages ? ' (vision routed)' : ''}`);
 
-  // 联网 toggle exposes one tool to the model — `search_web`. The model
-  // chooses whether and what to query. Pre-fetching every send turns into
-  // garbage results for "hi", and the user explicitly asked for the
-  // ChatGPT/Claude-style behaviour where the model decides.
-  const tools = webSearch ? [SEARCH_WEB_TOOL] : undefined;
+  // 联网 toggle exposes `search_web`. The model chooses whether and what to
+  // query — we don't pre-fetch.
+  // Skills follow Claude's progressive-disclosure model: the system prompt
+  // only carries skill names + descriptions, and `load_skill` lets the model
+  // pull the full body when it judges a skill relevant. Both tools share the
+  // same multi-round tool loop below.
+  const skillsAvailable = listEnabledSkillsForUser(userId).length > 0;
+  const toolList: ChatCompletionTool[] = [];
+  if (webSearch) toolList.push(SEARCH_WEB_TOOL);
+  if (skillsAvailable) toolList.push(LOAD_SKILL_TOOL);
+  const tools = toolList.length > 0 ? toolList : undefined;
+  const skillBodyCache = makeSkillBodyCache();
   const TOOL_LOOP_MAX = 4;
 
   const messageId = randomUUID();
@@ -320,46 +332,108 @@ export async function handleUserMessage(params: {
 
       const calls = Array.from(toolCallSink.values()).sort((a, b) => a.index - b.index);
       const searchCalls = calls.filter(c => c.name === 'search_web' && c.id);
-      if (searchCalls.length === 0) break; // no tool calls → final answer streamed
+      const skillCalls = calls.filter(c => c.name === 'load_skill' && c.id);
+      if (searchCalls.length === 0 && skillCalls.length === 0) {
+        break; // no tool calls → final answer streamed
+      }
 
-      // Tool round. Execute calls (in parallel — they're independent), feed
-      // results back into the conversation, loop. Live progress goes through
-      // surf_status so the chat UI shows "搜索：…" / "搜索完成" while we wait.
-      console.log(`[chat] tool round ${round + 1}: ${searchCalls.length} search call(s)`);
-      const queryList = searchCalls.map(c => {
+      // Tool round. Search calls run in parallel (network bound, mutually
+      // independent); skill calls are SQLite reads — synchronous + cheap.
+      // Each tool kind gets its own assistant/tool message envelope so the
+      // wire shape matches what each tool's helper builds.
+      const totalCalls = searchCalls.length + skillCalls.length;
+      console.log(`[chat] tool round ${round + 1}: ${searchCalls.length} search, ${skillCalls.length} skill call(s)`);
+
+      let queryList: string[] = [];
+      let searchResults: Awaited<ReturnType<typeof runSearchToolCall>>[] = [];
+      if (searchCalls.length > 0) {
+        queryList = searchCalls.map(c => {
+          try {
+            const args = JSON.parse(c.args || '{}');
+            return String(args.query ?? '').slice(0, 200);
+          } catch { return ''; }
+        });
+        replyFn({
+          type: 'surf_status', conversationId,
+          content: `🔍 搜索：${queryList.filter(Boolean).join('；')}`,
+        });
+
+        searchResults = await Promise.all(searchCalls.map((c, i) => {
+          const q = queryList[i] ?? '';
+          return runSearchToolCall({
+            userId, conversationId,
+            call: { id: c.id, query: q },
+          });
+        }));
+
+        replyFn({
+          type: 'surf_status', conversationId,
+          content: '搜索完成，整理回答中…',
+        });
+      }
+
+      const skillNameList: string[] = skillCalls.map(c => {
         try {
           const args = JSON.parse(c.args || '{}');
-          return String(args.query ?? '').slice(0, 200);
+          return String(args.name ?? '').slice(0, 120);
         } catch { return ''; }
       });
-      replyFn({
-        type: 'surf_status', conversationId,
-        content: `🔍 搜索：${queryList.filter(Boolean).join('；')}`,
-      });
-
-      const results = await Promise.all(searchCalls.map(async (c, i) => {
-        const q = queryList[i] ?? '';
-        return runSearchToolCall({
-          userId, conversationId,
-          call: { id: c.id, query: q },
-        });
+      const skillResults = skillCalls.map((c, i) => runLoadSkillToolCall({
+        userId,
+        call: { id: c.id, name: skillNameList[i] ?? '' },
+        cache: skillBodyCache,
       }));
+      if (skillCalls.length > 0) {
+        const loaded = skillResults.filter(r => r.ok).map(r => r.name).filter(Boolean);
+        if (loaded.length > 0) {
+          console.log(`[chat] skills loaded: ${loaded.join(', ')}`);
+        }
+      }
 
-      replyFn({
-        type: 'surf_status', conversationId,
-        content: '搜索完成，整理回答中…',
-      });
+      // Build one assistant message that carries every tool_call from this
+      // round, then one role:tool turn per result. Mixing kinds in a single
+      // assistant envelope is required by the OpenAI wire format — the
+      // assistant emitted them together, so we must echo them together.
+      const allCallsForAssistant: { id: string; name: string; args: string }[] = [
+        ...searchCalls.map((c, i) => ({
+          id: c.id!, name: 'search_web',
+          args: JSON.stringify({ query: queryList[i] ?? '' }),
+        })),
+        ...skillCalls.map((c, i) => ({
+          id: c.id!, name: 'load_skill',
+          args: JSON.stringify({ name: skillNameList[i] ?? '' }),
+        })),
+      ];
+      const allToolMessages: ChatCompletionMessageParam[] = [
+        ...searchResults.map(r => ({
+          role: 'tool' as const,
+          tool_call_id: r.tool_call_id,
+          content: r.content,
+        })),
+        ...skillResults.map(r => ({
+          role: 'tool' as const,
+          tool_call_id: r.tool_call_id,
+          content: r.content,
+        })),
+      ];
 
-      // Append the tool round to the conversation context so the next round
-      // can read the results.
       conversationMessages = [
         ...conversationMessages,
-        ...buildToolRoundMessages(
-          roundContent,
-          searchCalls.map((c, i) => ({ id: c.id, query: queryList[i] ?? '' })),
-          results,
-        ),
+        {
+          role: 'assistant',
+          content: roundContent || null,
+          tool_calls: allCallsForAssistant.map(c => ({
+            id: c.id,
+            type: 'function' as const,
+            function: { name: c.name, arguments: c.args },
+          })),
+        },
+        ...allToolMessages,
       ];
+
+      // Sanity guard so an empty round (model emitted tool_call shape with no
+      // valid id) doesn't loop forever — defensive, shouldn't fire.
+      if (totalCalls === 0) break;
     }
 
     // Final-output [SILENT] recheck — handles the case where the marker

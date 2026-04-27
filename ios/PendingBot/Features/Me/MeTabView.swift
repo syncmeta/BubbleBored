@@ -32,6 +32,7 @@ struct MeTabView: View {
                             serverCard
                             auditCard
                             skillsCard
+                            botsCard
                             portraitCard
                             picksCard
                             signOutCard
@@ -209,6 +210,38 @@ struct MeTabView: View {
                             .font(Theme.Fonts.rounded(size: 15, weight: .medium))
                             .foregroundStyle(Theme.Palette.ink)
                         Text("列表 · 启用 · 编辑")
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var botsCard: some View {
+        card(title: "机器人",
+             footer: "为每个机器人单独挑模型，只对你这台号生效，不会改动配置文件，也不影响别的用户。")
+        {
+            NavigationLink {
+                BotManagementView()
+                    .toolbar(.hidden, for: .tabBar)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.square.stack")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.Palette.accent)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.Palette.accentBg))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("机器人管理")
+                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.Palette.ink)
+                        Text("为每个机器人指定模型")
                             .font(Theme.Fonts.caption)
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
@@ -848,5 +881,146 @@ private struct NewPortraitFromMeSheet: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// ── Bot management ─────────────────────────────────────────────────────────
+
+/// 我 → 机器人管理. Lists every bot the server exposes and lets the user pin
+/// a per-bot model that overrides the bot's config default for *this* user
+/// only. Pinning here is independent from the per-conversation model picker
+/// in the chat composer — that one wins when set.
+struct BotManagementView: View {
+    @Environment(\.api) private var api
+    @State private var bots: [Bot] = []
+    @State private var loading = true
+    @State private var error: String?
+    @State private var pickingBot: Bot?
+
+    var body: some View {
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 12) {
+                    if loading && bots.isEmpty {
+                        ProgressView().padding(.top, 40)
+                    }
+                    ForEach(bots) { bot in
+                        botRow(bot)
+                    }
+                    if !loading && bots.isEmpty {
+                        Text("没有可用的机器人。")
+                            .font(Theme.Fonts.footnote)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                            .padding(.top, 40)
+                    }
+                }
+                .padding(.horizontal, Theme.Metrics.gutter)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+            .refreshable { await load() }
+        }
+        .navigationTitle("机器人管理")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .sheet(item: $pickingBot) { bot in
+            ModelPickerSheet(
+                initial: bot.user_model ?? "",
+                allowsClear: true,
+                onPick: { picked in
+                    Task { await persist(bot: bot, slug: picked) }
+                    pickingBot = nil
+                }
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
+        }
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+    }
+
+    @ViewBuilder
+    private func botRow(_ bot: Bot) -> some View {
+        Button {
+            pickingBot = bot
+            Haptics.tap()
+        } label: {
+            HStack(spacing: 12) {
+                BotAvatar(seed: bot.id, size: 40)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(bot.display_name)
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        if let pinned = bot.user_model, !pinned.isEmpty {
+                            Text(shortSlug(pinned))
+                                .font(Theme.Fonts.monoSmall)
+                                .foregroundStyle(Theme.Palette.accent)
+                            Text("· 已指定")
+                                .font(Theme.Fonts.caption)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                        } else {
+                            Text("跟随机器人默认")
+                                .font(Theme.Fonts.caption)
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                            if let def = bot.default_model, !def.isEmpty {
+                                Text("· \(shortSlug(def))")
+                                    .font(Theme.Fonts.monoSmall)
+                                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.8))
+                            }
+                        }
+                    }
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .fill(Theme.Palette.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shortSlug(_ slug: String) -> String {
+        if let slash = slug.lastIndex(of: "/") {
+            return String(slug[slug.index(after: slash)...])
+        }
+        return slug
+    }
+
+    private func load() async {
+        guard let api else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            self.bots = try await api.get("api/mobile/bots") as [Bot]
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func persist(bot: Bot, slug: String?) async {
+        guard let api else { return }
+        struct Body: Encodable { let model: String? }
+        struct Reply: Decodable { let ok: Bool; let user_model: String? }
+        let normalized = (slug?.isEmpty ?? true) ? nil : slug
+        do {
+            _ = try await api.patch("api/mobile/bots/\(bot.id)",
+                                    body: Body(model: normalized)) as Reply
+            Haptics.success()
+            await load()
+        } catch { self.error = error.localizedDescription }
     }
 }
