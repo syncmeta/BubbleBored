@@ -60,6 +60,7 @@ struct ModelPickerSheet: View {
     @State private var loading = true
     @State private var error: String?
     @State private var query: String = ""
+    @State private var expandedProviders: Set<String> = []
 
     private var filtered: [OpenRouterModel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -69,6 +70,46 @@ struct ModelPickerSheet: View {
             || $0.display_name.lowercased().contains(q)
             || $0.provider.lowercased().contains(q)
         }
+    }
+
+    /// Vendor groups from the (already filtered) model list, ordered by
+    /// `Self.vendorPriority` (most popular first on OpenRouter), unknown
+    /// vendors trailing alphabetically.
+    private var groupedFiltered: [(provider: String, models: [OpenRouterModel])] {
+        let buckets = Dictionary(grouping: filtered, by: { $0.provider })
+        let priorityIndex = Dictionary(uniqueKeysWithValues: Self.vendorPriority.enumerated().map { ($1, $0) })
+        return buckets.keys.sorted { a, b in
+            switch (priorityIndex[a], priorityIndex[b]) {
+            case let (l?, r?): return l < r
+            case (_?, nil):    return true
+            case (nil, _?):    return false
+            default:           return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            }
+        }.map { ($0, buckets[$0] ?? []) }
+    }
+
+    /// Vendor order based on OpenRouter's most-popular models (rankings page).
+    /// Anything not listed sorts alphabetically after these.
+    private static let vendorPriority: [String] = [
+        "google", "anthropic", "openai", "x-ai", "deepseek",
+        "qwen", "moonshotai", "meta-llama", "mistralai", "z-ai",
+    ]
+
+    private static let vendorDisplayName: [String: String] = [
+        "google": "Google",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI",
+        "x-ai": "xAI",
+        "deepseek": "DeepSeek",
+        "qwen": "Qwen",
+        "moonshotai": "Moonshot",
+        "meta-llama": "Meta",
+        "mistralai": "Mistral",
+        "z-ai": "Z.AI",
+    ]
+
+    private func vendorLabel(_ provider: String) -> String {
+        Self.vendorDisplayName[provider] ?? provider
     }
 
     var body: some View {
@@ -177,42 +218,71 @@ struct ModelPickerSheet: View {
                 }
                 .listRowBackground(Theme.Palette.surface)
             }
-            Section {
-                ForEach(filtered) { m in
-                    Button {
-                        onPick(m.slug)
-                        Haptics.success()
-                    } label: {
-                        HStack(alignment: .center, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.display_name)
-                                    .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                                    .foregroundStyle(Theme.Palette.ink)
-                                    .lineLimit(1)
-                                Text(m.slug)
-                                    .font(Theme.Fonts.monoSmall)
-                                    .foregroundStyle(Theme.Palette.inkMuted)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
+            // While searching, force every group expanded so matches are
+            // visible without the user having to tap each header.
+            let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
+            ForEach(groupedFiltered, id: \.provider) { group in
+                let expanded = searching || expandedProviders.contains(group.provider)
+                Section {
+                    if expanded {
+                        ForEach(group.models) { m in
+                            Button {
+                                onPick(m.slug)
+                                Haptics.success()
+                            } label: {
+                                HStack(alignment: .center, spacing: 8) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(m.display_name)
+                                            .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                            .foregroundStyle(Theme.Palette.ink)
+                                            .lineLimit(1)
+                                        Text(m.slug)
+                                            .font(Theme.Fonts.monoSmall)
+                                            .foregroundStyle(Theme.Palette.inkMuted)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 8)
+                                    if m.slug == initial {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(Theme.Palette.accent)
+                                    }
+                                }
+                                .padding(.vertical, 4)
                             }
-                            Spacer(minLength: 8)
-                            if m.slug == initial {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Theme.Palette.accent)
-                            }
+                            .buttonStyle(.plain)
                         }
-                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Button {
+                        if searching { return }
+                        if expandedProviders.contains(group.provider) {
+                            expandedProviders.remove(group.provider)
+                        } else {
+                            expandedProviders.insert(group.provider)
+                        }
+                        Haptics.tap()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                            Text(vendorLabel(group.provider))
+                                .font(Theme.Fonts.rounded(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.ink)
+                            Text("\(group.models.count)")
+                                .font(Theme.Fonts.rounded(size: 11, weight: .regular))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                            Spacer()
+                        }
+                        .textCase(nil)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
-            } header: {
-                Text(query.isEmpty ? "全部模型" : "搜索结果（\(filtered.count)）")
-                    .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .textCase(nil)
+                .listRowBackground(Theme.Palette.surface)
             }
-            .listRowBackground(Theme.Palette.surface)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -225,6 +295,13 @@ struct ModelPickerSheet: View {
         do {
             allModels = try await api.get("api/openrouter/models")
             error = nil
+            // Auto-expand the group containing the currently-selected model
+            // so the user lands on something visible instead of an all-collapsed
+            // wall.
+            if !initial.isEmpty,
+               let match = allModels.first(where: { $0.slug == initial }) {
+                expandedProviders.insert(match.provider)
+            }
         } catch {
             self.error = error.localizedDescription
         }
