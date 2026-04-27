@@ -102,8 +102,11 @@ export async function loadAnthropicPresets(): Promise<PresetSkill[]> {
 
 // Seed the user's catalog with the bundled Anthropic presets on first sight.
 // Idempotent:
-//   - Missing presets are inserted with `enabled = 0` (parked in the catalog,
-//     user can toggle to activate).
+//   - Missing presets are inserted with `enabled = 1`. Skills now follow
+//     Claude's progressive-disclosure model: every preset is "installed" by
+//     default, but only the description ships in the system prompt — the body
+//     is loaded on demand via the `load_skill` tool. So enabling everything
+//     upfront has no per-send cost.
 //   - Presets the user hasn't touched (body still matches previous seeded_hash)
 //     get refreshed from disk so upstream improvements land on next bundle.
 //   - Presets the user has edited are left alone.
@@ -117,7 +120,7 @@ export async function seedDefaultSkillsForUser(userId: string): Promise<void> {
         id: `sk_${randomUUID().slice(0, 12)}`,
         userId, name: p.name,
         description: p.description, body: p.body,
-        enabled: false,
+        enabled: true,
         source: p.source, sourceUrl: p.sourceUrl, license: p.license,
         seededHash: newHash,
       });
@@ -173,6 +176,12 @@ export function summarizeSkill(row: SkillRow): SkillSummary {
 // Build the system-prompt block listing the user's enabled skills. Returns
 // null if nothing is enabled — caller should skip the append entirely so we
 // don't leave a dangling header in the prompt.
+//
+// Progressive disclosure: only the name + description ship here. When the
+// model judges a skill is relevant it calls the `load_skill` tool to fetch
+// the full body. This keeps the per-send prompt small even with a dozen
+// skills installed; the cost is one extra tool round on the (rare) sends
+// that actually need a skill body.
 export function buildSkillsPromptBlock(userId: string): string | null {
   const skills = listEnabledSkillsForUser(userId);
   if (skills.length === 0) return null;
@@ -180,16 +189,28 @@ export function buildSkillsPromptBlock(userId: string): string | null {
   const parts: string[] = [];
   parts.push('## 可用技能（Available Skills）');
   parts.push('');
-  parts.push('以下技能是用户在「我」标签里启用的，按需调用。每个技能给出的指令在你判断当前请求需要时再去遵循；不需要时不要硬塞。');
+  parts.push('下表列出当前启用的技能，仅展示简介。当你判断某条技能与本次请求相关时，调用 `load_skill` 工具按 `name` 加载完整说明再据此执行；不相关就不要加载、也不要硬塞。');
   parts.push('');
   for (const s of skills) {
-    parts.push(`### Skill: ${s.name}`);
-    if (s.description) parts.push(`_${s.description}_`);
-    parts.push('');
-    parts.push(s.body.trim());
-    parts.push('');
+    parts.push(`- **${s.name}** — ${s.description || '(无简介)'}`);
   }
   return parts.join('\n').trimEnd();
+}
+
+// Lookup helper for the load_skill tool — only enabled skills are loadable
+// (must mirror what we advertised in the prompt block above). Match is
+// case-insensitive so the model's casing doesn't matter.
+export function findEnabledSkillBodyByName(userId: string, name: string): {
+  name: string; description: string; body: string;
+} | null {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return null;
+  for (const s of listEnabledSkillsForUser(userId)) {
+    if (s.name.toLowerCase() === wanted) {
+      return { name: s.name, description: s.description, body: s.body };
+    }
+  }
+  return null;
 }
 
 export { listSkillsForUser };

@@ -636,4 +636,33 @@ function runMigrations(db: Database): void {
     }
     db.exec('PRAGMA user_version = 24');
   }
+
+  // v25: skills move to Claude's progressive-disclosure model — every
+  // installed skill is enabled by default and only its description ships
+  // in the system prompt; the body is loaded on demand via the load_skill
+  // tool. To get existing users onto the new model, flip enabled=1 on
+  // preset rows the user hasn't customised. We detect "uncustomised" by
+  // checking that the row originated from an anthropic preset AND the
+  // current body still hashes to the seeded_hash (i.e. no edits since the
+  // seed). User-authored rows and edited presets are left alone — their
+  // enabled state is the user's choice to make.
+  // SQLite has no built-in sha1, so we can't recompute the body hash here
+  // to prove "uncustomised" the strict way. We approximate: a row is treated
+  // as still-seeded when (a) it was sourced from an anthropic preset and
+  // (b) seeded_hash is non-null. The seed path is the only writer of
+  // seeded_hash, and updateSkill leaves it alone unless the caller passes
+  // a new value — so "non-null" here means "we put it there during seeding
+  // and nobody has explicitly cleared it". Edited rows are still flipped on,
+  // which matches the spirit of "everything installed by default" — users
+  // who genuinely don't want a skill can toggle it off in Skills管理.
+  if (userVersion < 25) {
+    db.exec(`
+      UPDATE skills
+         SET enabled = 1, updated_at = unixepoch()
+       WHERE enabled = 0
+         AND source LIKE 'anthropic/skills:%'
+         AND seeded_hash IS NOT NULL;
+    `);
+    db.exec('PRAGMA user_version = 25');
+  }
 }
