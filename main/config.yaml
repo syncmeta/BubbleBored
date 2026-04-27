@@ -6,10 +6,18 @@ server:
   # publicURL: "https://bot.example.com"
 
 openrouter:
-  # Last-resort fallback when a bot omits its `model` field. Each bot
-  # otherwise picks its own model below — task-level overrides no longer
-  # exist (a bot owns one model for everything it does).
-  defaultModel: "anthropic/claude-opus-4.7"
+  # Per-task model assignment.
+  #   chat          — fallback for bots without their own `model`
+  #   humanAnalysis — anything reading the user (画像/总结/日记/finding 价值判断)
+  #   agentDecision — agent loop drivers (冲浪 lead 等)
+  #   skim          — long-page compression behind read_url
+  #   vision        — chat calls when the user attaches images, regardless of bot
+  models:
+    chat: "x-ai/grok-4.20"
+    humanAnalysis: "anthropic/claude-opus-4.7"
+    agentDecision: "z-ai/glm-5.1"
+    skim: "deepseek/deepseek-v4-pro"
+    vision: "anthropic/claude-opus-4.7"
 
 defaults:
   accessMode: "open"
@@ -25,7 +33,8 @@ defaults:
     multiplier: 1.5
     maxIntervalSec: 86400
     idleStopSec: 172800
-    maxRequests: 10
+    costBudgetUsd: 0.30
+    journalEntriesInChat: 5
   debounce:
     enabled: true
     maxWaitMs: 15000

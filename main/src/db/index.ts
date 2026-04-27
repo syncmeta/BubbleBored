@@ -536,4 +536,45 @@ function runMigrations(db: Database): void {
     }
     db.exec('PRAGMA user_version = 20');
   }
+
+  // v21: agentic surfing rebuild.
+  // The old vector-picker / digger / synthesizer / curator pipeline is gone
+  // — surfing now runs as a single agent loop with a cost budget. surf_runs
+  // is rebuilt: budget is now USD (REAL), kind/vector_json/model_slug are
+  // dropped (multiple models per run, captured per-call in audit_log).
+  // surf_vectors is dropped entirely (no more dedup on (topic, mode)).
+  // bot_journal_entries is added — first-person diary the bot writes after
+  // each surf so it accumulates real "experience" across conversations.
+  if (userVersion < 21) {
+    db.exec(`
+      DELETE FROM messages WHERE conversation_id IN (
+        SELECT id FROM conversations WHERE feature_type = 'surf'
+      );
+      DELETE FROM conversations WHERE feature_type = 'surf';
+      DROP TABLE IF EXISTS surf_runs;
+      DROP TABLE IF EXISTS surf_vectors;
+      CREATE TABLE surf_runs (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+        source_message_conv_id TEXT REFERENCES conversations(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        started_at INTEGER,
+        ended_at INTEGER,
+        cost_budget_usd REAL NOT NULL,
+        cost_used_usd REAL NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE bot_journal_entries (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL REFERENCES bots(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        surf_conv_id TEXT REFERENCES conversations(id),
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX idx_journal_bot_time ON bot_journal_entries(bot_id, created_at DESC);
+      CREATE INDEX idx_journal_user_time ON bot_journal_entries(user_id, created_at DESC);
+    `);
+    db.exec('PRAGMA user_version = 21');
+  }
 }

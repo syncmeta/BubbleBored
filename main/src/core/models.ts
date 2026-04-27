@@ -1,15 +1,18 @@
-// Resolve the model slug to use. The bot owns its model — every task (chat,
-// review, surfing, title, perception, portrait, debate) runs through the bot
-// the conversation belongs to, so model selection is normally a function of
-// `botId`. config.yaml's `bots.<id>.model` is the source of truth, with
-// `openrouter.defaultModel` as the last-resort fallback when a bot omits it.
+// Resolve which model slug to use for a given task.
 //
-// One exception: the chat path threads `conversationId` through, and a
-// per-conversation override (set from the iOS chat action sheet) trumps the
-// bot's default. The override is stored on the conversation row.
+// Two resolvers:
+//   - modelFor(botId, conversationId?) — the **chat** path. Each bot owns its
+//     personality and its model (per-conv override > bot.model > config
+//     openrouter.models.chat fallback).
+//   - modelForTask(task) — system-level capability slots that are not tied to
+//     a specific bot persona: human analysis (Opus), agent decision (GLM),
+//     skim (cheap long-context), vision (multimodal). Pulled straight from
+//     openrouter.models so swapping the slot moves every caller at once.
 
 import { configManager } from '../config/loader';
 import { findConversationById } from '../db/queries';
+
+export type SystemTask = 'humanAnalysis' | 'agentDecision' | 'skim' | 'vision';
 
 export function modelFor(botId: string, conversationId?: string): string {
   if (conversationId) {
@@ -18,4 +21,8 @@ export function modelFor(botId: string, conversationId?: string): string {
     if (override) return override;
   }
   return configManager.getBotConfig(botId).model;
+}
+
+export function modelForTask(task: SystemTask): string {
+  return configManager.get().openrouter.models[task];
 }

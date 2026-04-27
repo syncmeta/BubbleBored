@@ -8,9 +8,7 @@ import {
 import {
   surfEvents, activeSurfs, surfsByMessageConv,
   stopSurf, runSurf, createSurfConversation,
-  type VectorOverride,
 } from '../core/surfing/searcher';
-import { modelFor } from '../core/models';
 import {
   makeReplyFn, getOrCreateUser, findUser, resolveBotId,
   sseStream, assertFeatureType,
@@ -29,10 +27,10 @@ surfRoutes.get('/conversations', (c) => {
     const run = getSurfRun(conv.id);
     return {
       ...conv,
-      model_slug: run?.model_slug ?? null,
       source_message_conv_id: run?.source_message_conv_id ?? null,
       status: run?.status ?? 'unknown',
-      budget: run?.budget ?? null,
+      cost_budget_usd: run?.cost_budget_usd ?? null,
+      cost_used_usd: run?.cost_used_usd ?? 0,
       active: activeSurfs.has(conv.id),
     };
   });
@@ -47,10 +45,10 @@ surfRoutes.get('/conversations/:id', (c) => {
   const run = getSurfRun(id);
   return c.json({
     ...conv,
-    model_slug: run?.model_slug ?? null,
     source_message_conv_id: run?.source_message_conv_id ?? null,
     status: run?.status ?? 'unknown',
-    budget: run?.budget ?? null,
+    cost_budget_usd: run?.cost_budget_usd ?? null,
+    cost_used_usd: run?.cost_used_usd ?? 0,
     active: activeSurfs.has(id),
   });
 });
@@ -73,19 +71,16 @@ surfRoutes.delete('/conversations/:id', (c) => {
 // ── Create + run ──
 
 // Creates a new 冲浪 tab conversation and immediately starts the run.
-// `sourceMessageConversationId` is optional: when given, the planner pulls
-// context from that message conv and the final curator message is also
-// delivered there as a bot message.
+// `sourceMessageConversationId` is optional: when given, the agent pulls
+// context from that message conv and the final message is also delivered
+// there as a bot message.
 surfRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
     botId?: string;
     sourceMessageConversationId?: string;
-    modelSlug?: string;
-    budget?: number;
+    costBudgetUsd?: number;
     title?: string;
     autoStart?: boolean;
-    vectorOverride?: { topic: string; mode: string; freshness_window?: string };
-    forceSerendipity?: boolean;
   }>();
 
   const user = getOrCreateUser(c);
@@ -102,35 +97,19 @@ surfRoutes.post('/conversations', async (c) => {
     fromSourceConvId: sourceConvId,
   });
 
-  const modelSlug = body.modelSlug?.trim() || modelFor(botId);
-  const budget = body.budget && body.budget > 0
-    ? body.budget
-    : configManager.getBotConfig(botId).surfing.maxRequests;
+  const costBudgetUsd = body.costBudgetUsd && body.costBudgetUsd > 0
+    ? body.costBudgetUsd
+    : configManager.getBotConfig(botId).surfing.costBudgetUsd;
 
   const surfConvId = createSurfConversation({
     botId, userId: user.id,
     sourceMessageConvId: sourceConvId,
-    modelSlug, budget,
+    costBudgetUsd,
     title: body.title ?? null,
   });
 
   const surfConv = findConversationById(surfConvId);
   if (!surfConv) return c.json({ error: 'create failed' }, 500);
-
-  // Validate optional vector override; bad shape just falls through to picker.
-  let vectorOverride: VectorOverride | null = null;
-  if (body.vectorOverride && typeof body.vectorOverride.topic === 'string'
-      && body.vectorOverride.topic.trim()) {
-    const m = body.vectorOverride.mode;
-    if (m === 'depth' || m === 'granular' || m === 'fresh') {
-      vectorOverride = {
-        topic: body.vectorOverride.topic.trim(),
-        mode: m,
-        freshness_window: body.vectorOverride.freshness_window?.trim() || undefined,
-      };
-    }
-  }
-  const forceSerendipity = body.forceSerendipity === true;
 
   if (body.autoStart !== false) {
     const replyFn = makeReplyFn({ id: surfConvId, user_id: user.id });
@@ -140,7 +119,6 @@ surfRoutes.post('/conversations', async (c) => {
     runSurf({
       surfConvId, sourceConvId, replyFn,
       signal: controller.signal, trigger: 'panel',
-      vectorOverride, forceSerendipity,
     }).catch(e => console.error('[surf-api] error:', e));
   }
 
@@ -148,13 +126,12 @@ surfRoutes.post('/conversations', async (c) => {
     id: surfConvId,
     botId,
     sourceMessageConversationId: sourceConvId,
-    modelSlug,
-    budget,
+    costBudgetUsd,
   });
 });
 
 // Re-run an existing surf conversation. Useful when the user wants to refresh
-// the same (source, model) combo without creating a new history.
+// the same source without creating a new history.
 surfRoutes.post('/run/:id', async (c) => {
   const id = c.req.param('id');
   const conv = findConversationById(id);
@@ -202,8 +179,6 @@ surfRoutes.get('/sources', (c) => {
 
 // SSE for live log lines (every emit() in searcher.ts streams here).
 surfRoutes.get('/events', (c) => sseStream(surfEvents, c.req.raw.signal, () => ({
-  // Active surf conv ids + the message convs they're bound to. The
-  // chat-header surf button uses sources to know when to show busy.
   active: Array.from(activeSurfs.keys()),
   sources: Array.from(surfsByMessageConv.keys()),
 })));
