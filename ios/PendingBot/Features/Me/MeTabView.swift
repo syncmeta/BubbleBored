@@ -115,6 +115,7 @@ struct MeTabView: View {
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }
@@ -151,6 +152,7 @@ struct MeTabView: View {
                             .foregroundStyle(Theme.Palette.inkMuted)
                     }
                 }
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
             } else {
                 Text("尚未添加服务器").font(Theme.Fonts.footnote)
@@ -187,6 +189,7 @@ struct MeTabView: View {
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }
@@ -219,6 +222,7 @@ struct MeTabView: View {
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }
@@ -251,6 +255,7 @@ struct MeTabView: View {
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }
@@ -299,6 +304,7 @@ struct MeTabView: View {
                             }
                             .padding(.vertical, 10)
                         }
+                        .contentShape(Rectangle())
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
@@ -330,6 +336,7 @@ struct MeTabView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
                 }
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
                 .disabled(portraitSources.isEmpty)
             }
@@ -398,6 +405,7 @@ struct MeTabView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
                 }
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
             }
         }
@@ -419,6 +427,7 @@ struct MeTabView: View {
                 .foregroundStyle(Color(hex: 0xB14B3C))
                 .padding(.vertical, 4)
             }
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
             .disabled(store.current == nil)
         }
@@ -822,6 +831,7 @@ private struct NewPortraitFromMeSheet: View {
                                         }
                                         .padding(.vertical, 10)
                                     }
+                                    .contentShape(Rectangle())
                                     .buttonStyle(.plain)
                                     if conv.id != sources.last?.id {
                                         Divider().background(Theme.Palette.hairline)
@@ -992,6 +1002,7 @@ struct BotManagementView: View {
                     .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
             )
         }
+        .contentShape(Rectangle())
         .buttonStyle(.plain)
     }
 
