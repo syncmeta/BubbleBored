@@ -1843,6 +1843,38 @@ main {
   font: inherit;
 }
 
+/* Vendor groups — collapsed by default, click header to toggle. */
+.model-picker-group { display: flex; flex-direction: column; }
+.model-picker-group + .model-picker-group { border-top: 1px solid var(--border-light); }
+.model-picker-group-header {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-soft);
+  border: none; border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-1);
+  text-align: left;
+  font-family: inherit;
+}
+.model-picker-group-header:hover { background: var(--bg-hover); }
+.model-picker-group-header .mp-chev {
+  font-size: 10px; color: var(--text-4); width: 10px; text-align: center;
+}
+.model-picker-group-header .mp-vendor {
+  font-weight: 600; flex: 0 0 auto;
+}
+.model-picker-group-header .mp-count {
+  font-size: 11px; color: var(--text-4); font-weight: 400;
+}
+.model-picker-group-header .mp-sel-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  margin-left: 4px;
+}
+.model-picker-group-body { display: flex; flex-direction: column; }
+
 .model-picker-list .model-picker-row {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px;

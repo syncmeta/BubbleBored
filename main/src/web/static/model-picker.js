@@ -74,6 +74,43 @@
     );
   }
 
+  // Vendor ordering follows OpenRouter's most-popular ranking — anything
+  // outside this list trails alphabetically. Display names are friendlier
+  // versions of the slug prefix (e.g. "x-ai" → "xAI").
+  const VENDOR_PRIORITY = [
+    'google', 'anthropic', 'openai', 'x-ai', 'deepseek',
+    'qwen', 'moonshotai', 'meta-llama', 'mistralai', 'z-ai',
+  ];
+  const VENDOR_DISPLAY = {
+    google: 'Google',
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    'x-ai': 'xAI',
+    deepseek: 'DeepSeek',
+    qwen: 'Qwen',
+    moonshotai: 'Moonshot',
+    'meta-llama': 'Meta',
+    mistralai: 'Mistral',
+    'z-ai': 'Z.AI',
+  };
+  function vendorLabel(p) { return VENDOR_DISPLAY[p] || p || 'unknown'; }
+  function groupByVendor(models) {
+    const buckets = new Map();
+    for (const m of models) {
+      const p = m.provider || 'unknown';
+      if (!buckets.has(p)) buckets.set(p, []);
+      buckets.get(p).push(m);
+    }
+    const priorityIndex = new Map(VENDOR_PRIORITY.map((p, i) => [p, i]));
+    const keys = Array.from(buckets.keys()).sort((a, b) => {
+      const ia = priorityIndex.has(a) ? priorityIndex.get(a) : Infinity;
+      const ib = priorityIndex.has(b) ? priorityIndex.get(b) : Infinity;
+      if (ia !== ib) return ia - ib;
+      return a.localeCompare(b);
+    });
+    return keys.map(p => ({ provider: p, models: buckets.get(p) }));
+  }
+
   // Capability badges shown in each row + on the trigger.
   // Order matters — vision is the headline capability for this app since
   // image upload availability hinges on it.
@@ -116,6 +153,10 @@
     let value = opts.value ?? '';
     let values = new Set(opts.values ?? []);
     const onChange = opts.onChange || (() => {});
+
+    // Collapsed-by-default vendor sections — the group containing the
+    // currently-selected slug auto-opens once the catalog loads.
+    const expandedProviders = new Set();
 
     const wrap = document.createElement('div');
     wrap.className = 'model-picker-wrap';
@@ -171,6 +212,26 @@
       }
     }
 
+    function renderRow(m) {
+      const row = document.createElement('div');
+      row.className = 'model-picker-row';
+      const isSelected = multi ? values.has(m.slug) : value === m.slug;
+      if (isSelected) row.classList.add('selected');
+      const ctxStr = fmtCtx(m.context_length);
+      const priceStr = fmtPrice(m.pricing?.prompt);
+      const meta = [ctxStr, priceStr].filter(Boolean).join(' · ');
+      const caps = capsHtml(m);
+      row.innerHTML = `
+        ${multi ? `<input type="checkbox" ${isSelected ? 'checked' : ''}>` : ''}
+        <span class="mp-name">${escHtml(m.display_name)}</span>
+        ${caps ? `<span class="mp-caps">${caps}</span>` : ''}
+        <span class="mp-slug">${escHtml(m.slug)}</span>
+        <span class="mp-provider">${escHtml(m.provider || '')}${meta ? ` · ${escHtml(meta)}` : ''}</span>
+      `;
+      row.addEventListener('click', () => select(m.slug));
+      return row;
+    }
+
     function renderList() {
       const q = search.value.trim();
       const all = cachedModels ?? [];
@@ -192,24 +253,44 @@
         return;
       }
 
-      for (const m of filtered) {
-        const row = document.createElement('div');
-        row.className = 'model-picker-row';
-        const isSelected = multi ? values.has(m.slug) : value === m.slug;
-        if (isSelected) row.classList.add('selected');
-        const ctxStr = fmtCtx(m.context_length);
-        const priceStr = fmtPrice(m.pricing?.prompt);
-        const meta = [ctxStr, priceStr].filter(Boolean).join(' · ');
-        const caps = capsHtml(m);
-        row.innerHTML = `
-          ${multi ? `<input type="checkbox" ${isSelected ? 'checked' : ''}>` : ''}
-          <span class="mp-name">${escHtml(m.display_name)}</span>
-          ${caps ? `<span class="mp-caps">${caps}</span>` : ''}
-          <span class="mp-slug">${escHtml(m.slug)}</span>
-          <span class="mp-provider">${escHtml(m.provider || '')}${meta ? ` · ${escHtml(meta)}` : ''}</span>
+      // Active search expands every group implicitly so matches stay
+      // visible without forcing the user to click each header open.
+      const searching = q.length > 0;
+      const groups = groupByVendor(filtered);
+
+      for (const g of groups) {
+        const isOpen = searching || expandedProviders.has(g.provider);
+        const containsSelected = !multi && value && g.models.some(m => m.slug === value);
+
+        const section = document.createElement('div');
+        section.className = 'model-picker-group' + (isOpen ? ' open' : '');
+
+        const header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'model-picker-group-header';
+        header.innerHTML = `
+          <span class="mp-chev">${isOpen ? '▾' : '▸'}</span>
+          <span class="mp-vendor">${escHtml(vendorLabel(g.provider))}</span>
+          <span class="mp-count">${g.models.length}</span>
+          ${containsSelected ? '<span class="mp-sel-dot" title="包含当前选中"></span>' : ''}
         `;
-        row.addEventListener('click', () => select(m.slug));
-        list.appendChild(row);
+        header.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (searching) return;
+          if (expandedProviders.has(g.provider)) expandedProviders.delete(g.provider);
+          else expandedProviders.add(g.provider);
+          renderList();
+        });
+        section.appendChild(header);
+
+        if (isOpen) {
+          const body = document.createElement('div');
+          body.className = 'model-picker-group-body';
+          for (const m of g.models) body.appendChild(renderRow(m));
+          section.appendChild(body);
+        }
+
+        list.appendChild(section);
       }
     }
 
@@ -269,6 +350,13 @@
     // Initial render — assume cache may already be warm; otherwise the
     // trigger shows the placeholder until the user opens the popover.
     loadOpenRouterModels().then(() => {
+      // Auto-open the vendor group(s) containing the current selection so
+      // the user lands on something visible instead of an all-collapsed wall.
+      const selectedSlugs = multi ? Array.from(values) : (value ? [value] : []);
+      for (const s of selectedSlugs) {
+        const m = modelByslug(s);
+        if (m?.provider) expandedProviders.add(m.provider);
+      }
       renderTrigger();
     });
     renderTrigger();
@@ -277,10 +365,16 @@
     // the modal reopens with a different conversation).
     wrap.setValue = (v) => {
       value = v ?? '';
+      const m = modelByslug(value);
+      if (m?.provider) expandedProviders.add(m.provider);
       renderTrigger();
     };
     wrap.setValues = (v) => {
       values = new Set(v ?? []);
+      for (const s of values) {
+        const m = modelByslug(s);
+        if (m?.provider) expandedProviders.add(m.provider);
+      }
       renderTrigger();
     };
     wrap.getValue = () => value;
