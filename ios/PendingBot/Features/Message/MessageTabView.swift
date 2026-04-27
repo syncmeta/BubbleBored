@@ -16,9 +16,11 @@ struct MessageTabView: View {
             VStack(spacing: 0) {
                 TabHeaderBar(title: "消息") {
                     Menu {
-                        ForEach(bots) { bot in
-                            Button(bot.nameWithModel) {
-                                Task { await createConversation(with: bot) }
+                        Section("选择一个机器人") {
+                            ForEach(bots) { bot in
+                                Button(bot.nameWithModel) {
+                                    Task { await createConversation(with: bot) }
+                                }
                             }
                         }
                     } label: {
@@ -36,39 +38,34 @@ struct MessageTabView: View {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
-                                NavigationLink {
-                                    ConversationView(conversation: conv, bot: bot(for: conv)) {
-                                        reload()
-                                    }
-                                    .toolbar(.hidden, for: .tabBar)
-                                    .onAppear { unread.markRead(conv.id) }
-                                } label: {
-                                    ConversationListRow(
-                                        conv: conv,
-                                        bot: bot(for: conv),
-                                        isUnread: unread.isUnread(conv.id)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                // Trailing-swipe = "left swipe" in zh — icon-only
-                                // buttons keep the row clean and match the
-                                // BubbleBored chrome (no text labels in chrome).
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        Task { await delete(conv) }
-                                    } label: {
-                                        Image(systemName: "trash")
-                                    }
-                                    .accessibilityLabel("删除")
-
-                                    Button {
-                                        Haptics.tap()
+                                SwipeRevealRow(actions: [
+                                    SwipeRevealAction(
+                                        systemImage: "envelope.badge",
+                                        tint: Color(red: 0.42, green: 0.62, blue: 0.92)
+                                    ) {
                                         unread.markUnread(conv.id)
+                                    },
+                                    SwipeRevealAction(
+                                        systemImage: "trash",
+                                        tint: Color(red: 0.93, green: 0.50, blue: 0.50)
+                                    ) {
+                                        Task { await delete(conv) }
+                                    },
+                                ]) {
+                                    NavigationLink {
+                                        ConversationView(conversation: conv, bot: bot(for: conv)) {
+                                            reload()
+                                        }
+                                        .toolbar(.hidden, for: .tabBar)
+                                        .onAppear { unread.markRead(conv.id) }
                                     } label: {
-                                        Image(systemName: "envelope.badge")
+                                        ConversationListRow(
+                                            conv: conv,
+                                            bot: bot(for: conv),
+                                            isUnread: unread.isUnread(conv.id)
+                                        )
                                     }
-                                    .tint(Theme.Palette.accent)
-                                    .accessibilityLabel("标为未读")
+                                    .buttonStyle(StaticButtonStyle())
                                 }
                             }
                         }
@@ -102,6 +99,11 @@ struct MessageTabView: View {
             async let convs: [Conversation] = api.get("api/mobile/conversations")
             self.bots = try await bots
             self.conversations = try await convs.sorted { $0.last_activity_at > $1.last_activity_at }
+        } catch is CancellationError {
+            // .task / .refreshable cancels the in-flight request when the user
+            // navigates away or pulls again — not a user-visible error.
+        } catch let error as NSError where error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorCancelled {
         } catch {
             self.error = error.localizedDescription
             Haptics.error()

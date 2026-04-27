@@ -17,6 +17,7 @@ struct MeTabView: View {
     @State private var showAddPick = false
     @State private var showAccounts = false
     @State private var creatingPortrait = false
+    @State private var confirmingSignOut = false
     @State private var error: String?
 
     var body: some View {
@@ -32,6 +33,7 @@ struct MeTabView: View {
                             auditCard
                             portraitCard
                             picksCard
+                            signOutCard
                             noteCard
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
@@ -71,6 +73,16 @@ struct MeTabView: View {
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
+        .confirmationDialog(
+            "退出当前服务器？",
+            isPresented: $confirmingSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("退出登录", role: .destructive) { signOut() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("这台设备会忘掉「\(store.current?.name ?? "当前服务器")」的钥匙。服务端那边的会话和数据不受影响 — 之后用同一把钥匙还能再加回来。")
+        }
     }
 
     // ── Cards ───────────────────────────────────────────────────────────────
@@ -325,6 +337,27 @@ struct MeTabView: View {
         }
     }
 
+    private var signOutCard: some View {
+        card(title: nil, footer: nil) {
+            Button(role: .destructive) {
+                confirmingSignOut = true
+                Haptics.tap()
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 14, weight: .medium))
+                    Text("退出登录")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color(hex: 0xB14B3C))
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.current == nil)
+        }
+    }
+
     private var noteCard: some View {
         card(title: nil, footer: nil) {
             HStack(alignment: .top, spacing: 10) {
@@ -400,6 +433,12 @@ struct MeTabView: View {
             portraitConvs.removeAll { $0.id == conv.id }
             Haptics.success()
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func signOut() {
+        guard let current = store.current else { return }
+        store.remove(current)
+        Haptics.success()
     }
 
     private func deletePick(_ pick: AiPick) async {

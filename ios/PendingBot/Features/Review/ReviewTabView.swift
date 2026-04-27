@@ -7,7 +7,6 @@ struct ReviewTabView: View {
     @Environment(\.api) private var api
     @State private var conversations: [ReviewConversation] = []
     @State private var bots: [Bot] = []
-    @State private var sources: [Conversation] = []
     @State private var creating = false
     @State private var error: String?
 
@@ -19,7 +18,7 @@ struct ReviewTabView: View {
                         Image(systemName: "plus")
                             .font(.system(size: 17, weight: .medium))
                     }
-                    .disabled(bots.isEmpty || sources.isEmpty)
+                    .disabled(bots.isEmpty)
                 }
                 Group {
                     if conversations.isEmpty {
@@ -55,7 +54,7 @@ struct ReviewTabView: View {
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $creating) {
-                NewReviewSheet(bots: bots, sources: sources) { didCreate in
+                NewReviewSheet(bots: bots) { didCreate in
                     creating = false
                     if didCreate { Task { await load() } }
                 }
@@ -69,11 +68,8 @@ struct ReviewTabView: View {
         do {
             async let convs: [ReviewConversation] = api.get("api/review/conversations")
             async let botList: [Bot] = api.get("api/mobile/bots")
-            async let srcs: [Conversation] = api.get("api/conversations",
-                query: [URLQueryItem(name: "feature", value: "message")])
             self.conversations = (try await convs).sorted { $0.last_activity_at > $1.last_activity_at }
             self.bots = try await botList
-            self.sources = try await srcs
         } catch { self.error = error.localizedDescription }
     }
 
@@ -91,42 +87,23 @@ private struct NewReviewSheet: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
     let bots: [Bot]
-    let sources: [Conversation]
     var onClose: (Bool) -> Void
 
     @State private var selectedBot: Bot?
-    @State private var selectedSource: Conversation?
-    @State private var reviewModel: String = ""
     @State private var creating = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Bot") {
-                    Picker("Bot", selection: $selectedBot) {
+                Section {
+                    Picker("机器人", selection: $selectedBot) {
                         ForEach(bots) { Text($0.nameWithModel).tag(Optional($0)) }
                     }
-                }
-                Section("回顾哪个会话?") {
-                    Picker("会话", selection: $selectedSource) {
-                        ForEach(sources) { Text($0.displayTitle).tag(Optional($0)) }
-                    }
-                }
-                Section {
-                    HStack {
-                        Text("回顾模型")
-                        Spacer()
-                        ModelPickerButton(slug: Binding(
-                            get: { reviewModel },
-                            set: { newValue in
-                                reviewModel = newValue
-                                Task { await saveModel(newValue) }
-                            }
-                        ))
-                    }
+                } header: {
+                    Text("和哪个机器人一起回顾？")
                 } footer: {
-                    Text("改动会作用于所有「回顾」任务。")
+                    Text("Ta 会基于对你的记忆和聊天记录回顾、反思过往。")
                 }
                 if let error { Section { Text(error).foregroundStyle(.red) } }
             }
@@ -138,48 +115,26 @@ private struct NewReviewSheet: View {
                     if creating { ProgressView() }
                     else {
                         Button("开始") { Task { await create() } }
-                            .disabled(selectedBot == nil || selectedSource == nil)
+                            .disabled(selectedBot == nil)
                     }
                 }
             }
             .onAppear {
                 if selectedBot == nil { selectedBot = bots.first }
-                if selectedSource == nil { selectedSource = sources.first }
-                Task { await loadModel() }
             }
         }
     }
 
-    private func loadModel() async {
-        guard let api else { return }
-        struct Map: Decodable { let review: String? }
-        do {
-            let map: Map = try await api.get("api/me/model-assignments")
-            reviewModel = map.review ?? ""
-        } catch {}
-    }
-
-    private func saveModel(_ slug: String) async {
-        guard let api else { return }
-        struct Body: Encodable { let review: String }
-        do {
-            _ = try await api.patch("api/me/model-assignments",
-                                    body: Body(review: slug)) as EmptyResponse
-            Haptics.success()
-        } catch {}
-    }
-
     private func create() async {
-        guard let api, let bot = selectedBot, let src = selectedSource else { return }
+        guard let api, let bot = selectedBot else { return }
         creating = true; defer { creating = false }
         struct Body: Encodable {
             let botId: String
-            let sourceMessageConversationId: String
         }
         do {
             _ = try await api.post(
                 "api/review/conversations",
-                body: Body(botId: bot.id, sourceMessageConversationId: src.id)
+                body: Body(botId: bot.id)
             ) as EmptyResponse
             Haptics.success()
             dismiss(); onClose(true)

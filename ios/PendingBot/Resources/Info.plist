@@ -31,6 +31,8 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -38,10 +40,10 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>用于扫描分享二维码导入服务器</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于在聊天中发送本地图片</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于连接你部署在局域网内的 PendingBot 服务器（公网部署不需要这个权限）。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于在聊天中发送本地图片</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

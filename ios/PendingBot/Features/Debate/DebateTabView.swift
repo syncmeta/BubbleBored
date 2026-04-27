@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 议论 — multi-model debate. List of past debates; "+" to start a new one
-/// (pick topic + ≥2 models). Detail view runs rounds via SSE.
+/// 议论 — multi-bot debate. List of past debates; "+" to start a new one
+/// (pick topic + ≥2 bots). Detail view runs rounds via SSE.
 struct DebateTabView: View {
     @Environment(\.api) private var api
     @State private var conversations: [DebateConversation] = []
@@ -31,7 +31,7 @@ struct DebateTabView: View {
                                         .toolbar(.hidden, for: .tabBar)
                                 } label: {
                                     runRow(title: conv.title ?? "议论",
-                                           subtitle: conv.model_slugs.map { "\($0.count) 模型" },
+                                           subtitle: conv.bot_ids.map { "\($0.count) 机器人" },
                                            active: false,
                                            ts: conv.last_activity_at)
                                 }
@@ -88,17 +88,15 @@ private struct NewDebateSheet: View {
     let bots: [Bot]
     var onClose: (Bool) -> Void
 
-    @State private var selectedBot: Bot?
     @State private var topic = ""
-    /// Pre-seed two empty rows so the user always sees the "≥2 models"
-    /// shape — the picker fills the slugs in on tap.
-    @State private var modelSlugs: [String] = ["", ""]
+    /// IDs of the bots picked to participate. Defaults to "all configured
+    /// bots" when the sheet first opens — caller can untick down to ≥2.
+    @State private var selectedBotIds: Set<String> = []
     @State private var creating = false
     @State private var error: String?
 
-    private var validSlugs: [String] {
-        modelSlugs.map { $0.trimmingCharacters(in: .whitespaces) }
-                  .filter { !$0.isEmpty }
+    private var pickedIds: [String] {
+        bots.map(\.id).filter { selectedBotIds.contains($0) }
     }
 
     var body: some View {
@@ -107,9 +105,8 @@ private struct NewDebateSheet: View {
                 Theme.Palette.canvas.ignoresSafeArea()
                 ScrollView {
                     VStack(spacing: 22) {
-                        botCard
                         topicCard
-                        modelsCard
+                        participantsCard
                         if let error {
                             Text(error).font(Theme.Fonts.footnote).foregroundStyle(.red)
                                 .padding(.horizontal, 4)
@@ -141,22 +138,16 @@ private struct NewDebateSheet: View {
                     }
                 }
             }
-            .onAppear { if selectedBot == nil { selectedBot = bots.first } }
+            .onAppear {
+                if selectedBotIds.isEmpty {
+                    selectedBotIds = Set(bots.map(\.id))
+                }
+            }
         }
     }
 
     private var canCreate: Bool {
-        selectedBot != nil && validSlugs.count >= 2
-    }
-
-    private var botCard: some View {
-        debateCard(title: "Bot") {
-            Picker("Bot", selection: $selectedBot) {
-                ForEach(bots) { Text($0.nameWithModel).tag(Optional($0)) }
-            }
-            .pickerStyle(.menu)
-            .tint(Theme.Palette.ink)
-        }
+        pickedIds.count >= 2
     }
 
     private var topicCard: some View {
@@ -168,40 +159,28 @@ private struct NewDebateSheet: View {
         }
     }
 
-    private var modelsCard: some View {
-        debateCard(title: "参与模型(≥ 2)") {
-            VStack(spacing: 8) {
-                ForEach(modelSlugs.indices, id: \.self) { i in
-                    HStack(spacing: 8) {
-                        ModelPickerButton(slug: $modelSlugs[i],
-                                          placeholder: "选择模型 #\(i + 1)")
-                        Spacer(minLength: 0)
-                        if modelSlugs.count > 2 {
-                            Button(role: .destructive) {
-                                modelSlugs.remove(at: i)
-                            } label: {
-                                Image(systemName: "minus.circle")
-                                    .foregroundStyle(Color(hex: 0xB14B3C))
-                            }
-                            .buttonStyle(.plain)
+    private var participantsCard: some View {
+        debateCard(title: "参与机器人(≥ 2)") {
+            VStack(spacing: 6) {
+                ForEach(bots) { bot in
+                    let on = selectedBotIds.contains(bot.id)
+                    Button {
+                        if on { selectedBotIds.remove(bot.id) }
+                        else  { selectedBotIds.insert(bot.id) }
+                        Haptics.tap()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(on ? Theme.Palette.accent : Theme.Palette.inkMuted)
+                            Text(bot.display_name)
+                                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                                .foregroundStyle(Theme.Palette.ink)
+                            Spacer(minLength: 0)
                         }
+                        .padding(.vertical, 4)
                     }
+                    .buttonStyle(.plain)
                 }
-                Button {
-                    modelSlugs.append("")
-                    Haptics.tap()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("加一个模型")
-                            .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.Palette.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 4)
-                }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -229,17 +208,16 @@ private struct NewDebateSheet: View {
     }
 
     private func create() async {
-        guard let api, let bot = selectedBot else { return }
+        guard let api else { return }
         creating = true; defer { creating = false }
         struct Body: Encodable {
-            let botId: String
             let topic: String
-            let modelSlugs: [String]
+            let botIds: [String]
         }
         do {
             _ = try await api.post(
                 "api/debate/conversations",
-                body: Body(botId: bot.id, topic: topic, modelSlugs: validSlugs)
+                body: Body(topic: topic, botIds: pickedIds)
             ) as DebateConversation
             Haptics.success()
             dismiss(); onClose(true)

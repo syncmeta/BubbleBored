@@ -7,7 +7,6 @@ struct SurfTabView: View {
     @Environment(\.api) private var api
     @State private var conversations: [SurfConversation] = []
     @State private var bots: [Bot] = []
-    @State private var sources: [Conversation] = []
     @State private var error: String?
     @State private var creating = false
 
@@ -55,7 +54,7 @@ struct SurfTabView: View {
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $creating) {
-                NewSurfSheet(bots: bots, sources: sources) { didCreate in
+                NewSurfSheet(bots: bots) { didCreate in
                     creating = false
                     if didCreate { reload() }
                 }
@@ -71,11 +70,8 @@ struct SurfTabView: View {
         do {
             async let convs: [SurfConversation] = api.get("api/surf/conversations")
             async let botList: [Bot] = api.get("api/mobile/bots")
-            async let srcs: [Conversation] = api.get("api/conversations",
-                query: [URLQueryItem(name: "feature", value: "message")])
             self.conversations = (try await convs).sorted { $0.last_activity_at > $1.last_activity_at }
             self.bots = try await botList
-            self.sources = try await srcs
         } catch { self.error = error.localizedDescription }
     }
 
@@ -93,46 +89,24 @@ private struct NewSurfSheet: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
     let bots: [Bot]
-    let sources: [Conversation]
     var onClose: (Bool) -> Void
 
     @State private var selectedBot: Bot?
-    @State private var selectedSource: Conversation?
     @State private var budget: Int = 10
-    @State private var surfingModel: String = ""
     @State private var creating = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Bot") {
-                    Picker("Bot", selection: $selectedBot) {
+                Section {
+                    Picker("机器人", selection: $selectedBot) {
                         ForEach(bots) { Text($0.nameWithModel).tag(Optional($0)) }
                     }
-                }
-                Section {
-                    Picker("基于哪个会话?", selection: $selectedSource) {
-                        Text("无 (自由冲浪)").tag(Conversation?.none)
-                        ForEach(sources) {
-                            Text($0.displayTitle).tag(Optional($0))
-                        }
-                    }
-                }
-                Section {
-                    HStack {
-                        Text("冲浪模型")
-                        Spacer()
-                        ModelPickerButton(slug: Binding(
-                            get: { surfingModel },
-                            set: { newValue in
-                                surfingModel = newValue
-                                Task { await saveModel(newValue) }
-                            }
-                        ))
-                    }
+                } header: {
+                    Text("让哪个机器人帮你冲浪？")
                 } footer: {
-                    Text("改动会作用于所有「冲浪」任务（持久化到模型分配）。")
+                    Text("Ta 会基于对你的记忆和聊天记录去深挖。")
                 }
                 Section("预算 (调用次数)") {
                     Stepper("\(budget)", value: $budget, in: 1...50)
@@ -157,28 +131,8 @@ private struct NewSurfSheet: View {
             }
             .onAppear {
                 if selectedBot == nil { selectedBot = bots.first }
-                Task { await loadModel() }
             }
         }
-    }
-
-    private func loadModel() async {
-        guard let api else { return }
-        struct Map: Decodable { let surfing: String? }
-        do {
-            let map: Map = try await api.get("api/me/model-assignments")
-            surfingModel = map.surfing ?? ""
-        } catch {}
-    }
-
-    private func saveModel(_ slug: String) async {
-        guard let api else { return }
-        struct Body: Encodable { let surfing: String }
-        do {
-            _ = try await api.patch("api/me/model-assignments",
-                                    body: Body(surfing: slug)) as EmptyResponse
-            Haptics.success()
-        } catch {}
     }
 
     private func create() async {
@@ -186,26 +140,16 @@ private struct NewSurfSheet: View {
         creating = true; defer { creating = false }
         struct Body: Encodable {
             let botId: String
-            let sourceMessageConversationId: String?
             let budget: Int
         }
         do {
-            // Just kicking off — the SSE stream is opened by the detail view
-            // when the user navigates in. Server will push the run record
-            // into /conversations on next reload.
             _ = try await api.post(
                 "api/surf/conversations",
-                body: Body(
-                    botId: bot.id,
-                    sourceMessageConversationId: selectedSource?.id,
-                    budget: budget
-                )
+                body: Body(botId: bot.id, budget: budget)
             ) as EmptyResponse
             Haptics.success()
             dismiss(); onClose(true)
         } catch let e as APIError {
-            // SSE endpoint returns text/event-stream — we ignore the body
-            // and treat 200 as success. For a 4xx we still want the error.
             self.error = e.localizedDescription
         } catch {
             self.error = error.localizedDescription

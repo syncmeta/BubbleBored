@@ -1,151 +1,100 @@
 import SwiftUI
 import PhotosUI
 
-/// WeChat-style "+" action sheet for the chat composer. Holds anything that
-/// isn't a primary input action — model selection (per the `chat` task in
-/// `/api/me/model-assignments`), photo upload entrypoint, future toggles.
+/// WeChat-style "+" action sheet for the chat composer. Compact bottom
+/// sheet with a small grid of actions: pick a model, send a photo. The
+/// caller pins it to a `.height(...)` detent so it stays close to the
+/// composer rather than taking over the screen.
 struct ChatActionSheet: View {
-    @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
     @Binding var photoItems: [PhotosPickerItem]
+    @Binding var modelOverride: String
+    var onModelChange: (String) -> Void
 
-    @State private var chatModel: String = ""
-    @State private var loading = true
-    @State private var saving = false
+    @State private var showModelPicker = false
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 22) {
-                        modelCard
-                        attachmentsCard
-                    }
-                    .padding(.horizontal, Theme.Metrics.gutter)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("更多")
-                        .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.ink)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
-                        .foregroundStyle(Theme.Palette.accent)
-                        .fontWeight(.semibold)
-                }
-            }
-        }
-        .task { await loadAssignments() }
-    }
-
-    private var modelCard: some View {
-        card(title: "对话模型",
-             footer: "影响所有「消息」会话的回复模型。改动立即对下一条消息生效。")
-        {
+        VStack(spacing: 0) {
+            // Compact header row — title only, no large nav bar.
             HStack {
-                Text("当前")
-                    .font(Theme.Fonts.rounded(size: 13, weight: .medium))
+                Text("更多")
+                    .font(Theme.Fonts.serif(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted)
+                Spacer()
+            }
+            .padding(.horizontal, Theme.Metrics.gutter)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            HStack(alignment: .top, spacing: 18) {
+                PhotosPicker(selection: $photoItems, matching: .images) {
+                    actionTileLabel(icon: "photo.on.rectangle.angled", label: "图片")
+                }
+                .buttonStyle(.plain)
+                .onChange(of: photoItems) { _, items in
+                    if !items.isEmpty { dismiss() }
+                }
+
+                Button {
+                    showModelPicker = true
+                    Haptics.tap()
+                } label: {
+                    actionTileLabel(icon: "cube.transparent", label: modelLabel)
+                }
+                .buttonStyle(.plain)
+
                 Spacer(minLength: 0)
-                if loading {
-                    ProgressView().controlSize(.small).tint(Theme.Palette.accent)
-                } else {
-                    ModelPickerButton(slug: Binding(
-                        get: { chatModel },
-                        set: { newValue in
-                            chatModel = newValue
-                            Task { await save(slug: newValue) }
-                        }
-                    ))
-                }
             }
+            .padding(.horizontal, Theme.Metrics.gutter)
+            .padding(.bottom, 18)
+
+            Spacer(minLength: 0)
+        }
+        .background(Theme.Palette.canvas)
+        .sheet(isPresented: $showModelPicker) {
+            ModelPickerSheet(
+                initial: modelOverride,
+                allowsClear: true,
+                onPick: { picked in
+                    let next = picked ?? ""
+                    modelOverride = next
+                    onModelChange(next)
+                    showModelPicker = false
+                }
+            )
+            .presentationDragIndicator(.visible)
+            .tint(Theme.Palette.accent)
         }
     }
 
-    private var attachmentsCard: some View {
-        card(title: "附件", footer: nil) {
-            PhotosPicker(selection: $photoItems, matching: .images) {
-                HStack(spacing: 12) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    Text("发送图片")
-                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                }
-                .padding(.vertical, 6)
-            }
-            .buttonStyle(.plain)
-            .onChange(of: photoItems) { _, items in
-                if !items.isEmpty { dismiss() }
-            }
-        }
+    private var modelLabel: String {
+        if modelOverride.isEmpty { return "默认模型" }
+        // Slug is a "provider/model[:variant]" string — drop the provider so
+        // the tile label stays one line.
+        let tail = modelOverride.split(separator: "/").last.map(String.init) ?? modelOverride
+        return tail
     }
 
-    @ViewBuilder
-    private func card<Content: View>(title: String?, footer: String?,
-                                     @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let title {
-                Text(title)
-                    .font(Theme.Fonts.serif(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .padding(.leading, 4)
-            }
-            content()
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private func actionTileLabel(icon: String, label: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(Theme.Palette.accent)
+                .frame(width: 56, height: 56)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Theme.Palette.surface)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
                 )
-            if let footer {
-                Text(footer)
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .padding(.horizontal, 4)
-            }
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
-    }
-
-    // ── Data ───────────────────────────────────────────────────────────────
-
-    private func loadAssignments() async {
-        guard let api else { loading = false; return }
-        loading = true; defer { loading = false }
-        struct Map: Decodable {
-            let chat: String?
-        }
-        do {
-            let map: Map = try await api.get("api/me/model-assignments")
-            chatModel = map.chat ?? ""
-        } catch {}
-    }
-
-    private func save(slug: String) async {
-        guard let api else { return }
-        saving = true; defer { saving = false }
-        struct Body: Encodable { let chat: String }
-        do {
-            _ = try await api.patch("api/me/model-assignments",
-                                    body: Body(chat: slug)) as EmptyResponse
-            Haptics.success()
-        } catch {}
+        .frame(width: 64)
     }
 }
