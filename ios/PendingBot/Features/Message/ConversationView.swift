@@ -123,9 +123,11 @@ struct ConversationView: View {
                 pending: $pendingAttachments,
                 photoItems: $photoPickerItems,
                 modelOverride: $modelOverride,
+                enabledSkillCount: skills.filter { $0.enabled }.count,
                 canSend: canSend,
                 onSend: { Task { await send() } },
-                onModelChange: { slug in Task { await persistModelOverride(slug) } }
+                onModelChange: { slug in Task { await persistModelOverride(slug) } },
+                onOpenSkills: { showingSkills = true }
             )
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
@@ -296,7 +298,6 @@ struct ConversationView: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: 6) {
-                skillsChip
                 webSearchToggle
                 toneToggle
             }
@@ -336,39 +337,6 @@ struct ConversationView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("联网搜索")
         .accessibilityValue(webSearch ? "已开启" : "已关闭")
-    }
-
-    // Chat-header skills chip — shows the count of currently-enabled skills.
-    // Tap opens the full skills management sheet so the user can toggle /
-    // edit without leaving the conversation.
-    private var skillsChip: some View {
-        let enabledCount = skills.filter { $0.enabled }.count
-        return Button {
-            Haptics.tap()
-            showingSkills = true
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 10, weight: .medium))
-                if enabledCount > 0 {
-                    Text("\(enabledCount)")
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                }
-            }
-            .foregroundStyle(enabledCount > 0 ? Theme.Palette.accent : Theme.Palette.inkMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .overlay(
-                Capsule().strokeBorder(
-                    enabledCount > 0 ? Theme.Palette.accent.opacity(0.5)
-                                     : Theme.Palette.inkMuted.opacity(0.25),
-                    lineWidth: 0.8
-                )
-            )
-        }
-        .buttonStyle(.plain)
-        .opacity(skills.isEmpty ? 0 : 1)
-        .accessibilityLabel("已启用 \(enabledCount) 个技能")
     }
 
     // Shared chip styling so the row reads as one cohesive control group.

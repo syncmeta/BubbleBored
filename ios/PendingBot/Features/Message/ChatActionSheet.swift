@@ -10,24 +10,15 @@ import PhotosUI
 struct ChatActionSheet: View {
     @Binding var photoItems: [PhotosPickerItem]
     @Binding var modelOverride: String
+    var enabledSkillCount: Int = 0
     var onModelChange: (String) -> Void
+    var onOpenSkills: () -> Void = {}
     var onDismiss: () -> Void = {}
 
     @State private var showModelPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
-            // Compact header row — title only, no large nav bar.
-            HStack {
-                Text("更多")
-                    .font(Theme.Fonts.serif(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                Spacer()
-            }
-            .padding(.horizontal, Theme.Metrics.gutter)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
             HStack(alignment: .top, spacing: 18) {
                 PhotosPicker(selection: $photoItems, matching: .images) {
                     actionTileLabel(icon: "photo.on.rectangle.angled", label: "图片")
@@ -45,9 +36,21 @@ struct ChatActionSheet: View {
                 }
                 .buttonStyle(.plain)
 
+                Button {
+                    Haptics.tap()
+                    onOpenSkills()
+                } label: {
+                    actionTileLabel(
+                        icon: "puzzlepiece.extension",
+                        label: enabledSkillCount > 0 ? "技能 · \(enabledSkillCount)" : "技能"
+                    )
+                }
+                .buttonStyle(.plain)
+
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.Metrics.gutter)
+            .padding(.top, 18)
             .padding(.bottom, 18)
 
             Spacer(minLength: 0)
@@ -70,7 +73,7 @@ struct ChatActionSheet: View {
     }
 
     private var modelLabel: String {
-        if modelOverride.isEmpty { return "默认模型" }
+        if modelOverride.isEmpty { return "模型选择" }
         // Slug is a "provider/model[:variant]" string — drop the provider so
         // the tile label stays one line.
         let tail = modelOverride.split(separator: "/").last.map(String.init) ?? modelOverride

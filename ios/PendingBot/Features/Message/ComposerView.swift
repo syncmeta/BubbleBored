@@ -11,9 +11,11 @@ struct ComposerView: View {
     @Binding var pending: [PendingAttachment]
     @Binding var photoItems: [PhotosPickerItem]
     @Binding var modelOverride: String
+    var enabledSkillCount: Int = 0
     var canSend: Bool
     var onSend: () -> Void
     var onModelChange: (String) -> Void
+    var onOpenSkills: () -> Void = {}
 
     @State private var showActions = false
     @FocusState private var isFocused: Bool
@@ -100,7 +102,12 @@ struct ComposerView: View {
                 ChatActionSheet(
                     photoItems: $photoItems,
                     modelOverride: $modelOverride,
+                    enabledSkillCount: enabledSkillCount,
                     onModelChange: onModelChange,
+                    onOpenSkills: {
+                        showActions = false
+                        onOpenSkills()
+                    },
                     onDismiss: { showActions = false }
                 )
                 .frame(height: 240)
