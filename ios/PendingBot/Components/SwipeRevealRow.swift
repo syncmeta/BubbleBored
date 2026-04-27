@@ -64,12 +64,16 @@ struct SwipeRevealRow<Content: View>: View {
         .contentShape(Rectangle())
         .clipShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
         .simultaneousGesture(
-            DragGesture(minimumDistance: 8)
+            // minimumDistance must stay high enough that incidental vertical
+            // pans on the parent ScrollView never wake this gesture up — when
+            // many rows in a LazyVStack each register a DragGesture, SwiftUI's
+            // arbiter starves the ScrollView's pan recognizer and the whole
+            // list locks up. 20pt lets normal vertical scrolls pass through.
+            DragGesture(minimumDistance: 20)
                 .onChanged { value in
                     let dx = value.translation.width
                     let dy = value.translation.height
                     if !lockedToHorizontal {
-                        guard abs(dx) > 8 else { return }
                         guard abs(dx) > abs(dy) else { return }
                         lockedToHorizontal = true
                     }
