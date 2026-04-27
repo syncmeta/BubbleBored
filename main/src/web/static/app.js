@@ -4052,6 +4052,108 @@ function updateReviewHeader() {
   meta.textContent = parts.join(' · ');
 }
 
+// Try to interpret a log row's content as a structured card payload (emitted
+// by core/review.ts via emitStep / emitCard / emitClosing). Returns null on
+// any parse failure or unknown shape so the caller can fall back to text.
+function parseReviewPayload(content) {
+  if (typeof content !== 'string' || !content.startsWith('{')) return null;
+  try {
+    const obj = JSON.parse(content);
+    if (obj && (obj.type === 'step' || obj.type === 'card' || obj.type === 'closing')) {
+      return obj;
+    }
+  } catch { /* not JSON */ }
+  return null;
+}
+
+// Find or create the (single) DOM card for a given step. Steps are keyed by
+// step name so a `running` event creates the card and a later `done` event
+// updates the same one — that's what gives the "expand-while-running,
+// collapse-when-done" feel without juggling multiple instances.
+function ensureStepCard(log, stepName) {
+  let el = log.querySelector(`.review-step-card[data-step="${stepName}"]`);
+  if (el) return el;
+  el = document.createElement('div');
+  el.className = 'review-step-card running';
+  el.dataset.step = stepName;
+  el.innerHTML = `
+    <div class="rsc-head">
+      <span class="rsc-icon"></span>
+      <span class="rsc-title"></span>
+      <span class="rsc-status"></span>
+    </div>
+    <div class="rsc-detail"></div>
+  `;
+  el.querySelector('.rsc-head').addEventListener('click', () => {
+    el.classList.toggle('collapsed');
+  });
+  log.appendChild(el);
+  return el;
+}
+
+function renderStepCard(log, payload) {
+  const el = ensureStepCard(log, payload.step);
+  el.querySelector('.rsc-title').textContent = payload.label || payload.step;
+  const detail = el.querySelector('.rsc-detail');
+  detail.textContent = payload.detail || '';
+  el.classList.toggle('has-detail', !!payload.detail);
+  el.classList.remove('running', 'done', 'error');
+  el.classList.add(payload.status);
+  // Auto-collapse when a step finishes — that's the "Claude Code Desktop"
+  // affordance: completed beats live as a tidy pill, click to re-expand.
+  if (payload.status === 'done') {
+    el.classList.add('collapsed');
+  }
+  if (payload.status === 'error') {
+    el.classList.remove('collapsed');
+  }
+}
+
+const SIDE_LABELS = { you: '你', me: '我' };
+const BUCKET_BADGES = {
+  limit: { label: '局限', accent: 'limit' },
+  grow:  { label: '发扬', accent: 'grow'  },
+  keep:  { label: '保持', accent: 'keep'  },
+};
+
+function renderResultCard(log, payload) {
+  const card = document.createElement('div');
+  card.className = `review-result-card side-${payload.side} bucket-${payload.bucket}`;
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const badge = BUCKET_BADGES[payload.bucket] || { label: payload.bucket, accent: '' };
+  const sideLabel = SIDE_LABELS[payload.side] || payload.side;
+  const itemsHtml = items.length === 0
+    ? '<div class="rrc-empty">— 无</div>'
+    : `<ul class="rrc-list">${items.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`;
+  card.innerHTML = `
+    <div class="rrc-head">
+      <span class="rrc-side">${esc(sideLabel)}</span>
+      <span class="rrc-badge accent-${badge.accent}">${esc(badge.label)}</span>
+      <span class="rrc-title">${esc(payload.label || '')}</span>
+    </div>
+    <div class="rrc-body">${itemsHtml}</div>
+  `;
+  log.appendChild(card);
+}
+
+function renderClosingCard(log, payload) {
+  if (payload.mode === 'pass') {
+    const el = document.createElement('div');
+    el.className = 'review-closing-card pass';
+    el.textContent = '— 没什么要再补的';
+    log.appendChild(el);
+    return;
+  }
+  const el = document.createElement('div');
+  el.className = 'review-closing-card note';
+  el.innerHTML = `
+    <div class="rcc-label">最后一句</div>
+    <div class="rcc-text"></div>
+  `;
+  el.querySelector('.rcc-text').textContent = payload.content || '';
+  log.appendChild(el);
+}
+
 function appendReviewRow(m) {
   const log = document.getElementById('review-log');
   if (!log) return;
@@ -4065,16 +4167,33 @@ function appendReviewRow(m) {
   }
 
   if (m.sender_type === 'bot') {
-    // First bot message = formal self-review conclusion. Anything after a
-    // user follow-up is a chat reply (rendered as a normal bubble).
-    const isFollowup = reviewTabState.sawUserMsg;
+    // After a user follow-up: chat-style bubble. Before any user input the
+    // bot message is the closing line which is already rendered by the
+    // closing card; skip duplicate.
+    if (!reviewTabState.sawUserMsg) return;
     const b = document.createElement('div');
-    b.className = isFollowup ? 'review-bot-bubble' : 'review-result-bubble';
+    b.className = 'review-bot-bubble';
     b.textContent = m.content;
     log.appendChild(b);
     return;
   }
 
+  // Log row — could be a structured card (step / card / closing) or plain text.
+  const payload = parseReviewPayload(m.content);
+  if (payload?.type === 'step') {
+    renderStepCard(log, payload);
+    return;
+  }
+  if (payload?.type === 'card') {
+    renderResultCard(log, payload);
+    return;
+  }
+  if (payload?.type === 'closing') {
+    renderClosingCard(log, payload);
+    return;
+  }
+
+  // Plain status / error / followup_started — minimal text row.
   const row = document.createElement('div');
   const isError = (m.sender_id || '').endsWith(':error');
   row.className = 'surf-log-line' + (isError ? ' error' : '');
