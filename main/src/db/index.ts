@@ -536,4 +536,15 @@ function runMigrations(db: Database): void {
     }
     db.exec('PRAGMA user_version = 20');
   }
+
+  // v21: per-debate cap on messages per round. NULL means "use the orchestrator
+  // default". Set at creation time from the modal/sheet so a noisy lineup can
+  // be turned down without editing localStorage.
+  if (userVersion < 21) {
+    const cols = db.query(`PRAGMA table_info(debate_settings)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'max_messages')) {
+      db.exec(`ALTER TABLE debate_settings ADD COLUMN max_messages INTEGER`);
+    }
+    db.exec('PRAGMA user_version = 21');
+  }
 }

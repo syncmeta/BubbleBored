@@ -8,6 +8,7 @@ import {
   getDebateSettings, bumpDebateRound, findConversation,
 } from '../../db/queries';
 import type { OutboundMessage } from '../../bus/types';
+import { generateTitle } from '../title';
 
 export const debateEvents = new EventEmitter();
 
@@ -121,7 +122,12 @@ async function runOneDebater(params: {
   });
 
   const raw = result.choices[0]?.message?.content?.trim() ?? '';
-  const passed = /^\s*\[PASS\]\s*$/i.test(raw);
+  // Be liberal about how the bot signals "no add" — `[PASS]`, `PASS`, or just
+  // `pass` on its own line all count. Also catches outputs that wrap the
+  // sentinel in punctuation (e.g. `「PASS」`) or quotes. Without this we'd
+  // forward bare `pass` as a real message.
+  const stripped = raw.replace(/^[\s\[\]【】「」“”"'.。，,]+|[\s\[\]【】「」“”"'.。，,]+$/g, '');
+  const passed = /^pass$/i.test(stripped);
   return { botId, displayName, text: passed ? '' : raw, passed };
 }
 
@@ -240,6 +246,15 @@ export async function runDebateRound(
 
   cancelRequests.delete(conversationId);
   updateConversationActivity(conversationId);
+
+  // Retitle from the transcript so the sidebar tracks where the discussion has
+  // moved (same prompt as 消息 titles). Awaited before the `done` event so the
+  // client can re-fetch and see the new title in one round-trip. Errors are
+  // swallowed inside generateTitle.
+  if (delivered > 0) {
+    await generateTitle(conversationId, replyFn, { force: true });
+  }
+
   const tail = paused ? `Round ${round} 已暂停 · 投递 ${delivered} 条` : `Round ${round} 完成 · 投递 ${delivered} 条`;
   emit(conversationId, tail, 'done');
   debateEvents.emit('done', { conversationId, round, delivered, paused, timestamp: Date.now() });

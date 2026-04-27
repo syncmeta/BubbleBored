@@ -35,10 +35,15 @@ export async function generateTitle(
     const promptText = await configManager.readPrompt('title.md');
 
     // Inline the conversation as plain text. The title-generating model is cheap
-    // and we want low latency, so we keep the call simple.
-    const transcript = history
-      .map(m => `${m.sender_type === 'user' ? '用户' : '对方'}: ${m.content}`)
-      .join('\n');
+    // and we want low latency, so we keep the call simple. Debate convs have
+    // sender_type='debater' (the bot id is in sender_id) plus 'user' rows for
+    // 辟谣 — render each speaker explicitly so the summarizer knows it's a
+    // group chat about a person rather than a 1-on-1.
+    const transcript = history.map(m => {
+      if (m.sender_type === 'debater') return `${m.sender_id || '机器人'}: ${m.content}`;
+      if (m.sender_type === 'user') return `用户: ${m.content}`;
+      return `对方: ${m.content}`;
+    }).join('\n');
 
     const start = Date.now();
     const { result, latencyMs, costUsd } = await chatCompletion({
