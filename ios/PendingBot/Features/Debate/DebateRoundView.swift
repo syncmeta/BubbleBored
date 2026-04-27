@@ -2,6 +2,12 @@ import SwiftUI
 
 /// One debate's transcript. "继续" runs `/round`; "插话" sends a clarification;
 /// "停止" pauses an in-flight round. Stream comes in over SSE.
+///
+/// UI mirrors `ConversationView` (single-chat) but in group-chat form:
+/// each bot message carries its own avatar + sender name above the bubble,
+/// like a 微信 group chat. The action buttons float over the transcript
+/// (matching the in-header back chevron's look) instead of sitting in a
+/// bottom toolbar.
 struct DebateRoundView: View {
     let conversation: DebateConversation
     /// Set when the user just created this debate — kicks off the first
@@ -9,6 +15,7 @@ struct DebateRoundView: View {
     var autoStart: Bool = false
 
     @Environment(\.api) private var api
+    @Environment(\.dismiss) private var dismiss
     @State private var messages: [ChatMessage] = []
     @State private var streaming = false
     @State private var pausing = false
@@ -21,38 +28,44 @@ struct DebateRoundView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            chatHeader
+
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        Color.clear.frame(height: 8)
                         ForEach(messages) { msg in
-                            DebateBubble(message: msg, bots: bots).id(msg.id)
+                            DebateBubble(message: msg,
+                                         bots: bots,
+                                         conversationID: conversation.id)
+                                .id(msg.id)
                         }
-                        if streaming { ProgressView().padding(.top, 8) }
+                        if streaming {
+                            HStack {
+                                TypingDots()
+                                    .padding(.leading, 46) // align with bubble column
+                                Spacer()
+                            }
+                            .padding(.top, 4)
+                        }
+                        Color.clear.frame(height: 96).id("bottom")
                     }
-                    .padding(16)
+                    .padding(.top, 4)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) { _, _ in
-                    if let last = messages.last {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }
-            Divider()
-            actionBar
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(convTitle ?? conversation.title ?? "议论")
-                    .font(Theme.Fonts.serif(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .lineLimit(1)
-            }
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .bottomTrailing) {
+            floatingActions
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
         }
         .task {
             await load()
@@ -90,48 +103,116 @@ struct DebateRoundView: View {
         } message: { Text(error ?? "") }
     }
 
-    /// Bottom action row — uses iOS-native `.bordered` / `.borderedProminent`
-    /// styles. While a round is streaming, the primary "继续" slot swaps to
-    /// "停止" so the user can stop the discussion at any point.
-    @ViewBuilder
-    private var actionBar: some View {
-        HStack(spacing: 10) {
+    /// Custom in-body header — same shape as `ConversationView.chatHeader`
+    /// so the two pages feel like one app. Back chevron · title · subtitle
+    /// (participant count). No avatar in the header — the discussion has
+    /// many participants; per-message avatars carry that info instead.
+    private var chatHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
             Button {
-                showClarify.toggle()
+                Haptics.tap()
+                dismiss()
             } label: {
-                Label("插话", systemImage: "bubble.left.and.bubble.right")
-                    .font(.system(size: 15, weight: .medium))
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .padding(.trailing, 2)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .tint(Theme.Palette.accent)
-            .disabled(streaming)
+            .buttonStyle(.plain)
 
-            Spacer()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(convTitle ?? conversation.title ?? "议论")
+                    .font(Theme.Fonts.serif(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(participantSubtitle)
+                        .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .lineLimit(1)
+                    if streaming {
+                        Text("·")
+                            .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                        TypingDots().transition(.opacity)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .animation(.easeInOut(duration: 0.2), value: streaming)
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private var participantSubtitle: String {
+        let ids = Set(messages.compactMap { msg -> String? in
+            guard !msg.isUser, msg.sender_id != "clarify", !msg.sender_id.isEmpty else { return nil }
+            return msg.sender_id
+        })
+        if ids.isEmpty { return "议论" }
+        return "\(ids.count) 位参与"
+    }
+
+    /// Floating action buttons — same minimal look as the back chevron:
+    /// plain icon + tiny label, sitting on a soft surface circle for
+    /// legibility over the transcript. While streaming, the primary slot
+    /// swaps to "停止" so the user can pause at any point.
+    @ViewBuilder
+    private var floatingActions: some View {
+        VStack(spacing: 12) {
+            floatingButton(
+                systemImage: "bubble.left.and.bubble.right",
+                label: "插话",
+                tint: Theme.Palette.ink,
+                disabled: streaming
+            ) { showClarify.toggle() }
 
             if streaming {
-                Button(role: .destructive) {
-                    Task { await pauseRound() }
-                } label: {
-                    Label(pausing ? "停止中…" : "停止", systemImage: "stop.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(.red)
-                .disabled(pausing)
+                floatingButton(
+                    systemImage: "stop.fill",
+                    label: pausing ? "…" : "停止",
+                    tint: .red,
+                    disabled: pausing
+                ) { Task { await pauseRound() } }
             } else {
-                Button {
-                    Task { await runRound() }
-                } label: {
-                    Label("继续", systemImage: "arrow.right.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .tint(Theme.Palette.accent)
+                floatingButton(
+                    systemImage: "arrow.right",
+                    label: "继续",
+                    tint: Theme.Palette.accent,
+                    disabled: false
+                ) { Task { await runRound() } }
             }
         }
+    }
+
+    private func floatingButton(systemImage: String,
+                                label: String,
+                                tint: Color,
+                                disabled: Bool,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: {
+            Haptics.tap()
+            action()
+        }) {
+            VStack(spacing: 2) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(label)
+                    .font(Theme.Fonts.rounded(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(disabled ? Theme.Palette.inkMuted : tint)
+            .frame(width: 52, height: 52)
+            .background(
+                Circle()
+                    .fill(Theme.Palette.surface)
+                    .overlay(Circle().strokeBorder(Theme.Palette.hairline, lineWidth: 0.5))
+                    .shadow(color: Color.black.opacity(0.08), radius: 6, x: 0, y: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
     }
 
     private func load() async {
@@ -225,26 +306,83 @@ struct DebateRoundView: View {
     }
 }
 
+/// Group-chat bubble. Bot rows: avatar + sender name above + surface bubble
+/// (mirrors `BubbleView.botLayout`). User "插话" rows: right-aligned tinted
+/// bubble (mirrors `BubbleView.userLayout`).
 private struct DebateBubble: View {
     let message: ChatMessage
     let bots: [String: Bot]
+    let conversationID: String
+
+    private var isUser: Bool {
+        message.sender_id == "clarify" || message.sender_type == "user"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(displayLabel)
-                .font(.caption2).foregroundStyle(.secondary)
-            MarkdownText(text: message.content)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.secondary.opacity(0.1),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        if isUser { userLayout } else { botLayout }
+    }
+
+    private var botLayout: some View {
+        HStack(alignment: .top, spacing: 8) {
+            BotAvatar(seed: avatarSeed, size: 30)
+                .padding(.top, 18) // visually align with the name label
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayLabel)
+                    .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .padding(.leading, 2)
+                MarkdownText(text: message.content, allowCodeRun: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
+                                         style: .continuous)
+                            .fill(Theme.Palette.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
+                                         style: .continuous)
+                            .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                    )
+            }
+            Spacer(minLength: 32)
         }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 4)
+    }
+
+    private var userLayout: some View {
+        HStack(alignment: .top) {
+            Spacer(minLength: 48)
+            Text(message.content)
+                .textSelection(.enabled)
+                .font(Theme.Fonts.body)
+                .foregroundStyle(Theme.Palette.ink)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Metrics.bubbleRadius,
+                                     style: .continuous)
+                        .fill(Theme.Palette.userBubble)
+                )
+        }
+        .padding(.horizontal, Theme.Metrics.gutter)
+        .padding(.vertical, 4)
+    }
+
+    /// Per-sender avatar seed so each bot in the discussion gets its own
+    /// stable emoji + pastel — that's how the user tells participants apart
+    /// at a glance.
+    private var avatarSeed: String {
+        let id = message.sender_id.isEmpty ? message.sender_type : message.sender_id
+        return "\(conversationID):\(id)"
     }
 
     /// "<display name> · <model>" when we have the bot in registry, else the
     /// raw sender id (which is the bot id for debater rows).
     private var displayLabel: String {
-        if message.sender_id == "clarify" || message.sender_type == "user" {
-            return "用户辟谣"
-        }
         if let bot = bots[message.sender_id] {
             return bot.nameWithModel
         }
