@@ -109,7 +109,7 @@ configManager.onChange(() => {
 // Setup MessageBus
 messageBus.register(webChannel);
 messageBus.register(iosChannel);
-messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachmentIds, replyFn }) => {
+messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachmentIds, metadata, replyFn }) => {
   // Signal any running generation to stop after 2s grace period
   signalNewMessage(conversationId);
 
@@ -140,12 +140,18 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // Cancel any pending review timer (new message arrived)
   cancelPendingReview(conversationId);
 
+  // Per-message tone choice from clients that support it. Telegram/Feishu
+  // omit metadata and fall through to the default ('wechat') in buildPrompt.
+  const toneRaw = metadata && typeof metadata.tone === 'string' ? metadata.tone : undefined;
+  const tone = toneRaw === 'normal' || toneRaw === 'wechat' ? toneRaw : undefined;
+
   // Pass through debounce. Each entry the user sent becomes its own DB row —
   // only at LLM-request time do consecutive user rows get joined with \n\n.
   debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (entries) => {
     handleUserMessage({
       conversationId, botId, userId,
       userMessages: entries,
+      tone,
       replyFn,
     }).catch(e => {
       console.error('[orchestrator] error:', e);

@@ -33,6 +33,8 @@ function buildChannelContextBlock(kind: string | null): string | null {
 // image-heavy conversations.
 const IMAGE_CONTEXT_WINDOW = 4;
 
+export type ChatTone = 'wechat' | 'normal';
+
 export async function buildPrompt(params: {
   botId: string;
   conversationId: string;
@@ -42,11 +44,17 @@ export async function buildPrompt(params: {
   // back to looking it up from the conversation row.
   userId?: string;
   extraContext?: string;
+  // 'wechat' (default): casual multi-bubble + [SILENT] protocol.
+  // 'normal': straightforward AI assistant — single message, normal punctuation.
+  tone?: ChatTone;
 }): Promise<ChatCompletionMessageParam[]> {
   const botConfig = configManager.getBotConfig(params.botId);
 
-  // Read prompts fresh (no cache)
-  const systemPrompt = await configManager.readPrompt('system.md');
+  // Read prompts fresh (no cache). The "normal AI" tone swaps in a different
+  // base prompt; the bot persona file is still appended on top either way so
+  // the chosen 人格 stays consistent across tones.
+  const systemFile = params.tone === 'normal' ? 'system-normal.md' : 'system.md';
+  const systemPrompt = await configManager.readPrompt(systemFile);
   let botPrompt = '';
   try {
     botPrompt = await configManager.readPrompt(`bots/${botConfig.promptFile}`);

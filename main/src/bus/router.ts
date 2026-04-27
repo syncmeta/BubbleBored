@@ -15,6 +15,7 @@ export class MessageBus {
     userId: string;
     content: string;
     attachmentIds?: string[];
+    metadata?: Record<string, unknown>;
     replyFn: (msg: OutboundMessage) => void;
   }) => void;
 
@@ -97,6 +98,7 @@ export class MessageBus {
         userId: user.id,
         content: msg.content,
         attachmentIds: msg.attachmentIds,
+        metadata: msg.metadata,
         replyFn,
       });
     }

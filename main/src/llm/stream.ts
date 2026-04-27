@@ -15,11 +15,16 @@ export interface StreamMeta {
 // Splits streamed output into segments on \n\n (blank line).
 // Triple-backtick fenced blocks are preserved as a single segment —
 // any \n\n inside ```...``` does NOT split, so quoted/long content is safe.
+//
+// `disableSplit: true` keeps the entire response as a single segment (used by
+// the "normal AI" tone where multi-bubble splitting is undesirable).
 export async function* streamWithSplit(
   stream: Stream<ChatCompletionChunk>,
   onSegmentReady: (segmentIndex: number, fullText: string) => void,
   meta?: StreamMeta,
+  options?: { disableSplit?: boolean },
 ): AsyncGenerator<StreamSegment> {
+  const disableSplit = options?.disableSplit === true;
   let currentSegment = 0;
   let buffer = '';
   let pendingNewlines = 0;
@@ -71,7 +76,7 @@ export async function* streamWithSplit(
       // Non-backtick: flush accumulated backticks as content
       yield* flushBackticks();
 
-      if (char === '\n' && !inCodeFence) {
+      if (char === '\n' && !inCodeFence && !disableSplit) {
         pendingNewlines++;
         if (pendingNewlines === 2) {
           // Segment boundary — \n\n consumed as delimiter, not emitted

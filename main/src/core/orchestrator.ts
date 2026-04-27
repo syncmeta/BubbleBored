@@ -3,7 +3,7 @@ import { configManager } from '../config/loader';
 import { chatCompletionStream } from '../llm/client';
 import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
-import { buildPrompt } from './prompt-builder';
+import { buildPrompt, type ChatTone } from './prompt-builder';
 import { checkSilent } from './silent';
 import {
   insertMessage, updateConversationRound, updateConversationActivity,
@@ -115,12 +115,16 @@ export async function handleUserMessage(params: {
   userMessages: UserMessageEntry[];
   replyFn: (msg: OutboundMessage) => void;
   extraContext?: string;
+  // Per-message tone choice from the client. Defaults to 'wechat' when
+  // omitted so existing channels (Telegram/Feishu) keep their current
+  // behaviour.
+  tone?: ChatTone;
   // Re-run the LLM for an existing user message without inserting a new row,
   // binding attachments, or bumping the round counter. The caller is
   // responsible for having already deleted the stale bot reply(ies) from DB.
   regenerate?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, userMessages, replyFn, extraContext, regenerate } = params;
+  const { conversationId, botId, userId, userMessages, replyFn, extraContext, tone, regenerate } = params;
   // Per-gen start timestamp — isInterrupted/hasFreshInterrupt ignore signals
   // raised before this, so we don't need to wipe the map at entry and can't
   // accidentally swallow a just-arrived signal.
@@ -195,6 +199,7 @@ export async function handleUserMessage(params: {
     conversationId,
     userId,
     extraContext,
+    tone,
   });
   const chatModel = modelFor('chat');
   console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}`);
@@ -239,7 +244,7 @@ export async function handleUserMessage(params: {
       }
     };
 
-    for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta)) {
+    for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta, { disableSplit: tone === 'normal' })) {
       // Check if new message arrived and grace period expired
       if (isInterrupted(conversationId, genStartedAt)) {
         console.log(`[chat] interrupted by new message, stopping generation`);
