@@ -603,6 +603,43 @@ export function setReviewRunStatus(
   ).run(status, conversationId);
 }
 
+// ---------- Bot reflections (accumulated 「我-局限/发扬/保持」 from 回顾 runs) ----------
+
+export interface BotReflectionRow {
+  id: string;
+  bot_id: string;
+  user_id: string;
+  review_conv_id: string | null;
+  kind: string;          // 'limit' | 'grow' | 'keep'
+  content: string;
+  created_at: number;
+}
+
+export function insertBotReflection(params: {
+  id: string;
+  botId: string;
+  userId: string;
+  reviewConvId: string | null;
+  kind: 'limit' | 'grow' | 'keep';
+  content: string;
+}): void {
+  getDb().query(
+    `INSERT INTO bot_reflections (id, bot_id, user_id, review_conv_id, kind, content)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(params.id, params.botId, params.userId, params.reviewConvId, params.kind, params.content);
+}
+
+export function getRecentBotReflections(
+  botId: string, userId: string, limit = 12,
+): BotReflectionRow[] {
+  return getDb().query<BotReflectionRow, [string, string, number]>(
+    `SELECT * FROM bot_reflections
+     WHERE bot_id = ? AND user_id = ?
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT ?`
+  ).all(botId, userId, limit);
+}
+
 // ---------- Debate ----------
 
 export interface DebateSettingsRow {

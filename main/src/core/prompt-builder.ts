@@ -1,11 +1,36 @@
 import { configManager } from '../config/loader';
-import { getMessages, getAttachmentsForMessages, findConversationById, type AttachmentRow } from '../db/queries';
+import { getMessages, getAttachmentsForMessages, findConversationById, getRecentBotReflections, type AttachmentRow } from '../db/queries';
 import { annotateMessage } from './time';
 import { readAttachmentFile } from './attachments';
 import { getCachedPerceptionBlock, refreshPerceptionInBackground } from './perception';
 import { buildSkillsPromptBlock } from './skills';
 import { messageBus } from '../bus/router';
 import type { ChatCompletionMessageParam, ChatCompletionContentPart } from 'openai/resources/chat/completions';
+
+// Splice the bot's own self-reflections — accumulated across past 回顾 runs
+// for THIS bot+user pair — into the system prompt so the bot literally
+// carries its lessons forward into the next reply. Returns null if there's
+// nothing yet (first conversation, no review run has saved anything).
+function buildSelfReflectionBlock(botId: string, userId: string): string | null {
+  const rows = getRecentBotReflections(botId, userId, 9);
+  if (rows.length === 0) return null;
+  const limits = rows.filter(r => r.kind === 'limit').map(r => r.content);
+  const grows  = rows.filter(r => r.kind === 'grow').map(r => r.content);
+  const keeps  = rows.filter(r => r.kind === 'keep').map(r => r.content);
+  const sections: string[] = [];
+  if (limits.length > 0) sections.push(`**要警惕的（自己的局限）**\n${limits.map(s => `- ${s}`).join('\n')}`);
+  if (grows.length > 0)  sections.push(`**要继续发扬的**\n${grows.map(s => `- ${s}`).join('\n')}`);
+  if (keeps.length > 0)  sections.push(`**要守住的**\n${keeps.map(s => `- ${s}`).join('\n')}`);
+  if (sections.length === 0) return null;
+  return [
+    '## 你过往回顾时记下的心得',
+    '',
+    '这些是你以前跟这位用户聊过、自己复盘时记下来要带进每一次对话的东西。',
+    '不用机械念出来，但行动上请遵循。',
+    '',
+    sections.join('\n\n'),
+  ].join('\n');
+}
 
 // External chat platforms expose only text — there's no冲浪/回顾/画像/辩论 UI,
 // no image pipeline, no tab switching. Tell the bot so it doesn't promise
@@ -84,6 +109,12 @@ export async function buildPrompt(params: {
   if (userId) {
     const skillsBlock = buildSkillsPromptBlock(userId);
     if (skillsBlock) system += '\n\n' + skillsBlock;
+
+    // Self-reflections from past 回顾 runs for this (bot, user) pair. Goes
+    // after skills and before perception so the bot reads them as personal
+    // resolutions, not ambient sensor data.
+    const reflBlock = buildSelfReflectionBlock(params.botId, userId);
+    if (reflBlock) system += '\n\n' + reflBlock;
   }
 
   // Append the AI-generated perception block last so the model treats it as

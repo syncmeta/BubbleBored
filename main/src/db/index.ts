@@ -536,4 +536,25 @@ function runMigrations(db: Database): void {
     }
     db.exec('PRAGMA user_version = 20');
   }
+
+  // v21: bot_reflections — what the bot wrote about itself during 回顾 runs.
+  // The "我-局限/发扬/保持" buckets get persisted here so the bot's own
+  // self-knowledge accumulates across reviews. The most-recent N rows per
+  // (bot, user) are spliced into the system prompt at chat-build time so the
+  // bot literally carries its lessons forward.
+  if (userVersion < 21) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_reflections (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL REFERENCES bots(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        review_conv_id TEXT REFERENCES conversations(id),
+        kind TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_bot_refl_bot_user ON bot_reflections(bot_id, user_id, created_at DESC);
+    `);
+    db.exec('PRAGMA user_version = 21');
+  }
 }

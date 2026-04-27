@@ -6,6 +6,7 @@ import { logAudit } from '../llm/audit';
 import {
   findConversationById, getMessages, insertMessage, createConversation,
   createReviewRun, getReviewRun, setReviewRunStatus,
+  insertBotReflection, getRecentBotReflections,
 } from '../db/queries';
 import { getUserProfile, recordBotMessage } from '../honcho/memory';
 import { runSearchLoop } from './search/loop';
@@ -14,13 +15,8 @@ import type { OutboundMessage } from '../bus/types';
 
 export const reviewEvents = new EventEmitter();
 
-// Pending correction timers, keyed by review conv id. The timer covers the
-// "wait timerMs before delivering" gap that lets a fast follow-up user message
-// cancel the correction.
 const pendingTimers = new Map<string, Timer>();
 
-// Track which message convs currently have a review running, mirroring the
-// surf side. Lets the chat-header review button show busy + prevents pile-up.
 export const reviewsByMessageConv = new Map<string, string>(); // msgConvId → reviewConvId
 
 interface SearchBlock {
@@ -29,10 +25,23 @@ interface SearchBlock {
   reason: string;
 }
 
-function emit(reviewConvId: string, content: string, kind: string = 'status') {
-  // Persist as a log message in the review conv. If the insert fails (FK
-  // violation, disk pressure, etc.) we still emit on the SSE channel so the
-  // UI doesn't go dark, but we want a trail in the server log.
+// ── Emit helpers ─────────────────────────────────────────────────────────────
+//
+// Two flavors of log events ride the same SSE channel:
+//   - **plain status** (legacy text rows): `kind = "status"|"error"|...`
+//   - **structured payloads** (cards): `kind = "step"|"card"|"closing"`
+//     where the persisted content is JSON. The web/iOS UI tries JSON.parse
+//     content first; on success it renders a card, otherwise a plain row.
+//
+// Persisting the JSON in `messages.content` means a page reload reconstructs
+// the same cards without needing extra tables — the conversation IS the card
+// list.
+
+function persistAndEmit(
+  reviewConvId: string,
+  kind: string,
+  content: string,
+): void {
   try {
     insertMessage(randomUUID(), reviewConvId, 'log', `review:${kind}`, content);
   } catch (e) {
@@ -45,9 +54,60 @@ function emit(reviewConvId: string, content: string, kind: string = 'status') {
   });
 }
 
+function emit(reviewConvId: string, content: string, kind: string = 'status') {
+  persistAndEmit(reviewConvId, kind, content);
+}
+
+// Step card — a process beat. status flows running → done|error.
+// label is the short title shown on the collapsed pill.
+function emitStep(
+  reviewConvId: string,
+  step: string,
+  label: string,
+  status: 'running' | 'done' | 'error',
+  detail?: string,
+) {
+  const payload = JSON.stringify({ type: 'step', step, label, status, detail: detail ?? null });
+  persistAndEmit(reviewConvId, `step:${step}:${status}`, payload);
+}
+
+// Result card — a body of bullet items under a (side, bucket) heading.
+function emitCard(
+  reviewConvId: string,
+  side: 'you' | 'me',
+  bucket: 'limit' | 'grow' | 'keep',
+  items: string[],
+  label: string,
+) {
+  const payload = JSON.stringify({ type: 'card', side, bucket, items, label });
+  persistAndEmit(reviewConvId, `card:${side}:${bucket}`, payload);
+}
+
+// Closing one-liner. mode='pass' = "nothing more to add"; 'note' = real line.
+function emitClosing(reviewConvId: string, mode: 'pass' | 'note', content: string) {
+  const payload = JSON.stringify({ type: 'closing', mode, content });
+  persistAndEmit(reviewConvId, `closing:${mode}`, payload);
+}
+
+// ── Tag parsing ──────────────────────────────────────────────────────────────
+
 function extractTag(text: string, tag: string): string {
   const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
   return m?.[1]?.trim() ?? '';
+}
+
+function parseBulletList(raw: string): string[] {
+  if (!raw) return [];
+  if (raw.trim() === '无') return [];
+  const lines: string[] = [];
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    // Strip leading -, *, • or numbered prefixes.
+    const stripped = t.replace(/^[-*•]\s+/, '').replace(/^\d+[.、)]\s*/, '').trim();
+    if (stripped && stripped !== '无') lines.push(stripped);
+  }
+  return lines;
 }
 
 function parseSearchBlock(text: string): SearchBlock {
@@ -67,7 +127,37 @@ function parseSearchBlock(text: string): SearchBlock {
   }
 }
 
-// Create a 回顾 tab conversation that records this review run.
+interface ParsedReview {
+  you: { limit: string[]; grow: string[]; keep: string[] };
+  me:  { limit: string[]; grow: string[]; keep: string[] };
+  search: SearchBlock;
+  closing: string; // raw inside <结语> tag
+}
+
+function parseReview(text: string): ParsedReview {
+  return {
+    you: {
+      limit: parseBulletList(extractTag(text, '你-局限')),
+      grow:  parseBulletList(extractTag(text, '你-发扬')),
+      keep:  parseBulletList(extractTag(text, '你-保持')),
+    },
+    me: {
+      limit: parseBulletList(extractTag(text, '我-局限')),
+      grow:  parseBulletList(extractTag(text, '我-发扬')),
+      keep:  parseBulletList(extractTag(text, '我-保持')),
+    },
+    search: parseSearchBlock(text),
+    closing: extractTag(text, '结语'),
+  };
+}
+
+const CARD_LABELS = {
+  you: { limit: '你的局限', grow: '你可以发扬的', keep: '你已经在保持的' },
+  me:  { limit: '我的局限', grow: '我可以发扬的', keep: '我要继续守住的' },
+} as const;
+
+// ── Conversation creation ────────────────────────────────────────────────────
+
 export function createReviewConversation(params: {
   botId: string;
   userId: string;
@@ -85,6 +175,8 @@ export function createReviewConversation(params: {
   });
   return id;
 }
+
+// ── Run ──────────────────────────────────────────────────────────────────────
 
 export interface RunReviewParams {
   reviewConvId: string;
@@ -112,24 +204,27 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     const effectiveSourceId = sourceConvId ?? run.source_message_conv_id;
     const sourceConv = effectiveSourceId ? findConversationById(effectiveSourceId) : null;
 
-    emit(reviewConvId, `Review triggered (${trigger})`);
-    if (sourceConv) {
-      emit(reviewConvId, `源会话：${sourceConv.title?.trim() || sourceConv.id.slice(0, 8)}（轮 ${sourceConv.round_count ?? 0}）`);
-    } else {
-      emit(reviewConvId, '自由回顾（无源会话）— 仅基于本会话历史');
-    }
-
-    // Pull the history we'll review. Prefer the source message conv when given.
+    // Step 1 — gather chat history
+    emitStep(reviewConvId, 'history', '翻一翻最近的对话', 'running');
     const historyConvId = effectiveSourceId ?? reviewConvId;
     const history = getMessages(historyConvId, 30).filter(m => m.sender_type !== 'log');
     if (history.length < 2) {
-      emit(reviewConvId, 'Skipped: not enough history', 'skip');
+      emitStep(reviewConvId, 'history', '翻一翻最近的对话', 'error', '聊得还不够，下次再回头看');
       setReviewRunStatus(reviewConvId, 'done');
+      reviewEvents.emit('done', {
+        reviewConvId, conversationId: reviewConvId,
+        sourceMessageConvId: effectiveSourceId,
+        result: 'insufficient', timestamp: Date.now(),
+      });
       return;
     }
-    emit(reviewConvId, `Loaded ${history.length} messages for review`);
+    emitStep(
+      reviewConvId, 'history', '翻一翻最近的对话', 'done',
+      `${history.length} 条消息${sourceConv ? `（来自「${sourceConv.title?.trim() || sourceConv.id.slice(0, 8)}」）` : ''}`,
+    );
 
-    // Long-term profile (best effort)
+    // Step 2 — load long-term memory (user profile + bot's own past reflections)
+    emitStep(reviewConvId, 'memory', '翻一翻你的画像和我以前的心得', 'running');
     let profileText = '';
     try {
       const profile = await getUserProfile(reviewConv.user_id);
@@ -139,28 +234,51 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     } catch (e: any) {
       console.warn('[review] profile load failed:', e?.message ?? e);
     }
+    const priorReflections = getRecentBotReflections(reviewConv.bot_id, reviewConv.user_id, 12);
+    let priorText = '';
+    if (priorReflections.length > 0) {
+      const groupedByKind = {
+        limit: priorReflections.filter(r => r.kind === 'limit'),
+        grow:  priorReflections.filter(r => r.kind === 'grow'),
+        keep:  priorReflections.filter(r => r.kind === 'keep'),
+      };
+      const lines: string[] = ['我（这个机器人）以前回顾时记下的心得：'];
+      if (groupedByKind.limit.length > 0) lines.push('— 我的局限：', ...groupedByKind.limit.map(r => `  · ${r.content}`));
+      if (groupedByKind.grow.length > 0)  lines.push('— 我要发扬的：', ...groupedByKind.grow.map(r => `  · ${r.content}`));
+      if (groupedByKind.keep.length > 0)  lines.push('— 我要守住的：', ...groupedByKind.keep.map(r => `  · ${r.content}`));
+      priorText = lines.join('\n');
+    }
+    emitStep(
+      reviewConvId, 'memory', '翻一翻你的画像和我以前的心得', 'done',
+      [
+        profileText ? `画像 ✓` : `画像 — 还没攒起来`,
+        priorReflections.length > 0 ? `我的旧心得 ${priorReflections.length} 条` : '我的旧心得 — 还没有',
+      ].join(' · '),
+    );
 
+    // Step 3 — call the LLM
     const reviewPrompt = await configManager.readPrompt('review.md');
     const model = run.model_slug || modelFor(reviewConv.bot_id);
-    emit(reviewConvId, `模型：${model}`);
+    emitStep(reviewConvId, 'thinking', '慢慢想一遍', 'running', `用 ${model}`);
 
     const historyMessages = history.map((m: any) => ({
       role: (m.sender_type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: m.content as string,
     }));
 
-    const leadIn = profileText
-      ? `${profileText}\n\n（以下是最近的对话历史）`
-      : '（以下是最近的对话历史）';
+    const leadInParts: string[] = [];
+    if (profileText) leadInParts.push(profileText);
+    if (priorText) leadInParts.push(priorText);
+    leadInParts.push('（以下是最近的对话历史）');
+    const leadIn = leadInParts.join('\n\n');
 
     const messages = [
       { role: 'system' as const, content: reviewPrompt },
       { role: 'user' as const, content: leadIn },
       ...historyMessages,
-      { role: 'user' as const, content: '请按系统指令对你上面的发言进行自我审视，同时评估对方现在的处境，按要求的 4 段式输出。' },
+      { role: 'user' as const, content: '请按系统指令对你和对方两边都做一遍回顾，按要求的分段输出。' },
     ];
 
-    emit(reviewConvId, 'Calling LLM…');
     const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
     logAudit({
@@ -173,32 +291,30 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     });
 
     const rawText = result.choices[0]?.message?.content?.trim() ?? '';
-    emit(reviewConvId, `LLM responded (${latencyMs}ms, ${result.usage?.total_tokens ?? 0} tokens)`);
+    emitStep(
+      reviewConvId, 'thinking', '慢慢想一遍', 'done',
+      `${(latencyMs / 1000).toFixed(1)}s · ${result.usage?.total_tokens ?? 0} tokens`,
+    );
 
-    const evaluation = extractTag(rawText, '评价');
-    const insights = extractTag(rawText, '洞察');
-    const search = parseSearchBlock(rawText);
-    let conclusion = extractTag(rawText, '结论') || rawText;
+    let parsed = parseReview(rawText);
 
-    if (evaluation) emit(reviewConvId, `评价:\n${evaluation}`, 'evaluation');
-    if (insights && insights !== '无') emit(reviewConvId, `洞察:\n${insights}`, 'insights');
-
-    if (search.need && search.queries.length > 0) {
-      emit(reviewConvId, `需要搜索（${search.reason}）:\n${search.queries.map((q, i) => `${i + 1}. ${q}`).join('\n')}`, 'search');
-
+    // Optional search round — re-issue the prompt with findings to refine.
+    if (parsed.search.need && parsed.search.queries.length > 0) {
+      emitStep(
+        reviewConvId, 'search', '查证几件事', 'running',
+        parsed.search.queries.map((q, i) => `${i + 1}. ${q}`).join(' · '),
+      );
       const botConfig = configManager.getBotConfig(reviewConv.bot_id);
       const { findings } = await runSearchLoop({
         userId: reviewConv.user_id,
         conversationId: reviewConvId,
         model,
-        queries: search.queries,
+        queries: parsed.search.queries,
         budget: botConfig.review.maxSearchRequests,
         evalPromptName: 'review-eval.md',
         taskType: 'review_eval',
-        emitLog: (c) => emit(reviewConvId, c, 'search'),
+        emitLog: () => { /* swallowed; the inner search loop is verbose */ },
       });
-
-      emit(reviewConvId, `搜索完成，收集 ${findings.length} 条发现`);
 
       const findingsText = findings.length > 0
         ? findings.map(f => `- ${f.content}${f.source ? ` (来源: ${f.source})` : ''}`).join('\n')
@@ -215,8 +331,7 @@ export async function runReview(params: RunReviewParams): Promise<void> {
             '以下是你刚才要求的搜索结果：',
             findingsText,
             '',
-            '请基于这些信息给出最终的 <结论>。',
-            '只需要输出 <结论>...</结论> 这一段（[OK] 或一句自然口吻的追加消息，不要写"经过审视我发现"这类话）。',
+            '现在请重新输出完整的 7 段（你-局限/发扬/保持、我-局限/发扬/保持、搜索 need=false、结语），把搜到的内容自然地融到相关段里。',
           ].join('\n'),
         },
       ];
@@ -235,61 +350,90 @@ export async function runReview(params: RunReviewParams): Promise<void> {
       });
 
       const finalText = finalResult.choices[0]?.message?.content?.trim() ?? '';
-      emit(reviewConvId, `LLM final (${finalLatency}ms, ${finalResult.usage?.total_tokens ?? 0} tokens)`);
-
-      conclusion = extractTag(finalText, '结论') || finalText;
+      emitStep(
+        reviewConvId, 'search', '查证几件事', 'done',
+        `${findings.length} 条发现`,
+      );
+      parsed = parseReview(finalText);
     }
 
-    conclusion = conclusion.trim();
-    if (!conclusion || conclusion === '[OK]' || conclusion === '[PENDING]') {
-      emit(reviewConvId, '结论: [OK] — no correction needed', 'ok');
-      setReviewRunStatus(reviewConvId, 'done');
-      reviewEvents.emit('done', {
-        reviewConvId, conversationId: reviewConvId,
-        sourceMessageConvId: effectiveSourceId,
-        result: 'ok', timestamp: Date.now(),
-      });
-      return;
+    // Cards — emit in fixed order (you side first, then me side).
+    const order: Array<{ side: 'you' | 'me'; bucket: 'limit' | 'grow' | 'keep' }> = [
+      { side: 'you', bucket: 'limit' },
+      { side: 'you', bucket: 'grow' },
+      { side: 'you', bucket: 'keep' },
+      { side: 'me',  bucket: 'limit' },
+      { side: 'me',  bucket: 'grow' },
+      { side: 'me',  bucket: 'keep' },
+    ];
+    for (const o of order) {
+      const items = parsed[o.side][o.bucket];
+      emitCard(reviewConvId, o.side, o.bucket, items, CARD_LABELS[o.side][o.bucket]);
     }
 
-    emit(reviewConvId, `结论（${sourceConv ? '将追加到源会话' : '只留在本回顾'}）:\n${conclusion}`, 'conclusion');
+    // Persist the bot's own self-knowledge so it accumulates across reviews.
+    emitStep(reviewConvId, 'save', '把这次的自己记下来', 'running');
+    let savedCount = 0;
+    for (const bucket of ['limit', 'grow', 'keep'] as const) {
+      for (const item of parsed.me[bucket]) {
+        try {
+          insertBotReflection({
+            id: randomUUID(),
+            botId: reviewConv.bot_id,
+            userId: reviewConv.user_id,
+            reviewConvId,
+            kind: bucket,
+            content: item,
+          });
+          savedCount++;
+        } catch (e) {
+          console.warn('[review] save reflection failed:', e);
+        }
+      }
+    }
+    emitStep(reviewConvId, 'save', '把这次的自己记下来', 'done', `${savedCount} 条心得已存`);
 
-    // Always store the conclusion as a bot message in the review conv too,
-    // so the 回顾 tab view shows the result inline.
-    insertMessage(randomUUID(), reviewConvId, 'bot', reviewConv.bot_id, conclusion);
-
-    if (sourceConv) {
-      const botConfig = configManager.getBotConfig(reviewConv.bot_id);
-      const timer = setTimeout(() => {
-        pendingTimers.delete(reviewConvId);
-        const msgId = randomUUID();
-        insertMessage(msgId, sourceConv.id, 'bot', reviewConv.bot_id, conclusion);
-        recordBotMessage({ botId: reviewConv.bot_id, conversationId: sourceConv.id, content: conclusion });
-        replyFn({
-          type: 'message',
-          conversationId: sourceConv.id,
-          messageId: msgId,
-          content: conclusion,
-        });
-        emit(reviewConvId, 'Correction sent to source conv', 'delivered');
-        setReviewRunStatus(reviewConvId, 'done');
-        reviewEvents.emit('done', {
-          reviewConvId, conversationId: reviewConvId,
-          sourceMessageConvId: sourceConv.id,
-          result: 'corrected', timestamp: Date.now(),
-        });
-      }, botConfig.review.timerMs);
-      pendingTimers.set(reviewConvId, timer);
-      emit(reviewConvId, `Scheduling correction in ${botConfig.review.timerMs}ms…`);
+    // Closing line.
+    const closingRaw = parsed.closing.trim();
+    const isPass = !closingRaw || closingRaw === '[PASS]' || closingRaw === '[OK]' || closingRaw === '[PENDING]';
+    if (isPass) {
+      emitClosing(reviewConvId, 'pass', '');
     } else {
-      // Free review: nothing to deliver to. Mark done.
-      setReviewRunStatus(reviewConvId, 'done');
-      reviewEvents.emit('done', {
-        reviewConvId, conversationId: reviewConvId,
-        sourceMessageConvId: null,
-        result: 'noted', timestamp: Date.now(),
-      });
+      emitClosing(reviewConvId, 'note', closingRaw);
+
+      // Also store the closing as a real bot bubble in the review tab so it's
+      // visible alongside the cards (and so a follow-up dialogue has it in
+      // history).
+      insertMessage(randomUUID(), reviewConvId, 'bot', reviewConv.bot_id, closingRaw);
+
+      // If we're tied to a source message conv, schedule the closing line to
+      // be delivered there too — the original "auto-correction" affordance.
+      if (sourceConv) {
+        const botConfig = configManager.getBotConfig(reviewConv.bot_id);
+        const timer = setTimeout(() => {
+          pendingTimers.delete(reviewConvId);
+          const msgId = randomUUID();
+          insertMessage(msgId, sourceConv.id, 'bot', reviewConv.bot_id, closingRaw);
+          recordBotMessage({ botId: reviewConv.bot_id, conversationId: sourceConv.id, content: closingRaw });
+          replyFn({
+            type: 'message',
+            conversationId: sourceConv.id,
+            messageId: msgId,
+            content: closingRaw,
+          });
+        }, botConfig.review.timerMs);
+        pendingTimers.set(reviewConvId, timer);
+      }
     }
+
+    setReviewRunStatus(reviewConvId, 'done');
+    reviewEvents.emit('done', {
+      reviewConvId, conversationId: reviewConvId,
+      sourceMessageConvId: effectiveSourceId,
+      result: isPass ? 'noted' : 'with_closing',
+      timestamp: Date.now(),
+      trigger,
+    });
   } catch (e: any) {
     emit(reviewConvId, `⚠️ 出错：${e?.message ?? e}`, 'error');
     setReviewRunStatus(reviewConvId, 'error');
@@ -300,16 +444,14 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     });
     throw e;
   } finally {
-    // Drop the per-message-conv guard if this review was bound to one.
     for (const [msgConv, rConv] of reviewsByMessageConv) {
       if (rConv === reviewConvId) reviewsByMessageConv.delete(msgConv);
     }
   }
 }
 
-// Auto / manual entry point from message conv flows: creates a 回顾 tab
-// conv pinned to the message conv as source, then runs the review there.
-// Replaces the old "review attached to a message conv" behavior.
+// ── Auto / manual trigger from message conv ──────────────────────────────────
+
 export async function checkAndTriggerReview(
   messageConvId: string,
   botId: string,
@@ -349,9 +491,6 @@ export async function checkAndTriggerReview(
   }).catch(e => console.error('[review] error:', e));
 }
 
-// Cancel a pending correction timer keyed by the SOURCE message conv id.
-// Called when a new user message arrives in the source conv — that's the
-// signal that the review's correction is no longer needed.
 export function cancelPendingReview(messageConvId: string): void {
   const reviewConvId = reviewsByMessageConv.get(messageConvId);
   if (!reviewConvId) return;
@@ -359,7 +498,6 @@ export function cancelPendingReview(messageConvId: string): void {
   if (timer) {
     clearTimeout(timer);
     pendingTimers.delete(reviewConvId);
-    emit(reviewConvId, 'Pending correction cancelled (new message arrived)', 'cancelled');
     setReviewRunStatus(reviewConvId, 'done');
     reviewsByMessageConv.delete(messageConvId);
   }
@@ -369,11 +507,7 @@ export function getPendingReviews(): string[] {
   return Array.from(pendingTimers.keys());
 }
 
-// ── Follow-up dialogue ──
-// Once the first-pass self-review is done, the user can keep talking with the
-// bot inside the review tab. This drives that follow-up turn: take the user's
-// new message + the source-conv history + everything said in this review tab
-// so far, and have the bot reply in normal chat tone (no structured tags).
+// ── Follow-up dialogue ──────────────────────────────────────────────────────
 
 export interface ContinueReviewParams {
   reviewConvId: string;
@@ -387,9 +521,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
   const run = getReviewRun(reviewConvId);
   if (!run) return;
 
-  // The user actively engaging means the timed correction-to-source is no
-  // longer wanted — they're now reviewing together, not letting the bot ship
-  // a follow-up correction unattended.
   if (run.source_message_conv_id) {
     cancelPendingReview(run.source_message_conv_id);
   }
@@ -400,9 +531,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
     const followupPrompt = await configManager.readPrompt('review-followup.md');
     const model = run.model_slug || modelFor(reviewConv.bot_id);
 
-    // Source-conv reference (the conversation being reviewed). Same 30-msg
-    // slice runReview uses, rendered as plain text so we can stuff it into
-    // a single user-role context block alongside the dialogue history.
     let sourceContext = '（无源会话上下文 — 自由回顾）';
     if (run.source_message_conv_id) {
       const srcMsgs = getMessages(run.source_message_conv_id, 30)
@@ -414,7 +542,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
       }
     }
 
-    // Long-term user profile (best effort, mirrors runReview).
     let profileText = '';
     try {
       const profile = await getUserProfile(reviewConv.user_id);
@@ -425,9 +552,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
       console.warn('[review] followup profile load failed:', e?.message ?? e);
     }
 
-    // Dialogue inside the review conv. Everything that's user/bot-typed
-    // (i.e. the first-pass conclusion bubble + any prior follow-up turns)
-    // becomes the chat history. We also append the new user message.
     const dialogueRows = getMessages(reviewConvId, 200)
       .filter((m: any) => m.sender_type === 'user' || m.sender_type === 'bot');
 
@@ -452,7 +576,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
       { role: 'user' as const, content: userText },
     ];
 
-    emit(reviewConvId, `跟进调用 LLM（${model}）…`);
     const { result, latencyMs, costUsd } = await chatCompletion({ model, messages });
 
     logAudit({
@@ -465,7 +588,6 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
     });
 
     const replyText = result.choices[0]?.message?.content?.trim() ?? '';
-    emit(reviewConvId, `LLM 回应（${latencyMs}ms, ${result.usage?.total_tokens ?? 0} tokens）`);
 
     if (!replyText) {
       emit(reviewConvId, '⚠️ 模型没给出回应', 'error');

@@ -191,3 +191,73 @@ reviewRoutes.get('/events', (c) => sseStream(reviewEvents, c.req.raw.signal, () 
   pending: getPendingReviews(),
   sources: Array.from(reviewsByMessageConv.keys()),
 })));
+
+// Re-run + live-stream events for a single review conversation. iOS uses this
+// for the "继续" / refresh button: the response is an SSE stream of just the
+// log/done events for THIS reviewConvId. The web client uses the global
+// /events stream and doesn't need this scoped variant, but it works there too.
+reviewRoutes.post('/conversations/:id/continue', async (c) => {
+  const id = c.req.param('id');
+  const conv = findConversationById(id);
+  if (!conv) return c.json({ error: 'not found' }, 404);
+  assertFeatureType(conv, 'review');
+  const run = getReviewRun(id);
+  if (!run) return c.json({ error: 'run record missing' }, 500);
+
+  if (run.source_message_conv_id) {
+    reviewsByMessageConv.set(run.source_message_conv_id, id);
+  }
+  const replyFn = makeReplyFn(conv);
+
+  // Kick off the run in the background. Events go through the same global
+  // emitter the SSE stream listens to.
+  runReview({
+    reviewConvId: id,
+    sourceConvId: run.source_message_conv_id ?? null,
+    replyFn, trigger: 'panel',
+  }).catch(e => console.error('[review-api] continue error:', e));
+
+  // Stream a filtered view of the global emitter, ending the stream when a
+  // matching `done` event fires for this id.
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      let closed = false;
+      const send = (event: string, data: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {}
+      };
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        reviewEvents.off('log', onLog);
+        reviewEvents.off('done', onDone);
+        try { controller.close(); } catch {}
+      };
+      const onLog = (data: any) => {
+        if (data?.reviewConvId !== id) return;
+        send('log', data);
+      };
+      const onDone = (data: any) => {
+        if (data?.reviewConvId !== id) return;
+        send('done', data);
+        // Give the client a beat to consume the done frame, then end.
+        setTimeout(close, 50);
+      };
+      reviewEvents.on('log', onLog);
+      reviewEvents.on('done', onDone);
+      send('init', { reviewConvId: id });
+      c.req.raw.signal.addEventListener('abort', close);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+});
