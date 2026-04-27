@@ -39,7 +39,7 @@ export function hashApiKey(key: string): string {
 
 // Resolve a raw api key to a user row. Returns null on any failure
 // (unknown key, revoked key, deleted user).
-function resolveRawKey(key: string) {
+export function resolveRawKey(key: string) {
   if (!key) return null;
   const row = findApiKeyByHash(hashApiKey(key));
   if (!row || row.revoked_at) return null;
@@ -107,6 +107,10 @@ function isPublicApiPath(pathname: string): boolean {
   if (pathname === '/api/invites/redeem') return true;
   if (pathname.startsWith('/api/invites/check/')) return true;
   if (pathname === '/api/connect/redeem') return true;
+  // Session install — accepts a raw api key and sets the pb_session cookie
+  // server-side. Used as the recovery path when the cookie has been lost
+  // (HttpOnly means JS in the browser can't write it directly).
+  if (pathname === '/api/session/install') return true;
   return false;
 }
 
