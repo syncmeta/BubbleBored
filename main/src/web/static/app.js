@@ -231,6 +231,35 @@ function renderConvListInto(items, emptyHint, renderItem) {
   for (const c of items) list.appendChild(renderItem(c));
 }
 
+// Renders a "pick which bot" pill row for surf / review modals. Single-select,
+// required (no "all bots" row — surf/review always run as one specific bot).
+// `selectedId` controls the initial highlight; `onPick(botId)` fires on change.
+function renderModalBotPicker(host, opts) {
+  if (!host) return;
+  host.innerHTML = '';
+  const selectedId = opts.selectedId || '';
+  const bots = state.bots || [];
+  if (bots.length === 0) {
+    host.innerHTML = `<div class="modal-status-row">没有配置机器人</div>`;
+    return;
+  }
+  for (const b of bots) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'bot-pick-pill' + (b.id === selectedId ? ' selected' : '');
+    pill.dataset.botId = b.id;
+    pill.innerHTML =
+      `<span class="bot-avatar emoji" style="background:${botColor(b.id)}">${botEmoji(b.id)}</span>` +
+      `<span>${esc(b.display_name || b.id)}</span>`;
+    pill.addEventListener('click', () => {
+      host.querySelectorAll('.bot-pick-pill').forEach(p => p.classList.remove('selected'));
+      pill.classList.add('selected');
+      if (opts.onPick) opts.onPick(b.id);
+    });
+    host.appendChild(pill);
+  }
+}
+
 // Renders a "pick a source 消息 conversation" picker — used by surf / review
 // / portrait modals. `onPick(convId|'')` fires on each selection change.
 function renderSourcePicker(host, sources, opts) {
@@ -412,17 +441,36 @@ async function loadBots() {
   }
 }
 
-function botColor(botId) {
-  // Stable hash → hue. Keeps the same Bot looking the same across sessions.
+// Curated emoji pool for bot avatars. Heavy on faces + friendly creatures so
+// every bot ends up with a recognisable little face. Keep this list trimmed
+// of anything that might render text-only on older platforms.
+const BOT_EMOJI_POOL = [
+  '😀','😄','😆','😊','🙂','😉','😌','😎','🤓','🧐','🤠','🥳','🤩','🤖','👽','🤡',
+  '👻','💀','😺','😸','😹','😻','🙀','🐶','🐱','🦊','🦝','🐻','🐼','🐨','🐯','🦁',
+  '🐮','🐷','🐸','🐵','🙈','🐔','🐧','🐦','🦆','🦉','🦅','🐝','🦋','🐌','🐙','🦑',
+  '🐠','🐬','🦈','🐳','🐲','🦖','🦕','🐢','🦎','🐍','🦄','🐴','🦓','🦒','🐘','🦏',
+  '🦛','🐪','🦘','🐹','🐭','🐰','🦔','🦦','🦥','🐾','🌵','🌲','🌳','🌴','🌱','🍀',
+  '🍄','🌷','🌹','🌻','🌼','🌸','🌺','🌟','⭐','✨','⚡','🔥','💧','🌊','🌈','☀️',
+  '🌙','🪐','🛸','🚀','🎈','🎁','🎨','🎭','🎯','🎲','🎮','🕹️','🎵','🎷','🎸','🥁',
+];
+
+// Stable hash of botId → both hue and emoji index. Same bot always lands on
+// the same pale color and emoji, no storage needed.
+function _botHash(botId) {
+  const s = botId || '';
   let h = 0;
-  for (let i = 0; i < botId.length; i++) h = (h * 31 + botId.charCodeAt(i)) | 0;
-  const hue = Math.abs(h) % 360;
-  return `hsl(${hue}, 55%, 58%)`;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
-function botInitial(bot) {
-  const name = bot?.display_name || bot?.id || '?';
-  return name.trim().charAt(0).toUpperCase();
+function botColor(botId) {
+  return `hsl(${_botHash(botId) % 360}, 55%, 90%)`;
+}
+
+function botEmoji(botId) {
+  // Use a different mixing constant so the emoji choice doesn't track the hue.
+  const h = _botHash(botId);
+  return BOT_EMOJI_POOL[((h * 2654435761) >>> 0) % BOT_EMOJI_POOL.length];
 }
 
 // Bot label = display name + the live model tag (provider prefix dropped),
@@ -442,8 +490,7 @@ function botLabel(bot) {
 }
 
 function botAvatarHTML(botId) {
-  const bot = state.botsById.get(botId);
-  return `<span class="bot-avatar" style="background:${botColor(botId)}">${esc(botInitial(bot))}</span>`;
+  return `<span class="bot-avatar emoji" style="background:${botColor(botId)}">${botEmoji(botId)}</span>`;
 }
 
 // ── Conversations ──
@@ -465,6 +512,7 @@ function renderBotFilter() {
   if (!root) return;
   if (state.bots.length <= 1) {
     root.innerHTML = '';
+    root.classList.remove('open');
     return;
   }
 
@@ -473,29 +521,76 @@ function renderBotFilter() {
     counts.set(conv.bot_id, (counts.get(conv.bot_id) || 0) + 1);
   }
 
-  const all = `
-    <button class="pill ${state.botFilter === '' ? 'active' : ''}" data-bot="">
-      <span>全部</span>
-      <span class="pill-count">${state.conversations.length}</span>
+  // Build a single dropdown trigger + popover. The popover is collapsed by
+  // default; toggling adds .open to the wrapper.
+  const selBot = state.botFilter ? state.botsById.get(state.botFilter) : null;
+  const triggerLabel = selBot
+    ? `${esc(selBot.display_name || selBot.id)}`
+    : '全部机器人';
+  const triggerCount = state.botFilter
+    ? (counts.get(state.botFilter) || 0)
+    : state.conversations.length;
+  const triggerAvatar = selBot
+    ? `<span class="bot-avatar emoji" style="background:${botColor(selBot.id)}">${botEmoji(selBot.id)}</span>`
+    : '';
+
+  const items = [
+    `<button class="bot-dd-item ${state.botFilter === '' ? 'active' : ''}" data-bot="">
+       <span class="bot-dd-name">全部机器人</span>
+       <span class="bot-dd-count">${state.conversations.length}</span>
+     </button>`,
+    ...state.bots.map(b => {
+      const count = counts.get(b.id) || 0;
+      const active = state.botFilter === b.id ? 'active' : '';
+      return `
+        <button class="bot-dd-item ${active}" data-bot="${esc(b.id)}">
+          <span class="bot-avatar emoji" style="background:${botColor(b.id)}">${botEmoji(b.id)}</span>
+          <span class="bot-dd-name">${esc(b.display_name || b.id)}</span>
+          ${count > 0 ? `<span class="bot-dd-count">${count}</span>` : ''}
+        </button>
+      `;
+    }),
+  ].join('');
+
+  root.innerHTML = `
+    <button class="bot-dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+      ${triggerAvatar}
+      <span class="bot-dd-name">${triggerLabel}</span>
+      <span class="bot-dd-count">${triggerCount}</span>
+      <svg class="bot-dd-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 9l6 6 6-6"/>
+      </svg>
     </button>
+    <div class="bot-dd-popover" role="listbox">${items}</div>
   `;
-  const bots = state.bots.map(b => {
-    const count = counts.get(b.id) || 0;
-    const active = state.botFilter === b.id ? 'active' : '';
-    return `
-      <button class="pill ${active}" data-bot="${esc(b.id)}" title="${esc(botLabel(b))}">
-        <span class="bot-avatar" style="background:${botColor(b.id)}">${esc(botInitial(b))}</span>
-        <span class="pill-label">${esc(botLabel(b))}</span>
-        ${count > 0 ? `<span class="pill-count">${count}</span>` : ''}
-      </button>
-    `;
-  }).join('');
 
-  root.innerHTML = all + bots;
+  const trigger = root.querySelector('.bot-dd-trigger');
+  const popover = root.querySelector('.bot-dd-popover');
 
-  for (const btn of root.querySelectorAll('.pill')) {
+  function close() {
+    root.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('mousedown', onOutside, true);
+    document.removeEventListener('keydown', onKey, true);
+  }
+  function open() {
+    root.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onKey, true);
+  }
+  function onOutside(e) { if (!root.contains(e.target)) close(); }
+  function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); close(); } }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (root.classList.contains('open')) close();
+    else open();
+  });
+  for (const btn of popover.querySelectorAll('.bot-dd-item')) {
     btn.addEventListener('click', () => {
       setBotFilter(btn.dataset.bot);
+      close();
     });
   }
 }
@@ -533,7 +628,7 @@ function _messageRenderConvList() {
   list.innerHTML = '';
   const convs = filteredConversations();
   if (convs.length === 0) {
-    const hint = state.botFilter ? '没有该 Bot 的对话' : '还没有对话';
+    const hint = state.botFilter ? '没有该机器人的对话' : '还没有对话';
     const action = state.botFilter ? '点上面「新对话」开启' : '点上面的「新对话」开始';
     list.innerHTML = `<div class="conv-empty">${esc(hint)}<br>${esc(action)}</div>`;
     return;
@@ -690,7 +785,7 @@ function _messageOnNewChat(e) {
   if (e) e.stopPropagation();
   const picker = document.getElementById('bot-picker');
   if (state.bots.length === 0) {
-    alert('没有可用的 Bot');
+    alert('没有可用的机器人');
     return;
   }
   // If a specific bot is selected via filter, go straight there
@@ -2078,21 +2173,13 @@ function shortModel(m) {
 //  议论 (Debate) — multi-agent group chat, user can only inject 辟谣
 // ──────────────────────────────────────────────────────────────────────────
 
-// Default debate line-up — the 5 mainstream slugs we suggest when the user
-// opens the modal without an existing debate to clone from. Edits go straight
-// to model_slugs in debate_settings; the picker can swap in anything else
-// from OpenRouter's full list.
-const DEFAULT_DEBATE_SLUGS = [
-  'z-ai/glm-5.1',
-  'z-ai/glm-4.5-air:free',
-  'deepseek/deepseek-v4-flash',
-  'deepseek/deepseek-v4-pro',
-  'minimax/minimax-m2.7',
-  'tencent/hy3-preview:free',
-  'google/gemini-3.1-flash-lite-preview',
-];
-
+// 议论 default lineup — every configured bot joins by default. We resolve
+// it lazily from state.bots so the user editing config.yaml flows straight
+// through (no slug list to keep in sync).
 const DEFAULT_DEBATE_MAX_MSGS = 30;
+function getDefaultDebateBotIds() {
+  return state.bots.map(b => b.id);
+}
 function getDebateMaxMsgs() {
   const v = parseInt(localStorage.getItem('debate-max-msgs') || '', 10);
   return Number.isFinite(v) && v > 0 ? Math.min(v, 200) : DEFAULT_DEBATE_MAX_MSGS;
@@ -2102,14 +2189,14 @@ function setDebateMaxMsgs(n) {
 }
 
 const debateState = {
-  currentDebate: null,           // hydrated debate conv (with topic + model_slugs)
-  pickedModelSlugs: new Set(),   // for the modal
+  currentDebate: null,           // hydrated debate conv (with topic + bot_ids)
+  pickedBotIds: new Set(),       // for the modal
   busyConvIds: new Set(),
   modalMode: 'create',           // 'create' | 'edit'
   es: null,
 };
 
-// Stable color from a model slug (mirrors botColor()).
+// Stable color from any string id (mirrors botColor()).
 function modelColor(slug) {
   let h = 0;
   for (let i = 0; i < (slug || '').length; i++) h = (h * 31 + slug.charCodeAt(i)) | 0;
@@ -2118,7 +2205,7 @@ function modelColor(slug) {
 }
 
 // Hook into loadConversations: when on the debate tab, hit the debate-specific
-// list endpoint that hydrates topic + model_slugs.
+// list endpoint that hydrates topic + bot_ids.
 async function loadDebateConversations() {
   try {
     const res = await fetch(`/api/debate/conversations`);
@@ -2138,15 +2225,15 @@ function renderDebateConvItem(conv) {
 
   const title = conv.title || '议论';
   const subtitle = conv.topic ? esc(conv.topic) : '（无议题）';
-  const modelDots = (conv.model_slugs ?? []).slice(0, 5).map(slug =>
-    `<span class="conv-model-dot" style="background:${modelColor(slug)}" title="${esc(slug)}"></span>`
+  const botDots = (conv.bot_ids ?? []).slice(0, 5).map(id =>
+    `<span class="conv-model-dot" style="background:${botColor(id)}" title="${esc(id)}"></span>`
   ).join('');
 
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(title)}</span>
       <span class="conv-subtitle">${subtitle}</span>
-      <span class="conv-debate-meta">${modelDots} <span>· ${conv.round_count_debate ?? 0} 轮</span></span>
+      <span class="conv-debate-meta">${botDots} <span>· ${conv.round_count_debate ?? 0} 轮</span></span>
     </span>
     <span class="conv-actions">
       <button title="删除" class="danger" data-act="delete">
@@ -2205,8 +2292,9 @@ function updateDebateHeader() {
     return;
   }
   title.textContent = d.topic || d.title || '议论';
-  const modelNames = (d.model_slugs ?? []).join(' · ');
-  meta.textContent = `${(d.model_slugs ?? []).length} 个模型 · ${d.round_count_debate ?? 0} 轮 · ${modelNames}`;
+  const ids = d.bot_ids ?? [];
+  const botNames = ids.map(id => state.botsById.get(id)?.display_name || id).join(' · ');
+  meta.textContent = `${ids.length} 个机器人 · ${d.round_count_debate ?? 0} 轮 · ${botNames}`;
 }
 
 // ── Provider brand avatars ──
@@ -2289,16 +2377,20 @@ function appendDebateMessage(m) {
     el.className = 'debate-msg clarify';
     el.textContent = m.content;
   } else {
-    const slug = m.sender_id || m.metadata?.slug || '';
-    const name = m.metadata?.display_name || slug;
+    const botId = m.sender_id || m.metadata?.bot_id || m.metadata?.slug || '';
+    const bot = state.botsById.get(botId);
+    const name = m.metadata?.display_name || bot?.display_name || botId;
+    // Use the bot's underlying model slug for the brand avatar so e.g. a
+    // bot named "deepseek-v4-pro" still gets the deepseek logo.
+    const modelSlug = bot?.config?.model || botId;
     el.className = 'debate-msg debater';
-    el.dataset.slug = slug;
+    el.dataset.botid = botId;
     // Collapse the avatar + name when the previous bubble is from the same speaker.
     const prev = root.lastElementChild;
-    if (prev && prev.classList.contains('debater') && prev.dataset.slug === slug) {
+    if (prev && prev.classList.contains('debater') && prev.dataset.botid === botId) {
       el.classList.add('same-speaker');
     }
-    const av = providerAvatarHTML(slug, name);
+    const av = providerAvatarHTML(modelSlug, name);
     const avatarAttr = av.mode === 'logo'
       ? 'class="debate-avatar has-logo"'
       : `class="debate-avatar" style="background:${av.bg}"`;
@@ -2339,7 +2431,7 @@ async function runDebateRoundClick() {
   setDebateBusy(true);
   setDebateStatus('议论中…');
   try {
-    await fetch(`/api/debate/round/${convId}`, {
+    await fetch(`/api/debate/conversations/${convId}/round`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ maxMessages: getDebateMaxMsgs() }),
@@ -2359,7 +2451,7 @@ async function pauseDebateRoundClick() {
   if (pause) pause.disabled = true;
   setDebateStatus('暂停中… 等当前这条说完');
   try {
-    await fetch(`/api/debate/pause/${convId}`, { method: 'POST' });
+    await fetch(`/api/debate/conversations/${convId}/pause`, { method: 'POST' });
   } catch (e) {
     setDebateStatus(`暂停失败：${e.message}`);
     if (pause) pause.disabled = false;
@@ -2376,7 +2468,7 @@ async function injectDebateClarification() {
   setDebateBusy(true);
   setDebateStatus('注入并开始下一轮…');
   try {
-    await fetch(`/api/debate/inject/${convId}`, {
+    await fetch(`/api/debate/conversations/${convId}/clarify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, autoRound: true, maxMessages: getDebateMaxMsgs() }),
@@ -2423,46 +2515,65 @@ async function openDebateModal(mode = 'create', existingDebate = null) {
     title.textContent = '改设置';
     submitBtn.textContent = '保存';
     topicEl.value = existingDebate.topic || '';
-    debateState.pickedModelSlugs = new Set(existingDebate.model_slugs || []);
+    debateState.pickedBotIds = new Set(existingDebate.bot_ids || []);
   } else {
     title.textContent = '新议论';
     submitBtn.textContent = '创建议论';
     topicEl.value = '';
-    debateState.pickedModelSlugs = new Set(DEFAULT_DEBATE_SLUGS);
+    debateState.pickedBotIds = new Set(getDefaultDebateBotIds());
   }
 
   const maxEl = document.getElementById('debate-modal-max-msgs');
   if (maxEl) maxEl.value = String(getDebateMaxMsgs());
 
-  renderDebateModalModels();
+  renderDebateModalBots();
   document.getElementById('debate-modal').style.display = 'flex';
 }
 
-// Mounts a multi-select model picker into the modal. Replaces the older
-// always-visible checkbox list with a searchable dropdown so the modal stays
-// short when the model library grows.
-function renderDebateModalModels() {
-  const host = document.getElementById('debate-modal-models-host');
+// Multi-select list of configured bots (state.bots). One row per bot with
+// a checkbox + display name + the underlying model slug. No search bar —
+// the bot list is small and curated.
+function renderDebateModalBots() {
+  const host = document.getElementById('debate-modal-bots-host');
   if (!host) return;
   host.innerHTML = '';
-  const picker = createModelPicker({
-    multi: true,
-    values: Array.from(debateState.pickedModelSlugs),
-    placeholder: '搜索并勾选要参与的模型 …',
-    onChange: (set) => {
-      debateState.pickedModelSlugs = new Set(set);
-    },
-  });
-  host.appendChild(picker);
+  const list = document.createElement('div');
+  list.className = 'debate-bot-picker';
+
+  if (state.bots.length === 0) {
+    list.innerHTML = `<div class="debate-bot-empty">还没配置机器人 — 在 config.yaml 里加几个再来</div>`;
+    host.appendChild(list);
+    return;
+  }
+
+  for (const b of state.bots) {
+    const row = document.createElement('label');
+    row.className = 'debate-bot-row';
+    const checked = debateState.pickedBotIds.has(b.id) ? 'checked' : '';
+    const model = b.config?.model || '';
+    row.innerHTML = `
+      <input type="checkbox" data-bot-id="${esc(b.id)}" ${checked}>
+      <span class="bot-avatar emoji" style="background:${botColor(b.id)}">${botEmoji(b.id)}</span>
+      <span class="debate-bot-name">${esc(b.display_name || b.id)}</span>
+      <span class="debate-bot-model">${esc(model)}</span>
+    `;
+    const cb = row.querySelector('input');
+    cb.addEventListener('change', () => {
+      if (cb.checked) debateState.pickedBotIds.add(b.id);
+      else debateState.pickedBotIds.delete(b.id);
+    });
+    list.appendChild(row);
+  }
+  host.appendChild(list);
 }
 
 // Legacy alias kept for any inline onclick attributes that still reference it.
 function closeDebateModal(e) { closeModal('debate-modal', e); }
 
 async function submitDebateModal() {
-  const slugs = Array.from(debateState.pickedModelSlugs);
-  if (slugs.length < 2) {
-    alert('至少勾两个模型');
+  const ids = Array.from(debateState.pickedBotIds);
+  if (ids.length < 2) {
+    alert('至少勾两个机器人');
     return;
   }
   const topic = document.getElementById('debate-modal-topic').value.trim();
@@ -2485,7 +2596,7 @@ async function submitDebateModal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         topic: topic || null,
-        modelSlugs: slugs,
+        botIds: ids,
       }),
     });
     const data = await res.json();
@@ -2559,7 +2670,7 @@ TAB_REGISTRY.debate = {
     if (msg.conversationId === state.currentConversationId && state.currentTab === 'debate') {
       appendDebateMessage({
         sender_type: kind === 'clarify' ? 'user' : 'debater',
-        sender_id: msg.metadata?.slug ?? '',
+        sender_id: msg.metadata?.bot_id ?? msg.metadata?.slug ?? '',
         content: msg.content,
         metadata: msg.metadata,
       });
@@ -2680,11 +2791,11 @@ function renderPortraitView() {
   });
 
   // Mount the per-generation model picker once; subsequent renders just reset
-  // it. Empty value means "use the system default for portrait" (resolved on
-  // the server via modelFor('portrait')).
+  // it. Empty value means "use this bot's default model" (resolved on the
+  // server via the bot's `model` field in config.yaml).
   ensureModelPicker(document.getElementById('portrait-model-host'), {
     value: portraitState.modelOverride || '',
-    placeholder: '默认（系统分配）',
+    placeholder: '默认（机器人模型）',
     allowCustomSlug: true,
     onChange: (slug) => { portraitState.modelOverride = slug || ''; },
   });
@@ -2972,14 +3083,13 @@ TAB_REGISTRY.portrait = {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-//  「你」 tab — basic info + AI picks + per-task model assignments
+//  「你」 tab — basic info + AI picks + skills
 // ──────────────────────────────────────────────────────────────────────────
 
 async function loadMeView() {
   await Promise.all([
     loadMyProfile(),
     loadMyPicks(),
-    loadMeAssignments(),
     loadMySkills(),
   ]);
 }
@@ -3203,7 +3313,7 @@ async function rotateShare(id) {
 }
 
 async function revokeKey(id, name) {
-  if (!confirm(`撤销 "${name}" 的钥匙? 持有者将立即无法访问。\n此操作不可撤销。`)) return;
+  if (!confirm(`撤销 "${name}" 的钥匙? 持有者将立即无法访问,所有聊天、画像、附件等数据也会一起清掉。\n此操作不可撤销。`)) return;
   try {
     const res = await fetch(`/api/keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -3227,56 +3337,6 @@ function copyToClipboard(elementId, btn) {
     document.execCommand('copy');
     if (btn) btn.textContent = '已复制';
   });
-}
-
-const ASSIGNMENT_LABELS = {
-  chat:       ['对话回复',     '消息 tab 的常规聊天回复'],
-  review:     ['会话内自审',   '消息 tab 的周期性回顾，会话中的自审'],
-  surfing:    ['冲浪',         '冲浪 tab 的 planner / curator'],
-  title:      ['标题生成',     '会话标题（cheap）'],
-  perception: ['广泛感知',     '任务阶段 / 跨会话焦点的轻量推断'],
-  portrait:   ['画像生成',     '画像 tab 的 5 种生成器'],
-};
-
-async function loadMeAssignments() {
-  const root = document.getElementById('me-assignments-list');
-  root.innerHTML = '<div class="me-section-status">加载中…</div>';
-  try {
-    const res = await fetch('/api/me/model-assignments');
-    const map = await res.json();
-    root.innerHTML = '';
-    for (const taskType of Object.keys(ASSIGNMENT_LABELS)) {
-      const [name, hint] = ASSIGNMENT_LABELS[taskType];
-      const row = document.createElement('div');
-      row.className = 'me-assignments-row';
-      const labelEl = document.createElement('div');
-      labelEl.innerHTML = `<label>${esc(name)}<span class="me-assignments-hint">${esc(hint)}</span></label>`;
-      const pickerHolder = document.createElement('div');
-      const picker = createModelPicker({
-        value: map[taskType] ?? '',
-        allowCustomSlug: true,
-        onChange: (slug) => saveAssignment(taskType, slug),
-      });
-      pickerHolder.appendChild(picker);
-      row.appendChild(labelEl);
-      row.appendChild(pickerHolder);
-      root.appendChild(row);
-    }
-  } catch (e) {
-    root.innerHTML = `<div class="me-section-status error">${esc(e.message)}</div>`;
-  }
-}
-
-async function saveAssignment(taskType, slug) {
-  try {
-    await fetch('/api/me/model-assignments', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [taskType]: slug }),
-    });
-  } catch (e) {
-    alert('保存失败：' + e.message);
-  }
 }
 
 async function loadMyProfile() {
@@ -3537,8 +3597,8 @@ async function createSkillFromForm() {
 
 const surfTabState = {
   current: null,            // hydrated surf conv (with run record)
-  modalSelectedSource: '',  // optional source message conv id
-  modalModelSlug: '',
+  modalSelectedBot: '',     // which bot does the surfing (required)
+  modalSelectedSource: '',  // optional source message conv id (must belong to selected bot)
 };
 
 async function loadSurfConversations() {
@@ -3760,15 +3820,12 @@ async function stopCurrentSurf() {
 // ── Surf modal (create new surf) ──
 
 async function openSurfModal() {
-  ensureModelPicker(document.getElementById('surf-modal-model-host'), {
-    value: '',
-    placeholder: '默认（系统的「冲浪」分配）',
-    allowCustomSlug: true,
-    onChange: (slug) => { surfTabState.modalModelSlug = slug || ''; },
-  });
   surfTabState.modalSelectedSource = '';
-  surfTabState.modalModelSlug = '';
   document.getElementById('surf-modal-budget').value = '10';
+
+  // Default bot: whatever is filtered in the sidebar, else the first configured.
+  surfTabState.modalSelectedBot =
+    state.botFilter || (state.bots[0]?.id ?? '');
 
   // Reset vector-direction controls each time the modal opens. Re-running
   // onSurfDirectionChange() after the radio reset keeps the manual-fields
@@ -3781,12 +3838,32 @@ async function openSurfModal() {
   document.getElementById('surf-modal-vector-fresh').value = '';
   onSurfDirectionChange();
 
-  // Load source candidates
-  const list = document.getElementById('surf-modal-source-list');
-  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
+  // Render bot picker; switching bot also reloads the source list (the chosen
+  // anchor must belong to the selected bot).
+  renderModalBotPicker(document.getElementById('surf-modal-bot-host'), {
+    selectedId: surfTabState.modalSelectedBot,
+    onPick: (botId) => {
+      surfTabState.modalSelectedBot = botId;
+      surfTabState.modalSelectedSource = '';
+      reloadSurfModalSources();
+    },
+  });
+
   document.getElementById('surf-modal').style.display = 'flex';
+  reloadSurfModalSources();
+}
+
+async function reloadSurfModalSources() {
+  const list = document.getElementById('surf-modal-source-list');
+  if (!list) return;
+  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
+  const botId = surfTabState.modalSelectedBot;
+  if (!botId) {
+    list.innerHTML = `<div class="modal-status-row">先选一个机器人</div>`;
+    return;
+  }
   try {
-    const res = await fetch(`/api/surf/sources`);
+    const res = await fetch(`/api/surf/sources?botId=${encodeURIComponent(botId)}`);
     const sources = await res.json();
     renderSourcePicker(list, sources, {
       withNoneRow: true,
@@ -3813,13 +3890,14 @@ function onSurfModeChange() {
 }
 
 async function submitSurfModal() {
+  if (!surfTabState.modalSelectedBot) { alert('请选一个机器人'); return; }
   const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
   const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
   const body = {
     autoStart: true,
+    botId: surfTabState.modalSelectedBot,
   };
   if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
-  if (surfTabState.modalModelSlug) body.modelSlug = surfTabState.modalModelSlug;
   if (budget) body.budget = budget;
 
   const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
@@ -3870,8 +3948,8 @@ TAB_REGISTRY.surf = {
 const reviewTabState = {
   current: null,
   sawUserMsg: false,        // toggles bubble style for bot messages
+  modalSelectedBot: '',
   modalSelectedSource: '',
-  modalModelSlug: '',
 };
 
 async function loadReviewConversations() {
@@ -4124,20 +4202,34 @@ async function rerunCurrentReview() {
 // ── Review modal ──
 
 async function openReviewModal() {
-  ensureModelPicker(document.getElementById('review-modal-model-host'), {
-    value: '',
-    placeholder: '默认（系统的「会话内自审」分配）',
-    allowCustomSlug: true,
-    onChange: (slug) => { reviewTabState.modalModelSlug = slug || ''; },
-  });
   reviewTabState.modalSelectedSource = '';
-  reviewTabState.modalModelSlug = '';
+  reviewTabState.modalSelectedBot =
+    state.botFilter || (state.bots[0]?.id ?? '');
 
-  const list = document.getElementById('review-modal-source-list');
-  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
+  renderModalBotPicker(document.getElementById('review-modal-bot-host'), {
+    selectedId: reviewTabState.modalSelectedBot,
+    onPick: (botId) => {
+      reviewTabState.modalSelectedBot = botId;
+      reviewTabState.modalSelectedSource = '';
+      reloadReviewModalSources();
+    },
+  });
+
   document.getElementById('review-modal').style.display = 'flex';
+  reloadReviewModalSources();
+}
+
+async function reloadReviewModalSources() {
+  const list = document.getElementById('review-modal-source-list');
+  if (!list) return;
+  list.innerHTML = '<div class="modal-status-row">加载中…</div>';
+  const botId = reviewTabState.modalSelectedBot;
+  if (!botId) {
+    list.innerHTML = `<div class="modal-status-row">先选一个机器人</div>`;
+    return;
+  }
   try {
-    const res = await fetch(`/api/review/sources`);
+    const res = await fetch(`/api/review/sources?botId=${encodeURIComponent(botId)}`);
     const sources = await res.json();
     renderSourcePicker(list, sources, {
       withNoneRow: true,
@@ -4153,9 +4245,12 @@ async function openReviewModal() {
 function closeReviewModal(e) { closeModal('review-modal', e); }
 
 async function submitReviewModal() {
-  const body = { autoStart: true };
+  if (!reviewTabState.modalSelectedBot) { alert('请选一个机器人'); return; }
+  const body = {
+    autoStart: true,
+    botId: reviewTabState.modalSelectedBot,
+  };
   if (reviewTabState.modalSelectedSource) body.sourceMessageConversationId = reviewTabState.modalSelectedSource;
-  if (reviewTabState.modalModelSlug) body.modelSlug = reviewTabState.modalModelSlug;
   try {
     const res = await fetch('/api/review/conversations', {
       method: 'POST',

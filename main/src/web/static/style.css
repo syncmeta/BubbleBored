@@ -206,65 +206,96 @@ body {
   color: var(--accent);
 }
 
-/* Bot filter strip */
+/* Bot filter — collapsed dropdown that lists configured bots. We used to
+   render every bot as a pill in a wrap row; with N>3 bots the strip ate
+   too much sidebar height. The trigger summarises the active filter and
+   the popover lists everything (incl. an "all bots" reset). */
 .bot-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 10px 14px 6px;
+  position: relative;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--border-light);
 }
 
-.bot-filter:empty { display: none; }
+.bot-filter:empty { display: none; padding: 0; border: none; }
 
-.pill {
-  display: inline-flex;
+.bot-dd-trigger {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 6px;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
   background: transparent;
   border: 1px solid var(--border);
-  color: var(--text-2);
-  border-radius: var(--r-full);
-  font-size: 11.5px;
+  color: var(--text-1);
+  border-radius: var(--r-md);
+  font-size: 12px;
   font-family: inherit;
   font-weight: 500;
   letter-spacing: -0.005em;
   cursor: pointer;
-  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
-  max-width: 100%;
-  min-width: 0;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+  text-align: left;
 }
 
-.pill:hover { background: var(--bg-hover); color: var(--text-1); }
-
-.pill.active {
-  background: var(--accent-bg);
+.bot-dd-trigger:hover { background: var(--bg-hover); }
+.bot-filter.open .bot-dd-trigger {
   border-color: var(--accent-muted);
+  background: var(--accent-bg);
   color: var(--accent);
 }
 
-.pill .bot-avatar {
-  width: 16px;
-  height: 16px;
-  font-size: 9.5px;
-  border-radius: 4px;
+.bot-dd-trigger .bot-avatar { width: 16px; height: 16px; font-size: 9.5px; border-radius: 4px; }
+.bot-dd-trigger .bot-dd-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-dd-trigger .bot-dd-count { font-size: 10px; color: var(--text-4); font-variant-numeric: tabular-nums; }
+.bot-dd-trigger .bot-dd-chevron { flex: 0 0 auto; color: var(--text-3); transition: transform var(--fast) var(--ease); }
+.bot-filter.open .bot-dd-chevron { transform: rotate(180deg); }
+
+.bot-dd-popover {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 14px;
+  right: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px;
+  box-shadow: var(--shadow-md);
+  z-index: 12;
+  max-height: 320px;
+  overflow-y: auto;
+  display: none;
+  animation: pickerIn 140ms var(--ease) both;
+}
+.bot-filter.open .bot-dd-popover { display: block; }
+
+.bot-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  text-align: left;
 }
 
-.pill-label {
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.bot-dd-item:hover { background: var(--bg-hover); }
+.bot-dd-item.active { background: var(--accent-bg); color: var(--accent); }
 
-.pill-count {
+.bot-dd-item .bot-avatar { width: 16px; height: 16px; font-size: 9.5px; border-radius: 4px; }
+.bot-dd-item .bot-dd-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-dd-item .bot-dd-count {
   font-size: 10px;
   color: var(--text-4);
   font-variant-numeric: tabular-nums;
 }
-
-.pill.active .pill-count { color: var(--accent); }
+.bot-dd-item.active .bot-dd-count { color: var(--accent); }
 
 .bot-picker {
   position: absolute;
@@ -314,6 +345,18 @@ body {
   color: white;
   flex-shrink: 0;
   letter-spacing: 0;
+}
+
+/* Emoji avatars override the letter-glyph styling: bigger glyph, system
+   emoji font, no chip background — the emoji itself carries the identity. */
+.bot-avatar.emoji {
+  background: transparent !important;
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1;
+  color: inherit;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+               "Twemoji Mozilla", "EmojiOne Color", sans-serif;
 }
 
 /* Conversation list */
@@ -917,6 +960,43 @@ main {
   font-size: 12px; color: var(--accent); cursor: pointer;
 }
 .modal-link:hover { text-decoration: underline; }
+
+/* ── Debate bot picker (议论 modal) ── */
+.debate-bot-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.debate-bot-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+.debate-bot-row:hover { background: var(--bg-hover); }
+.debate-bot-row input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+.debate-bot-row .bot-avatar { width: 18px; height: 18px; font-size: 10.5px; }
+.debate-bot-name { flex: 1 1 auto; font-weight: 500; }
+.debate-bot-model {
+  font-size: 11px;
+  color: var(--text-4);
+  font-family: var(--mono, monospace);
+}
+.debate-bot-empty {
+  padding: 18px 8px;
+  color: var(--text-4);
+  font-size: 12px;
+  text-align: center;
+}
 
 .btn-primary {
   padding: 8px 16px;
@@ -1643,6 +1723,31 @@ main {
 .source-list-row.selected .sl-title { color: var(--accent); font-weight: 500; }
 .source-list-row .sl-title { flex: 1; font-size: 13px; color: var(--text-1); }
 .source-list-row .sl-meta { font-size: 11px; color: var(--text-4); }
+
+/* Bot picker (modal) — horizontal pill row, single-select. */
+.bot-pick-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.bot-pick-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bot-pick-pill:hover { background: var(--bg-hover); }
+.bot-pick-pill.selected {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+.bot-pick-pill .bot-avatar {
+  width: 18px; height: 18px; font-size: 10px;
+}
 
 .surf-direction { display: flex; flex-direction: column; gap: 6px; }
 .surf-dir-row {

@@ -178,9 +178,9 @@
             <button class="modal-close" onclick="closeModal('surf-modal')" aria-label="关闭">×</button>
           </div>
           <div class="modal-body">
-            <label class="modal-label">用模型</label>
-            <div id="surf-modal-model-host"></div>
-            <label class="modal-label">基于哪个消息会话？（可空 — 自由冲浪）</label>
+            <label class="modal-label">让哪个机器人去冲浪？</label>
+            <div id="surf-modal-bot-host" class="bot-pick-row"></div>
+            <label class="modal-label" id="surf-modal-source-label">基于该机器人哪次会话？（可空 — 自由冲浪）</label>
             <div id="surf-modal-source-list" class="source-list"></div>
             <label class="modal-label">预算（搜索 + 阅读次数上限）</label>
             <input type="text" id="surf-modal-budget" placeholder="10">
@@ -259,9 +259,9 @@
             <button class="modal-close" onclick="closeModal('review-modal')" aria-label="关闭">×</button>
           </div>
           <div class="modal-body">
-            <label class="modal-label">用模型</label>
-            <div id="review-modal-model-host"></div>
-            <label class="modal-label">基于哪个消息会话？（可空 — 自由回顾）</label>
+            <label class="modal-label">和哪个机器人一起回顾？</label>
+            <div id="review-modal-bot-host" class="bot-pick-row"></div>
+            <label class="modal-label" id="review-modal-source-label">基于该机器人哪次会话？（可空 — 自由回顾）</label>
             <div id="review-modal-source-list" class="source-list"></div>
           </div>
           <div class="modal-foot">
@@ -378,9 +378,9 @@
           <div class="modal-body">
             <label class="modal-label">议题（可空，默认对最近聊天的整体观感）</label>
             <textarea id="debate-modal-topic" rows="2" placeholder="比如：这个产品立意"></textarea>
-            <label class="modal-label">参与模型（至少 2 个）</label>
-            <div id="debate-modal-models-host"></div>
-            <a class="modal-link" onclick="switchTab('me')">管理模型库 →</a>
+            <label class="modal-label">参与机器人（至少 2 个）</label>
+            <div id="debate-modal-bots-host"></div>
+            <div class="modal-hint">机器人和它绑定的模型在 <code>config.yaml</code> 里维护;同模型不同 promptFile 就是不同人格。</div>
             <label class="modal-label">每轮最多消息数</label>
             <input type="number" id="debate-modal-max-msgs" min="1" max="200" step="1" />
             <div class="modal-hint">每点一次「下一轮」，随机挑模型一句话一句话地发，最多发这么多条。</div>
@@ -426,11 +426,6 @@
                 <button class="btn-soft" onclick="createSkillFromForm()">创建</button>
               </div>
             </details>
-          </section>
-
-          <section class="me-section" id="me-assignments">
-            <h3>系统模型分配 <span class="me-section-hint">每种任务用哪个模型；下拉框直接搜索 OpenRouter 全表</span></h3>
-            <div id="me-assignments-list" class="me-assignments-list"></div>
           </section>
 
           <section class="me-section">
@@ -540,7 +535,7 @@
 
           <!-- 回顾：触发一次回顾。结论会进 回顾 tab 的会话，并补到本聊天里（如果有需要）。 -->
           <div class="chat-action-group">
-            <button id="review-btn" class="chat-action" onclick="triggerReviewForCurrent()" title="让 Bot 自审一次（会进入「回顾」tab 的新会话）">
+            <button id="review-btn" class="chat-action" onclick="triggerReviewForCurrent()" title="让机器人自审一次（会进入「回顾」tab 的新会话）">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="11" r="7"/>
                 <path d="M21 21l-4.3-4.3"/>
