@@ -133,7 +133,11 @@ connectRoutes.get('/i/:token', (c) => {
   }
 
   const inv = findInviteByToken(token);
-  if (inv && !inv.redeemed_at && (!inv.expires_at || inv.expires_at >= Math.floor(Date.now() / 1000))) {
+  // Bootstrap invites stay reusable — ignore redeemed_at for that namespace.
+  const inviteUsable = inv
+    && (!inv.redeemed_at || inv.id.startsWith('bootstrap_'))
+    && (!inv.expires_at || inv.expires_at >= Math.floor(Date.now() / 1000));
+  if (inviteUsable) {
     // Bounce to the SPA so the existing app shell can render the redeem
     // form; cookie isn't set yet, so the SPA's /api/me probe will 401 and
     // the login screen takes over with the token pre-filled in the URL.

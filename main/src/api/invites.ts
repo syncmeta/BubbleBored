@@ -30,6 +30,14 @@ export const invitesRoutes = new Hono();
 
 const KEY_PREFIX_DISPLAY_LEN = 12;
 
+// Bootstrap invites are minted at startup when no admin exists. They keep
+// working forever so a self-host operator who loses the URL or wipes the
+// browser can re-claim admin access on a fresh device. Detected by id
+// prefix (set in index.ts).
+function isBootstrapInvite(inv: { id: string }): boolean {
+  return inv.id.startsWith('bootstrap_');
+}
+
 function generateInviteToken(): string {
   // 24-byte random → 32-char URL-safe string. Plenty of entropy for an
   // unguessable URL token; same shape as share tokens elsewhere.
@@ -104,15 +112,16 @@ invitesRoutes.post('/redeem', async (c) => {
 
   const inv = findInviteByToken(token);
   if (!inv) return c.json({ error: 'invalid token' }, 410);
-  if (inv.redeemed_at) return c.json({ error: 'invite already used' }, 410);
+  const bootstrap = isBootstrapInvite(inv);
+  if (inv.redeemed_at && !bootstrap) return c.json({ error: 'invite already used' }, 410);
   if (inv.expires_at && inv.expires_at < Math.floor(Date.now() / 1000)) {
     return c.json({ error: 'invite expired' }, 410);
   }
 
-  // Bootstrap: first user to redeem when no admin exists becomes admin.
-  // Distinguishes the "self-host startup invite" from later "admin invited
-  // a friend" invites without a separate flag on the row.
-  const isAdmin = countAdmins() === 0;
+  // Bootstrap invites always mint admins (they're the recovery hatch for the
+  // self-host operator). Other invites only flip is_admin when there's no
+  // admin yet — historic safety net that a regular invite never trips today.
+  const isAdmin = bootstrap || countAdmins() === 0;
 
   const userId = randomUUID();
   const externalId = randomUUID();
@@ -132,7 +141,8 @@ invitesRoutes.post('/redeem', async (c) => {
     createdBy: null,
   });
 
-  markInviteRedeemed(inv.id, userId);
+  // Bootstrap invites stay reusable — don't burn the row.
+  if (!bootstrap) markInviteRedeemed(inv.id, userId);
   setSessionCookie(c, rawKey);
 
   return c.json({
@@ -151,7 +161,7 @@ invitesRoutes.post('/redeem', async (c) => {
 invitesRoutes.get('/check/:token', (c) => {
   const inv = findInviteByToken(c.req.param('token'));
   if (!inv) return c.json({ error: 'unknown' }, 404);
-  if (inv.redeemed_at) return c.json({ error: 'used' }, 410);
+  if (inv.redeemed_at && !isBootstrapInvite(inv)) return c.json({ error: 'used' }, 410);
   if (inv.expires_at && inv.expires_at < Math.floor(Date.now() / 1000)) {
     return c.json({ error: 'expired' }, 410);
   }
