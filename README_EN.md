@@ -21,15 +21,16 @@ I want it to help people live better — by giving solid advice, pointing out bl
 
 ## Prerequisites
 
-Requires [Bun](https://bun.sh) runtime.
+Requires [Bun](https://bun.sh) runtime. The backend lives under `main/` — all `bun` commands are run there.
 
 ```bash
+cd main
 bun install
 ```
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in:
+Inside `main/`, copy `.env.example` to `.env` and fill in:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -43,6 +44,7 @@ Copy `.env.example` to `.env` and fill in:
 ## Run
 
 ```bash
+cd main
 bun run dev          # Development (auto-restart on file changes)
 bun run start        # Production
 ```
@@ -51,7 +53,7 @@ Open `http://localhost:3456`.
 
 ## Configure Bots
 
-Edit `config.yaml`:
+Edit `main/config.yaml`:
 
 ```yaml
 server:
@@ -91,31 +93,39 @@ bots:
       autoTrigger: true
 ```
 
-You can define multiple bots, each with its own personality and config. More knobs (`timerMs`, `maxSearchRequests`, `initialIntervalSec`, `maxIntervalSec`, `idleStopSec`, `maxRequests`, `maxWaitMs`, …) live in [`src/config/schema.ts`](src/config/schema.ts).
+You can define multiple bots, each with its own personality and config. More knobs (`timerMs`, `maxSearchRequests`, `initialIntervalSec`, `maxIntervalSec`, `idleStopSec`, `maxRequests`, `maxWaitMs`, `serendipityEveryN`, `dedupWindowDays`, …) live in [`main/src/config/schema.ts`](main/src/config/schema.ts).
 
 ## Write a Personality
 
-Create a `.md` file in `prompts/bots/`. Write whatever you want the bot to be. No fixed format.
+Create a `.md` file in `main/prompts/bots/`. Write whatever you want the bot to be. No fixed format. The repo ships with `default.md` as an example and fallback.
 
-System-level rules live in `prompts/system.md` — usually no need to touch it.
+System-level rules live in `main/prompts/system.md` (WeChat-style chat) and `main/prompts/system-normal.md` (standard AI-assistant style); the front-end tone toggle picks which one is used. Usually no need to touch them.
 
 All prompts are hot-reloaded — changes take effect immediately, no restart needed.
 
 ```
-prompts/
-├── system.md              # Core rules (usually leave alone)
+main/prompts/
+├── system.md              # Core rules: WeChat-style (default)
+├── system-normal.md       # Core rules: standard AI style
 ├── bots/
-│   └── my_bot.md          # Your bot's personality
-├── debounce-judge.md      # Debounce judge
+│   └── default.md         # Bot personality (bundled example, add your own)
 ├── review.md              # Action prompt for self-review
 ├── review-eval.md         # Filters the search results the review pulls
+├── review-followup.md     # Follow-up after a review
 ├── surfing.md             # Surfing controller
-├── surfing-wanderer.md    # Wanders the web following curiosity
+├── surfing-wanderer.md    # Wanderer: follows curiosity broadly
+├── surfing-digger.md      # Digger: drills down on a single topic
 ├── surfing-curator.md     # Curates the wanderer's haul into what's worth sharing
+├── surfing-synthesizer.md # Synthesises multi-source material into a narrative
+├── surfing-mode-fresh.md  # Surfing mode: latest-news bias
+├── surfing-mode-depth.md  # Surfing mode: deep-dive bias
+├── surfing-mode-granular.md # Surfing mode: fine-grained fact gathering
+├── debate.md              # Multi-bot debate
+├── portrait/              # User portrait generation
 └── title.md               # Generates conversation titles
 ```
 
-Surfing runs in two stages: the wanderer casts a wide net following its own curiosity, then the curator picks what's actually worth bringing back to you. Their personalities are tuned independently in their respective prompts.
+Surfing now defaults to vector-based deep-digging (`digger`); a `serendipity` slot still burns the legacy "wanderer + curator" path at low frequency to keep cross-domain surprise alive (controlled by `serendipityEveryN`).
 
 ## Usage
 
@@ -131,11 +141,7 @@ If `autoTrigger` is enabled in config, it surfs on its own schedule — no manua
 
 ### Clear Conversation
 
-```bash
-curl -X POST http://localhost:3456/api/conversations/reset \
-  -H "Content-Type: application/json" \
-  -d '{"userId":"your_userId","botId":"bot_id"}'
-```
+Use the "Clear current conversation" item in the conversation header menu in the web UI (it calls `POST /api/conversations/reset` behind the cookie session). The iOS app has the same button under the conversation settings.
 
 ### Token Usage
 
@@ -245,25 +251,40 @@ Feishu event callbacks require a public URL. For local dev, use [ngrok](https://
 
 ## iOS App
 
-The repo ships with a native iOS app at `ios/BubbleBored/`.
+The repo ships with a native SwiftUI app at `ios/PendingBot/`. Six tabs: Messages / Debate / Surf / Review / Portrait / You.
 
-Unlike Telegram / Feishu, iOS does **not** need per-bot config — a single app talks to every bot on the server. It uses a dedicated `/api/mobile/*` REST surface plus a `/ws/mobile` WebSocket. The userId is generated client-side and stored in `UserDefaults`; the server auto-creates the user on the first request.
+Unlike Telegram / Feishu, iOS does **not** need per-bot config — a single API key ("钥匙") gives the app access to every bot on the server. It uses a dedicated `/api/mobile/*` REST surface plus a `/ws/mobile` WebSocket, all authed with `Authorization: Bearer <api_key>`. The key is stored encrypted in the iOS Keychain.
 
 Steps:
 
-1. Open `ios/BubbleBored/BubbleBored.xcodeproj` in Xcode and build to a device or simulator.
+1. Generate the Xcode project (the project is managed with [xcodegen](https://github.com/yonaskolb/XcodeGen)):
 
-2. Start the backend (`bun run dev` or `bun run start`).
+   ```bash
+   brew install xcodegen
+   cd ios
+   xcodegen generate
+   open PendingBot.xcodeproj
+   ```
 
-3. In the app's Settings, set **Server URL** to the backend, for example:
+   First time you open Xcode, pick your Apple Developer Team under **Signing & Capabilities**.
 
-   - Simulator to local host: `http://127.0.0.1:3456`
-   - Device to Mac on the same LAN: `http://192.168.x.x:3456`
-   - Public deployment: `https://your-domain.com`
+2. Start the backend (`cd main && bun run dev` or `bun run start`).
 
-4. Back in the chat screen, pick a bot and start talking. `/surf` works the same way to trigger surfing manually.
+3. In the web UI, open the **钥匙 (Keys)** tab and create a new key. You get a full key string, a share link, and a QR code.
 
-The iOS userId is independent from the web — the same person sees two separate conversation histories on iOS vs. the web UI.
+4. In Xcode pick a simulator or device, ⌘R to run. On first launch, import a server one of three ways:
+
+   - **Paste a share link** — copy the URL from the web panel; fields auto-prefill
+   - **Scan the QR code** — recommended on a physical device
+   - **Manual entry** — Server URL (e.g. `http://192.168.x.x:3456`) + key
+
+5. Back on the Messages tab, pick a bot and start talking. `/surf` works the same way to trigger surfing manually.
+
+Each iOS key maps to its own server-side user — the same person sees two separate histories on iOS vs. the web UI, unless they share the same key.
+
+> If you want share links to use a public domain (instead of an auto-detected LAN IP), set `server.publicURL` in `main/config.yaml`.
+
+For more iOS detail (multi-account, Universal Links, current state of APNs, etc.), see [ios/README.md](ios/README.md).
 
 ## Skills
 

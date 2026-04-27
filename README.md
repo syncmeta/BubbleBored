@@ -23,15 +23,16 @@
 
 ## 准备
 
-需要 [Bun](https://bun.sh) 运行时。
+需要 [Bun](https://bun.sh) 运行时。后端代码在 `main/` 子目录下，所有 `bun` 命令都在那里跑。
 
 ```bash
+cd main
 bun install
 ```
 
 ## 环境变量
 
-复制 `.env.example` 为 `.env`，填入以下内容：
+在 `main/` 下复制 `.env.example` 为 `.env`，填入以下内容：
 
 | 变量 | 必填 | 说明 |
 |------|------|------|
@@ -45,6 +46,7 @@ bun install
 ## 启动
 
 ```bash
+cd main
 bun run dev          # 开发模式（文件变动自动重启）
 bun run start        # 生产模式
 ```
@@ -53,7 +55,7 @@ bun run start        # 生产模式
 
 ## 配置 Bot
 
-编辑 `config.yaml`：
+编辑 `main/config.yaml`：
 
 ```yaml
 server:
@@ -93,31 +95,39 @@ bots:
       autoTrigger: true
 ```
 
-可以定义多个 Bot，各有各的性格和配置。更多可调参数（`timerMs`、`maxSearchRequests`、`initialIntervalSec`、`maxIntervalSec`、`idleStopSec`、`maxRequests`、`maxWaitMs` 等）见 [`src/config/schema.ts`](src/config/schema.ts)。
+可以定义多个 Bot，各有各的性格和配置。更多可调参数（`timerMs`、`maxSearchRequests`、`initialIntervalSec`、`maxIntervalSec`、`idleStopSec`、`maxRequests`、`maxWaitMs`、`serendipityEveryN`、`dedupWindowDays` 等）见 [`main/src/config/schema.ts`](main/src/config/schema.ts)。
 
 ## 编写性格
 
-在 `prompts/bots/` 下创建 `.md` 文件，写你想让 Bot 成为什么样的存在。没有固定格式，随便写。
+在 `main/prompts/bots/` 下创建 `.md` 文件，写你想让 Bot 成为什么样的存在。没有固定格式，随便写。仓库自带 `default.md` 作为示例与兜底。
 
-系统级的规则在 `prompts/system.md`，通常不需要改。
+系统级的规则在 `main/prompts/system.md`（微信风格的对话）和 `main/prompts/system-normal.md`（标准 AI 助手风格），由前端的 tone 开关切换，通常不需要改。
 
 所有提示词支持热重载 — 改完直接生效，不用重启。
 
 ```
-prompts/
-├── system.md              # 核心规则（通常不用动）
+main/prompts/
+├── system.md              # 核心规则：微信风格（默认）
+├── system-normal.md       # 核心规则：标准 AI 风格
 ├── bots/
-│   └── my_bot.md          # 你的 Bot 性格
-├── debounce-judge.md      # 防抖判断
+│   └── default.md         # Bot 性格（自带示例，可新增）
 ├── review.md              # 自我反思的行动提示
 ├── review-eval.md         # 反思后对搜索结果的筛选
+├── review-followup.md     # 反思后的跟进
 ├── surfing.md             # 冲浪总控
-├── surfing-wanderer.md    # 先广撒网，跟着好奇心乱逛
-├── surfing-curator.md     # 再从漫游结果里筛出真正有价值的
+├── surfing-wanderer.md    # 漫游：跟着好奇心乱逛
+├── surfing-digger.md      # 深挖：围绕一个话题往下钻
+├── surfing-curator.md     # 从漫游结果里筛出真正有价值的
+├── surfing-synthesizer.md # 把多源材料综合成一段叙述
+├── surfing-mode-fresh.md  # 冲浪模式：抓最新动态
+├── surfing-mode-depth.md  # 冲浪模式：深度挖掘
+├── surfing-mode-granular.md # 冲浪模式：颗粒度细的事实抓取
+├── debate.md              # 多 Bot 议论
+├── portrait/              # 用户画像生成
 └── title.md               # 为对话生成标题
 ```
 
-冲浪拆成两步：wanderer 负责"乱逛"，尽量多地收集线索；curator 再从中挑出适合回给你的东西。两者的性格在对应 prompt 里独立调。
+冲浪默认走基于向量的深挖（digger），低频会烧一格"漫游 + curator"的 serendipity 槽位保留跨域惊喜（频率由 `serendipityEveryN` 控制）。
 
 ## 使用
 
@@ -133,11 +143,7 @@ prompts/
 
 ### 清空对话
 
-```bash
-curl -X POST http://localhost:3456/api/conversations/reset \
-  -H "Content-Type: application/json" \
-  -d '{"userId":"你的userId","botId":"bot_id"}'
-```
+在网页对话标题栏的菜单里直接「清空当前对话」即可（背后调的是 `POST /api/conversations/reset`，需要登录态）。iOS 端在对话设置里也有同样的按钮。
 
 ### Token 用量
 
@@ -247,25 +253,40 @@ bots:
 
 ## 接入 iOS
 
-仓库里附带一个原生 iOS app，位于 `ios/BubbleBored/`。
+仓库里附带一个原生 SwiftUI app，位于 `ios/PendingBot/`。覆盖六个 tab：消息 / 议论 / 冲浪 / 回顾 / 画像 / 你。
 
-和 Telegram / 飞书不同，iOS 不需要 per-bot 配置——一个 app 就能访问服务上所有的 Bot。它走的是独立的 `/api/mobile/*` REST 接口和 `/ws/mobile` WebSocket，userId 由客户端生成后存在 `UserDefaults` 里，首次请求时服务端自动建用户。
+和 Telegram / 飞书不同，iOS 不需要 per-bot 配置——一把「钥匙」（API key）就能访问服务上所有的 Bot。走的是独立的 `/api/mobile/*` REST 接口和 `/ws/mobile` WebSocket，全部用 `Authorization: Bearer <api_key>` 鉴权，key 加密存在 Keychain。
 
 接入步骤：
 
-1. 用 Xcode 打开 `ios/BubbleBored/BubbleBored.xcodeproj`，编译到设备或模拟器。
+1. 生成 Xcode 工程（项目用 [xcodegen](https://github.com/yonaskolb/XcodeGen) 管理）：
 
-2. 启动后端（`bun run dev` 或 `bun run start`）。
+   ```bash
+   brew install xcodegen
+   cd ios
+   xcodegen generate
+   open PendingBot.xcodeproj
+   ```
 
-3. 在 app 内进入「设置」，把 **Server URL** 填成后端地址，比如：
+   第一次打开 Xcode 时，在 **Signing & Capabilities** 选你的 Apple Developer Team。
 
-   - 模拟器连本机：`http://127.0.0.1:3456`
-   - 真机连同一局域网的 Mac：`http://192.168.x.x:3456`
-   - 公网部署：`https://your-domain.com`
+2. 启动后端（`cd main && bun run dev` 或 `bun run start`）。
 
-4. 回到聊天页挑一个 Bot 开始聊。发 `/surf` 同样可以手动触发冲浪。
+3. 在网页端进入「钥匙」tab，新建一把 key。可以拿到一个完整的 key 字符串、一个分享链接、一个二维码。
 
-app 内的 userId 与网页端独立——同一个人在 iOS 和网页上看到的是两份对话。
+4. Xcode 选模拟器或真机 ⌘R 运行。首次启动时三选一导入服务：
+
+   - **粘贴分享链接**——直接把 web 上的 URL 贴进来，字段自动预填
+   - **扫描二维码**——真机推荐
+   - **手动输入**——服务器 URL（如 `http://192.168.x.x:3456`）+ key
+
+5. 回到「消息」tab 挑一个 Bot 开始聊。发 `/surf` 同样可以手动触发冲浪。
+
+iOS 上每把 key 对应服务端的一个独立用户——同一个人在 iOS 和网页上看到的是两份对话，除非分享同一把 key。
+
+> 想让分享链接走公网（而不是本机检测到的 LAN IP），在 `main/config.yaml` 的 `server.publicURL` 填上你的域名。
+
+iOS 端的更多细节（多账号、Universal Link、APNs 现状等）见 [ios/README.md](ios/README.md)。
 
 ## 技能（Skills）
 
