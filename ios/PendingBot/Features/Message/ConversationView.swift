@@ -90,6 +90,7 @@ struct ConversationView: View {
                                         Task { await deleteMessage(msg) }
                                     } label: { Label("删除", systemImage: "trash") }
                                 }
+                                .transition(.blurReplace)
                         }
 
                         if !searchLog.isEmpty {
@@ -217,13 +218,15 @@ struct ConversationView: View {
                     attachments: messages[idx].attachments
                 )
             } else {
-                messages.append(ChatMessage(
-                    id: id, conversation_id: conversation.id,
-                    sender_type: "bot", sender_id: event.senderId ?? "",
-                    content: content,
-                    created_at: Int(Date().timeIntervalSince1970),
-                    attachments: nil
-                ))
+                withAnimation(.easeOut(duration: 0.28)) {
+                    messages.append(ChatMessage(
+                        id: id, conversation_id: conversation.id,
+                        sender_type: "bot", sender_id: event.senderId ?? "",
+                        content: content,
+                        created_at: Int(Date().timeIntervalSince1970),
+                        attachments: nil
+                    ))
+                }
                 Haptics.receive()
             }
             onChange()
