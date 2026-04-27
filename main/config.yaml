@@ -30,35 +30,37 @@ defaults:
     enabled: true
     maxWaitMs: 15000
 
-# 预设机器人 — 名字直接对齐它们用的默认模型,「议论」里也是这套机器人在吵。
-# 每个机器人可以绑自己的 Telegram / 飞书账号(不填则仅网页可用);
-# 想要同模型不同人格,新增一个 key 改 promptFile 即可。
+# 预设机器人 — 名字用 01/02/03… 这种短编号。它们用的模型在 UI
+# 里以标签形式接在编号后面(见 Bot.nameWithModel,例如 「01 · glm-5.1」)。
+# 「议论」里也是这套机器人在吵。每个机器人可以绑自己的 Telegram /
+# 飞书账号(不填则仅网页可用);想要同模型不同人格,新增一个 key
+# 改 promptFile 即可。
 bots:
   "glm-5.1":
-    displayName: "bot-glm-5.1"
+    displayName: "01"
     promptFile: "default.md"
     model: "z-ai/glm-5.1"
   "glm-4.5-air":
-    displayName: "bot-glm-4.5-air"
+    displayName: "02"
     promptFile: "default.md"
     model: "z-ai/glm-4.5-air:free"
   "deepseek-v4-flash":
-    displayName: "bot-deepseek-v4-flash"
+    displayName: "03"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-flash"
   "deepseek-v4-pro":
-    displayName: "bot-deepseek-v4-pro"
+    displayName: "04"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-pro"
   "minimax-m2.7":
-    displayName: "bot-minimax-m2.7"
+    displayName: "05"
     promptFile: "default.md"
     model: "minimax/minimax-m2.7"
   "hy3-preview":
-    displayName: "bot-hy3-preview"
+    displayName: "06"
     promptFile: "default.md"
     model: "tencent/hy3-preview:free"
   "gemini-3.1-flash-lite":
-    displayName: "bot-gemini-3.1-flash-lite"
+    displayName: "07"
     promptFile: "default.md"
     model: "google/gemini-3.1-flash-lite-preview"

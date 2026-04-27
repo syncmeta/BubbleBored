@@ -142,11 +142,13 @@ private struct ConversationListRow: View {
     let bot: Bot?
     let isUnread: Bool
 
-    private var botName: String {
-        // Prefer the live bot record so the model tag stays in sync with config;
-        // fall back to the joined bot_name if we don't have the bot loaded yet.
-        bot?.nameWithModel ?? conv.bot_name ?? conv.bot_id
+    // Bot name + a separate, quieter tag for the model. Falls back to the
+    // joined `bot_name` from the conversation row if we haven't loaded the
+    // live bot record yet.
+    private var primaryName: String {
+        bot?.display_name ?? conv.bot_name ?? conv.bot_id
     }
+    private var modelTag: String? { bot?.modelTag }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -179,14 +181,26 @@ private struct ConversationListRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
-                    Text(botName)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Theme.Palette.accentBg))
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    HStack(spacing: 4) {
+                        Text(primaryName)
+                            .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.Palette.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Theme.Palette.accentBg))
+                            .lineLimit(1)
+                        if let tag = modelTag {
+                            Text(tag)
+                                .font(Theme.Fonts.rounded(size: 10, weight: .medium))
+                                .foregroundStyle(Theme.Palette.inkMuted)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Theme.Palette.surfaceMuted))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .layoutPriority(1)
                 }
             }
         }
