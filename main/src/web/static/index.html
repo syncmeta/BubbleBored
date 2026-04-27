@@ -522,6 +522,9 @@
             </svg>
           </button>
 
+          <!-- 语气：在「微信聊天」和「普通AI」之间切换 -->
+          <button id="tone-btn" class="chat-action chat-action-text" onclick="toggleChatTone()" title="切换语气：微信聊天 / 普通AI"></button>
+
           <!-- 冲浪：触发一次冲浪。结果会进 冲浪 tab 的会话，并把最终消息也回到本聊天里。 -->
           <div class="chat-action-group">
             <button id="surf-btn" class="chat-action" onclick="triggerSurfForCurrent()" title="开一段冲浪（会进入「冲浪」tab 的新会话）">
@@ -558,6 +561,7 @@
         </div>
         <div id="input-area">
           <div class="input-outer">
+            <div id="no-vision-tip" class="no-vision-tip" style="display:none" aria-live="polite"></div>
             <div id="attachment-tray" class="attachment-tray" aria-live="polite"></div>
             <div class="input-wrap">
               <input id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none">

@@ -1763,6 +1763,44 @@ main {
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 
+/* Capability badges (vision / tools / reasoning / audio / file). */
+.mp-caps {
+  display: inline-flex; flex-wrap: wrap; gap: 4px;
+}
+.mp-cap {
+  display: inline-block;
+  font-size: 10px; line-height: 1.4;
+  padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft); color: var(--text-3);
+  white-space: nowrap;
+}
+.mp-cap-vision {
+  border-color: rgba(64, 132, 240, 0.45);
+  background: rgba(64, 132, 240, 0.10);
+  color: #1c5fc7;
+}
+.mp-cap-tools {
+  border-color: rgba(120, 80, 200, 0.40);
+  background: rgba(120, 80, 200, 0.10);
+  color: #6a3fb0;
+}
+.mp-cap-reason {
+  border-color: rgba(216, 142, 36, 0.45);
+  background: rgba(216, 142, 36, 0.10);
+  color: #a96a17;
+}
+.mp-cap-audio {
+  border-color: rgba(36, 158, 132, 0.45);
+  background: rgba(36, 158, 132, 0.10);
+  color: #138066;
+}
+.mp-cap-file {
+  border-color: rgba(140, 140, 140, 0.45);
+  background: rgba(140, 140, 140, 0.12);
+  color: #555;
+}
+
 /* Model picker (toggleable list of provider_models) */
 .model-picker {
   display: flex; flex-direction: column;
@@ -1886,6 +1924,20 @@ main {
 .chat-action.danger:hover {
   background: color-mix(in oklch, var(--color-danger) 10%, transparent);
   color: var(--color-danger);
+}
+
+/* Text-label variant of .chat-action — currently used by the tone toggle.
+   Wider auto-size to fit two-character labels (微信 / 普通) without cramping. */
+.chat-action.chat-action-text {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.chat-action.chat-action-text.tone-normal {
+  color: var(--accent, var(--text-1));
 }
 
 /* Paired action + panel-jump anchor (surf / review). The primary button
@@ -2381,6 +2433,27 @@ tr:hover td { background: var(--bg-subtle); }
 }
 .attach-btn:hover { background: var(--border-light); color: var(--text-1); }
 .attach-btn:active { transform: scale(0.92); }
+.attach-btn.disabled,
+.attach-btn:disabled {
+  color: var(--text-4);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.attach-btn.disabled:hover,
+.attach-btn:disabled:hover { background: none; color: var(--text-4); }
+.attach-btn.disabled:active,
+.attach-btn:disabled:active { transform: none; }
+
+/* Banner shown above the composer when the bot's model can't see images. */
+.no-vision-tip {
+  margin: 0 4px 8px;
+  padding: 7px 10px;
+  font-size: 12px; line-height: 1.5;
+  color: var(--text-2);
+  background: var(--bg-soft);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
 
 .attachment-tray {
   display: flex;

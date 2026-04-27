@@ -53,6 +53,9 @@ const state = {
   currentConversationId: null,
   currentTab: localStorage.getItem('bb_currentTab') || 'message',
   botFilter: localStorage.getItem('bb_botFilter') || '',  // '' = all bots
+  // Chat tone — 'wechat' (multi-bubble, casual) or 'normal' (single-message AI).
+  // Default to 'wechat' to preserve existing behaviour.
+  chatTone: localStorage.getItem('bb_chatTone') === 'normal' ? 'normal' : 'wechat',
   ws: null,
   reconnectTimer: null,
   reconnectDelay: 1000,
@@ -60,6 +63,9 @@ const state = {
   // Each entry: { clientId, file, previewUrl, status, attachmentId?, url?, error? }
   pendingAttachments: [],
   dragCounter: 0,
+  // True when the current bot's primary model has no image input (e.g.
+  // text-only models). Set in updateChatHeader → refreshAttachAvailability.
+  imageUploadBlocked: false,
   // conversationIds with an in-flight surf / pending review. Fed from the
   // /api/surf/events and /api/review/events SSE streams; drives the busy
   // state of the chat-header action buttons.
@@ -294,6 +300,7 @@ async function init() {
   connectSurfReviewEvents();
   setupInput();
   setupGlobalHandlers();
+  renderToneButton();
   startRelativeTimeTick();
 }
 
@@ -418,6 +425,22 @@ function botInitial(bot) {
   return name.trim().charAt(0).toUpperCase();
 }
 
+// Bot label = display name + the live model tag (provider prefix dropped),
+// e.g. "01 · glm-5.1". The model comes from `bot.config.model` (web /api/bots
+// embeds the full bot config), so it stays in sync with config edits.
+function botModelTag(bot) {
+  const slug = bot?.config?.model || bot?.model;
+  if (!slug) return '';
+  const slash = slug.lastIndexOf('/');
+  return slash >= 0 ? slug.slice(slash + 1) : slug;
+}
+
+function botLabel(bot) {
+  const name = bot?.display_name || bot?.id || '?';
+  const tag = botModelTag(bot);
+  return tag ? `${name} · ${tag}` : name;
+}
+
 function botAvatarHTML(botId) {
   const bot = state.botsById.get(botId);
   return `<span class="bot-avatar" style="background:${botColor(botId)}">${esc(botInitial(bot))}</span>`;
@@ -460,9 +483,9 @@ function renderBotFilter() {
     const count = counts.get(b.id) || 0;
     const active = state.botFilter === b.id ? 'active' : '';
     return `
-      <button class="pill ${active}" data-bot="${esc(b.id)}" title="${esc(b.display_name || b.id)}">
+      <button class="pill ${active}" data-bot="${esc(b.id)}" title="${esc(botLabel(b))}">
         <span class="bot-avatar" style="background:${botColor(b.id)}">${esc(botInitial(b))}</span>
-        <span class="pill-label">${esc(b.display_name || b.id)}</span>
+        <span class="pill-label">${esc(botLabel(b))}</span>
         ${count > 0 ? `<span class="pill-count">${count}</span>` : ''}
       </button>
     `;
@@ -491,7 +514,7 @@ function updateNewChatLabel() {
   if (!label) return;
   if (state.botFilter && state.botsById.has(state.botFilter)) {
     const bot = state.botsById.get(state.botFilter);
-    label.textContent = `新对话 · ${bot.display_name || bot.id}`;
+    label.textContent = `新对话 · ${botLabel(bot)}`;
   } else {
     label.textContent = '新对话';
   }
@@ -600,8 +623,46 @@ function updateChatHeader(conv) {
   titleEl.classList.toggle('untitled', !conv.title);
 
   const bot = state.botsById.get(conv.bot_id);
-  const botName = bot?.display_name || conv.bot_id;
+  const botName = bot ? botLabel(bot) : conv.bot_id;
   botEl.innerHTML = `${botAvatarHTML(conv.bot_id)}<span>${esc(botName)}</span>`;
+
+  renderToneButton();
+  refreshAttachAvailability(bot);
+}
+
+// Disable image upload (button + paste + drop) when the bot's model has no
+// vision input. Banner under the composer explains why so users don't think
+// the button is broken.
+async function refreshAttachAvailability(bot) {
+  const btn = document.getElementById('attach-btn');
+  const tip = document.getElementById('no-vision-tip');
+  if (!btn || !tip) return;
+
+  const slug = bot?.config?.model || bot?.model || null;
+  // Pre-populate from cached registry if hot.
+  let supports = window.modelLookup ? window.modelLookup.supportsImageInput(slug) : null;
+  if (supports === null && slug && window.modelLookup) {
+    // Cache cold — wait once, then re-check. Keep current state permissive
+    // until we know for sure.
+    await window.modelLookup.ready();
+    supports = window.modelLookup.supportsImageInput(slug);
+  }
+
+  // Treat null (unknown) as allowed to avoid false negatives.
+  const blocked = supports === false;
+  state.imageUploadBlocked = blocked;
+
+  btn.disabled = blocked;
+  btn.classList.toggle('disabled', blocked);
+  if (blocked) {
+    const tag = botModelTag(bot);
+    btn.title = `当前模型 ${tag || ''} 不支持识别图片，无法上传`;
+    tip.textContent = `当前 Bot 使用的模型${tag ? `（${tag}）` : ''}不支持图像识别，已停用图片上传。在「设置 → Bot → 模型」中切换为带「视觉」标签的模型即可启用。`;
+    tip.style.display = 'block';
+  } else {
+    btn.title = '添加图片  (也可拖放或粘贴)';
+    tip.style.display = 'none';
+  }
 }
 
 async function loadHistory(convId) {
@@ -650,7 +711,7 @@ function _messageOnNewChat(e) {
   for (const bot of state.bots) {
     const item = document.createElement('div');
     item.className = 'bot-pick-item';
-    item.innerHTML = `${botAvatarHTML(bot.id)}<span>${esc(bot.display_name || bot.id)}</span>`;
+    item.innerHTML = `${botAvatarHTML(bot.id)}<span>${esc(botLabel(bot))}</span>`;
     item.onclick = () => {
       picker.style.display = 'none';
       createConversation(bot.id);
@@ -932,6 +993,25 @@ function connectSurfReviewEvents() {
       } catch {}
     });
   } catch (e) { console.error('review SSE error:', e); }
+}
+
+// ── Chat tone (微信聊天 / 普通AI) ──
+
+function renderToneButton() {
+  const btn = document.getElementById('tone-btn');
+  if (!btn) return;
+  const isNormal = state.chatTone === 'normal';
+  btn.textContent = isNormal ? '普通AI' : '微信';
+  btn.classList.toggle('tone-normal', isNormal);
+  btn.title = isNormal
+    ? '当前：普通AI（单条消息、像 ChatGPT 一样回复）— 点击切换为「微信聊天」'
+    : '当前：微信聊天（短句、多条气泡）— 点击切换为「普通AI」';
+}
+
+function toggleChatTone() {
+  state.chatTone = state.chatTone === 'normal' ? 'wechat' : 'normal';
+  localStorage.setItem('bb_chatTone', state.chatTone);
+  renderToneButton();
 }
 
 // ── Reset ──
@@ -1562,6 +1642,7 @@ function sendMessage() {
       botId: conv?.bot_id,
       conversationId: state.currentConversationId,
       content,
+      metadata: { tone: state.chatTone },
     };
     const ids = readyAtts.map(a => a.attachmentId);
     if (ids.length > 0) payload.attachmentIds = ids;
@@ -1581,6 +1662,10 @@ function sendMessage() {
 // ── Attachments: upload, tray, drag, paste ──
 
 function onAttachClick() {
+  if (state.imageUploadBlocked) {
+    flashAttachmentTray();
+    return;
+  }
   document.getElementById('file-input').click();
 }
 
@@ -1796,6 +1881,10 @@ function setupInput() {
     }
     if (files.length > 0) {
       e.preventDefault();
+      if (state.imageUploadBlocked) {
+        flashAttachmentTray();
+        return;
+      }
       addFilesToTray(files);
     }
   });
@@ -1807,6 +1896,11 @@ function setupInput() {
       if (!state.currentConversationId) {
         alert('先选或开一个对话');
         fileInput.value = '';
+        return;
+      }
+      if (state.imageUploadBlocked) {
+        fileInput.value = '';
+        flashAttachmentTray();
         return;
       }
       const files = Array.from(fileInput.files || []);
@@ -1828,12 +1922,14 @@ function setupInput() {
     };
     chatView.addEventListener('dragenter', (e) => {
       if (!isImageDrag(e) || !state.currentConversationId) return;
+      if (state.imageUploadBlocked) return;
       e.preventDefault();
       state.dragCounter++;
       overlay.classList.add('active');
     });
     chatView.addEventListener('dragover', (e) => {
       if (!isImageDrag(e) || !state.currentConversationId) return;
+      if (state.imageUploadBlocked) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     });
@@ -1848,6 +1944,10 @@ function setupInput() {
       state.dragCounter = 0;
       overlay.classList.remove('active');
       if (!state.currentConversationId) return;
+      if (state.imageUploadBlocked) {
+        flashAttachmentTray();
+        return;
+      }
       const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type?.startsWith('image/'));
       if (files.length > 0) addFilesToTray(files);
     });

@@ -74,6 +74,29 @@
     );
   }
 
+  // Capability badges shown in each row + on the trigger.
+  // Order matters — vision is the headline capability for this app since
+  // image upload availability hinges on it.
+  function capsFor(m) {
+    const inputs = Array.isArray(m?.input_modalities) ? m.input_modalities : [];
+    const params = Array.isArray(m?.supported_parameters) ? m.supported_parameters : [];
+    const caps = [];
+    if (inputs.includes('image')) caps.push({ key: 'vision', label: '视觉', title: '可识别图片' });
+    if (inputs.includes('audio')) caps.push({ key: 'audio', label: '语音', title: '可识别语音' });
+    if (inputs.includes('file') || inputs.includes('pdf')) caps.push({ key: 'file', label: '文件', title: '可读取文件 / PDF' });
+    if (params.includes('tools') || params.includes('tool_choice')) caps.push({ key: 'tools', label: '工具', title: '支持函数调用 / 工具' });
+    if (params.includes('reasoning') || params.includes('include_reasoning')) caps.push({ key: 'reason', label: '推理', title: '具备显式推理过程' });
+    return caps;
+  }
+
+  function capsHtml(m) {
+    const caps = capsFor(m);
+    if (caps.length === 0) return '';
+    return caps.map(c =>
+      `<span class="mp-cap mp-cap-${c.key}" title="${escHtml(c.title)}">${escHtml(c.label)}</span>`
+    ).join('');
+  }
+
   function escHtml(s) {
     const d = document.createElement('div');
     d.textContent = s ?? '';
@@ -177,9 +200,11 @@
         const ctxStr = fmtCtx(m.context_length);
         const priceStr = fmtPrice(m.pricing?.prompt);
         const meta = [ctxStr, priceStr].filter(Boolean).join(' · ');
+        const caps = capsHtml(m);
         row.innerHTML = `
           ${multi ? `<input type="checkbox" ${isSelected ? 'checked' : ''}>` : ''}
           <span class="mp-name">${escHtml(m.display_name)}</span>
+          ${caps ? `<span class="mp-caps">${caps}</span>` : ''}
           <span class="mp-slug">${escHtml(m.slug)}</span>
           <span class="mp-provider">${escHtml(m.provider || '')}${meta ? ` · ${escHtml(meta)}` : ''}</span>
         `;
@@ -272,4 +297,26 @@
 
   // Expose globally — app.js calls createModelPicker() to mount a picker.
   window.createModelPicker = createModelPicker;
+
+  // Lookup helpers for non-picker code (composer image-gating).
+  // The cache may not be warm at first call — callers can `await
+  // window.modelLookup.ready()` before reading.
+  window.modelLookup = {
+    async ready() {
+      await loadOpenRouterModels();
+    },
+    get(slug) {
+      if (!slug) return null;
+      return (cachedModels ?? []).find(m => m.slug === slug) || null;
+    },
+    // Three-state: true = supports image, false = explicitly text-only,
+    // null = unknown (model not in registry yet, cache cold, etc.).
+    // Composer treats null as "allow upload" so we never wrongly block.
+    supportsImageInput(slug) {
+      const m = this.get(slug);
+      if (!m) return null;
+      const inputs = Array.isArray(m.input_modalities) ? m.input_modalities : [];
+      return inputs.includes('image');
+    },
+  };
 })();

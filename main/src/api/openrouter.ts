@@ -2,12 +2,21 @@ import { Hono } from 'hono';
 
 // Slim shape sent to the picker — we strip OpenRouter's verbose fields and
 // only keep what the UI needs to render and search.
+//
+// `input_modalities` mirrors OpenRouter's architecture.input_modalities
+// (e.g. ["text"], ["text","image"], ["text","image","audio"]). The web UI
+// uses this to decide whether image upload is allowed for a given bot.
+// `supported_parameters` is a coarse capability list (e.g. "tools",
+// "reasoning") used for capability badges in the model picker.
 type SlimModel = {
   slug: string;
   display_name: string;
   provider: string;
   context_length: number | null;
   pricing: { prompt: string | null; completion: string | null };
+  input_modalities: string[];
+  output_modalities: string[];
+  supported_parameters: string[];
 };
 
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
@@ -25,6 +34,10 @@ async function fetchModels(): Promise<SlimModel[]> {
   const list = Array.isArray(body?.data) ? body.data : [];
   const slim = list.map((m: any): SlimModel => {
     const slug: string = String(m?.id ?? '');
+    const arch = m?.architecture ?? {};
+    const inputs = Array.isArray(arch.input_modalities) ? arch.input_modalities.map(String) : ['text'];
+    const outputs = Array.isArray(arch.output_modalities) ? arch.output_modalities.map(String) : ['text'];
+    const params = Array.isArray(m?.supported_parameters) ? m.supported_parameters.map(String) : [];
     return {
       slug,
       display_name: String(m?.name ?? slug),
@@ -34,6 +47,9 @@ async function fetchModels(): Promise<SlimModel[]> {
         prompt: m?.pricing?.prompt ?? null,
         completion: m?.pricing?.completion ?? null,
       },
+      input_modalities: inputs,
+      output_modalities: outputs,
+      supported_parameters: params,
     };
   }).filter(m => m.slug);
   slim.sort((a, b) =>
