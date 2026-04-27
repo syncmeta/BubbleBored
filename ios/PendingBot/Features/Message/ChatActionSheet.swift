@@ -1,15 +1,17 @@
 import SwiftUI
 import PhotosUI
 
-/// WeChat-style "+" action sheet for the chat composer. Compact bottom
-/// sheet with a small grid of actions: pick a model, send a photo. The
-/// caller pins it to a `.height(...)` detent so it stays close to the
-/// composer rather than taking over the screen.
+/// WeChat-style "+" action panel for the chat composer. Renders inline
+/// below the input row (iMessage / WeChat style), so tapping the
+/// composer's "+" pushes the input up and reveals this panel where the
+/// keyboard would have been. `onDismiss` lets the host close the panel
+/// (e.g. after a photo pick) without the panel needing its own modal
+/// context.
 struct ChatActionSheet: View {
-    @Environment(\.dismiss) private var dismiss
     @Binding var photoItems: [PhotosPickerItem]
     @Binding var modelOverride: String
     var onModelChange: (String) -> Void
+    var onDismiss: () -> Void = {}
 
     @State private var showModelPicker = false
 
@@ -32,7 +34,7 @@ struct ChatActionSheet: View {
                 }
                 .buttonStyle(.plain)
                 .onChange(of: photoItems) { _, items in
-                    if !items.isEmpty { dismiss() }
+                    if !items.isEmpty { onDismiss() }
                 }
 
                 Button {

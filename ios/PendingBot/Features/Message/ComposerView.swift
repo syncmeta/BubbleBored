@@ -16,6 +16,7 @@ struct ComposerView: View {
     var onModelChange: (String) -> Void
 
     @State private var showActions = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,10 +25,19 @@ struct ComposerView: View {
             }
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
-                    showActions = true
                     Haptics.tap()
+                    if showActions {
+                        // Tap "+" again → close panel, bring keyboard back.
+                        showActions = false
+                        isFocused = true
+                    } else {
+                        // Open panel → drop the keyboard so the panel slides
+                        // into the same space (iMessage / WeChat behavior).
+                        isFocused = false
+                        showActions = true
+                    }
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: showActions ? "xmark" : "plus")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Theme.Palette.inkMuted)
                         .frame(width: 38, height: 38)
@@ -42,7 +52,20 @@ struct ComposerView: View {
                     .foregroundStyle(Theme.Palette.ink)
                     .tint(Theme.Palette.accent)
                     .submitLabel(.send)
-                    .onSubmit { if canSend { onSend() } }
+                    .focused($isFocused)
+                    .onChange(of: isFocused) { _, focused in
+                        if focused { showActions = false }
+                    }
+                    .onChange(of: input) { _, newValue in
+                        // axis: .vertical eats the keyboard's return key as a
+                        // newline (so .onSubmit never fires). Treat any newline
+                        // as "send" so the iOS keyboard's 发送 button submits
+                        // like an IM app instead of breaking lines.
+                        if newValue.contains("\n") {
+                            input = newValue.replacingOccurrences(of: "\n", with: "")
+                            if canSend { onSend() }
+                        }
+                    }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(
@@ -72,17 +95,20 @@ struct ComposerView: View {
             .padding(.top, 10)
             .padding(.bottom, 10)
             .background(Theme.Palette.canvas)
+
+            if showActions {
+                ChatActionSheet(
+                    photoItems: $photoItems,
+                    modelOverride: $modelOverride,
+                    onModelChange: onModelChange,
+                    onDismiss: { showActions = false }
+                )
+                .frame(height: 240)
+                .background(Theme.Palette.canvas)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        .sheet(isPresented: $showActions) {
-            ChatActionSheet(
-                photoItems: $photoItems,
-                modelOverride: $modelOverride,
-                onModelChange: onModelChange
-            )
-            .presentationDetents([.height(180)])
-            .presentationDragIndicator(.visible)
-            .tint(Theme.Palette.accent)
-        }
+        .animation(.easeInOut(duration: 0.22), value: showActions)
     }
 
     // ── Attachment thumbnails strip ────────────────────────────────────────
