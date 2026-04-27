@@ -208,12 +208,28 @@ function streamingRound(
 
       const replyFn = (msg: OutboundMessage) => {
         wsReply(msg);
+        const meta = msg.metadata ?? {};
+        const senderType = (meta.sender_kind as string) ?? 'debater';
+        const senderId = (meta.bot_id as string) ?? '';
+        // Forward live stream events alongside the legacy `log` event so the
+        // mobile SSE consumer can grow each debater's bubble in real time.
+        // Web (which polls /messages after `done`) just ignores the new
+        // event names and keeps working off `log`.
+        if (msg.messageId && (msg.type === 'stream_start' || msg.type === 'stream_delta' || msg.type === 'stream_end')) {
+          send(msg.type, {
+            id: msg.messageId,
+            sender_type: senderType,
+            sender_id: senderId,
+            ...(msg.delta != null ? { delta: msg.delta } : {}),
+            ...(msg.content != null ? { content: msg.content } : {}),
+          });
+          return;
+        }
         if (msg.type === 'message' && msg.messageId && msg.content) {
-          const meta = msg.metadata ?? {};
           sendMessage({
             id: msg.messageId,
-            sender_type: (meta.sender_kind as string) ?? 'debater',
-            sender_id: (meta.bot_id as string) ?? '',
+            sender_type: senderType,
+            sender_id: senderId,
             content: msg.content,
           });
         }

@@ -25,6 +25,10 @@ struct DebateRoundView: View {
     @State private var bots: [String: Bot] = [:]
     @State private var convTitle: String?
     @State private var didAutoStart = false
+    /// Drives a low-frequency poll while the view is on screen so messages
+    /// posted from elsewhere (web, another device, a continuing round we
+    /// didn't start) show up without the user having to manually reload.
+    @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,19 +44,12 @@ struct DebateRoundView: View {
                                          conversationID: conversation.id)
                                 .id(msg.id)
                         }
-                        if streaming {
-                            HStack {
-                                TypingDots()
-                                    .padding(.leading, 46) // align with bubble column
-                                Spacer()
-                            }
-                            .padding(.top, 4)
-                        }
                         Color.clear.frame(height: 96).id("bottom")
                     }
                     .padding(.top, 4)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .refreshable { await load() }
                 .onChange(of: messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo("bottom", anchor: .bottom)
@@ -74,7 +71,9 @@ struct DebateRoundView: View {
                 didAutoStart = true
                 await runRound()
             }
+            startPolling()
         }
+        .onDisappear { pollTask?.cancel(); pollTask = nil }
         .sheet(isPresented: $showClarify) {
             NavigationStack {
                 Form {
@@ -125,18 +124,10 @@ struct DebateRoundView: View {
                     .font(Theme.Fonts.serif(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.Palette.ink)
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(participantSubtitle)
-                        .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .lineLimit(1)
-                    if streaming {
-                        Text("·")
-                            .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                        TypingDots().transition(.opacity)
-                    }
-                }
+                Text(participantSubtitle)
+                    .font(Theme.Fonts.rounded(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
@@ -215,6 +206,38 @@ struct DebateRoundView: View {
         .disabled(disabled)
     }
 
+    /// Background poll while the view is visible. Skips while a round is
+    /// streaming (the SSE stream is the source of truth then) so we don't
+    /// race the in-flight bubble. 6s cadence is a balance: fast enough that
+    /// a peer message shows up in roughly one breath, slow enough to keep
+    /// the request count modest for a backgrounded screen.
+    private func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                if Task.isCancelled { break }
+                if streaming { continue }
+                await refresh()
+            }
+        }
+    }
+
+    /// Reload + diff so existing bubbles keep their identity (no flicker)
+    /// and only genuinely new rows trigger the scroll-to-bottom animation.
+    private func refresh() async {
+        guard let api else { return }
+        do {
+            let raw: [ChatMessage] = try await api.get("api/debate/conversations/\(conversation.id)/messages")
+            let sorted = raw.sorted { $0.created_at < $1.created_at }
+            let known = Set(messages.map(\.id))
+            let new = sorted.filter { !known.contains($0.id) }
+            if !new.isEmpty {
+                messages = sorted
+            }
+        } catch { /* ignore — next tick retries */ }
+    }
+
     private func load() async {
         guard let api else { return }
         do {
@@ -249,11 +272,7 @@ struct DebateRoundView: View {
         do {
             let bytes = try await api.streamPost("api/debate/conversations/\(conversation.id)/round", body: Empty())
             for try await event in SSEClient.events(from: bytes) {
-                if event.name == "log",
-                   let data = event.data.data(using: .utf8),
-                   let msg = try? JSONDecoder().decode(ChatMessage.self, from: data) {
-                    messages.append(msg)
-                }
+                handleSSE(event)
             }
             await load()
             await reloadHeader()
@@ -290,11 +309,7 @@ struct DebateRoundView: View {
                 body: Body(content: text)
             )
             for try await event in SSEClient.events(from: bytes) {
-                if event.name == "log",
-                   let data = event.data.data(using: .utf8),
-                   let msg = try? JSONDecoder().decode(ChatMessage.self, from: data) {
-                    messages.append(msg)
-                }
+                handleSSE(event)
             }
             await load()
             await reloadHeader()
@@ -304,6 +319,83 @@ struct DebateRoundView: View {
             Haptics.error()
         }
     }
+
+    /// One handler shared by `/round` and `/clarify` — the wire shape is
+    /// identical. Three event names matter:
+    ///   • `log`           — full ChatMessage row (non-streaming path).
+    ///   • `stream_start`  — the bot is about to type `id`. Drop a placeholder
+    ///                       bubble we'll grow as deltas arrive.
+    ///   • `stream_delta`  — append `{id, delta}` to the matching bubble.
+    ///   • `stream_end`    — final `{id, content}` replaces accumulated text.
+    /// Anything else (`done`, `error`, future variants) is ignored here.
+    private func handleSSE(_ event: SSEClient.Event) {
+        guard let data = event.data.data(using: .utf8) else { return }
+        switch event.name {
+        case "log":
+            if let msg = try? JSONDecoder().decode(ChatMessage.self, from: data) {
+                messages.append(msg)
+            }
+        case "stream_start":
+            if let payload = try? JSONDecoder().decode(StreamFrame.self, from: data),
+               !messages.contains(where: { $0.id == payload.id }) {
+                messages.append(ChatMessage(
+                    id: payload.id,
+                    conversation_id: conversation.id,
+                    sender_type: payload.sender_type ?? "debater",
+                    sender_id: payload.sender_id ?? "",
+                    content: "",
+                    created_at: Int(Date().timeIntervalSince1970),
+                    attachments: nil
+                ))
+            }
+        case "stream_delta":
+            guard let payload = try? JSONDecoder().decode(StreamFrame.self, from: data),
+                  let delta = payload.delta, !delta.isEmpty,
+                  let idx = messages.firstIndex(where: { $0.id == payload.id }) else { return }
+            let prev = messages[idx]
+            messages[idx] = ChatMessage(
+                id: prev.id, conversation_id: prev.conversation_id,
+                sender_type: prev.sender_type, sender_id: prev.sender_id,
+                content: prev.content + delta,
+                created_at: prev.created_at,
+                attachments: prev.attachments
+            )
+        case "stream_end":
+            guard let payload = try? JSONDecoder().decode(StreamFrame.self, from: data),
+                  let idx = messages.firstIndex(where: { $0.id == payload.id }) else { return }
+            if let content = payload.content {
+                if content.isEmpty {
+                    // Server gave up on this turn (PASS after a partial
+                    // emit) — collapse the placeholder we'd been growing.
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        _ = messages.remove(at: idx)
+                    }
+                } else {
+                    let prev = messages[idx]
+                    messages[idx] = ChatMessage(
+                        id: prev.id, conversation_id: prev.conversation_id,
+                        sender_type: prev.sender_type, sender_id: prev.sender_id,
+                        content: content,
+                        created_at: prev.created_at,
+                        attachments: prev.attachments
+                    )
+                }
+            }
+        default:
+            break
+        }
+    }
+}
+
+/// Loose decode for `stream_start` / `stream_delta` / `stream_end` payloads.
+/// `id` + `sender_*` arrive on start, `delta` on chunks, `content` on end —
+/// each frame fills in only the fields that round needs.
+private struct StreamFrame: Decodable {
+    let id: String
+    let sender_type: String?
+    let sender_id: String?
+    let delta: String?
+    let content: String?
 }
 
 /// Group-chat bubble. Bot rows: avatar + sender name above + surface bubble

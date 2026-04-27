@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
-import { chatCompletion } from '../../llm/client';
+import { chatCompletion, chatCompletionStream } from '../../llm/client';
 import { logAudit } from '../../llm/audit';
 import { configManager } from '../../config/loader';
 import {
@@ -77,8 +77,14 @@ async function runOneDebater(params: {
   ownContext: string;
   transcript: string;
   systemPrompt: string;
+  // Optional live-stream callback. When provided, the debater is generated
+  // via chatCompletionStream and each non-empty content delta is forwarded
+  // here so the caller can fan it out (e.g. as SSE stream_delta frames).
+  // The final assembled text + PASS detection still come back via the
+  // returned DebaterOutput exactly like the non-streaming path.
+  onDelta?: (delta: string) => void;
 }): Promise<DebaterOutput> {
-  const { userId, conversationId, botId, topic, ownContext, transcript, systemPrompt } = params;
+  const { userId, conversationId, botId, topic, ownContext, transcript, systemPrompt, onDelta } = params;
 
   // Resolve bot → model + display name. If the bot vanished from config
   // mid-debate, fall back to using the id as the name and bail; the caller
@@ -106,22 +112,45 @@ async function runOneDebater(params: {
     { role: 'user' as const, content: userBlock },
   ];
 
-  const { result, latencyMs, costUsd } = await chatCompletion({
-    model, messages,
-  });
+  let raw = '';
+  let generationId: string | undefined;
+  let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: number } | undefined;
+  let latencyMs = 0;
+
+  if (onDelta) {
+    // Streaming path — each chunk's content delta is both forwarded to the
+    // caller's onDelta and accumulated into `raw` so PASS detection + the
+    // returned DebaterOutput stay byte-identical to the non-streaming path.
+    const { stream, startTime } = await chatCompletionStream({ model, messages });
+    for await (const chunk of stream) {
+      if (!generationId && chunk.id) generationId = chunk.id;
+      if (chunk.usage) usage = chunk.usage as any;
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        raw += delta;
+        onDelta(delta);
+      }
+    }
+    latencyMs = Date.now() - startTime;
+    raw = raw.trim();
+  } else {
+    const res = await chatCompletion({ model, messages });
+    latencyMs = res.latencyMs;
+    generationId = res.result.id;
+    usage = res.result.usage as any;
+    raw = res.result.choices[0]?.message?.content?.trim() ?? '';
+  }
 
   logAudit({
     userId,
     conversationId, taskType: 'debate', model,
-    inputTokens: result.usage?.prompt_tokens ?? 0,
-    outputTokens: result.usage?.completion_tokens ?? 0,
-    totalTokens: result.usage?.total_tokens ?? 0,
-    costUsd,
-    generationId: result.id,
+    inputTokens: usage?.prompt_tokens ?? 0,
+    outputTokens: usage?.completion_tokens ?? 0,
+    totalTokens: usage?.total_tokens ?? 0,
+    costUsd: usage?.cost,
+    generationId,
     latencyMs,
   });
-
-  const raw = result.choices[0]?.message?.content?.trim() ?? '';
   // Be liberal about how the bot signals "no add" — `[PASS]`, `PASS`, or just
   // `pass` on its own line all count. Also catches outputs that wrap the
   // sentinel in punctuation (e.g. `「PASS」`) or quotes. Without this we'd
@@ -197,6 +226,28 @@ export async function runDebateRound(
     const botId = pickNextBotId(botIds, lastBotId);
     const history = getMessages(conversationId, ROUND_HISTORY_LIMIT);
 
+    // Pre-mint the message id so stream_start, every stream_delta, and
+    // stream_end (and the `message` reply) all share it — that's what lets
+    // the client key its growing bubble.
+    const msgId = randomUUID();
+    const botCfgForMeta = configManager.getBotConfig(botId);
+    const senderMeta = {
+      sender_kind: 'debater',
+      bot_id: botId,
+      display_name: botCfgForMeta.displayName || botId,
+    };
+    let streamOpenedForMsg = false;
+    const openStream = () => {
+      if (streamOpenedForMsg) return;
+      streamOpenedForMsg = true;
+      replyFn({
+        type: 'stream_start',
+        conversationId,
+        messageId: msgId,
+        metadata: senderMeta,
+      });
+    };
+
     let out: DebaterOutput;
     try {
       out = await runOneDebater({
@@ -207,6 +258,19 @@ export async function runDebateRound(
         ownContext: ownContextByBot.get(botId) ?? '',
         transcript: renderTranscript(history, botId),
         systemPrompt,
+        onDelta: (delta) => {
+          // Open the stream on the first real delta so a bot that turns out
+          // to be PASS (no real text emitted before the model returns) doesn't
+          // leave an orphan placeholder bubble on the client.
+          openStream();
+          replyFn({
+            type: 'stream_delta',
+            conversationId,
+            messageId: msgId,
+            delta,
+            metadata: senderMeta,
+          });
+        },
       });
     } catch (e: any) {
       emit(conversationId, `⚠️ ${botId} 出错：${e?.message ?? e}`, 'error');
@@ -223,6 +287,18 @@ export async function runDebateRound(
       // consecutiveFailures (which is reserved for hard errors). The pass
       // still counts toward maxMessages because the for-loop step increment
       // consumes a turn slot regardless.
+      // If we'd already opened a stream (the model emitted text and then
+      // resolved to PASS — rare but possible), close it with empty content
+      // so the client collapses the placeholder bubble.
+      if (streamOpenedForMsg) {
+        replyFn({
+          type: 'stream_end',
+          conversationId,
+          messageId: msgId,
+          content: '',
+          metadata: senderMeta,
+        });
+      }
       emit(conversationId, `[${out.displayName}] 跳过（[PASS]）`);
       lastBotId = botId;
       continue;
@@ -231,15 +307,30 @@ export async function runDebateRound(
     consecutiveFailures = 0;
     lastBotId = botId;
 
-    const msgId = randomUUID();
     insertMessage(msgId, conversationId, 'debater', out.botId, out.text);
-    replyFn({
-      type: 'message',
-      conversationId,
-      messageId: msgId,
-      content: out.text,
-      metadata: { sender_kind: 'debater', bot_id: out.botId, display_name: out.displayName },
-    });
+    if (streamOpenedForMsg) {
+      // Streamed path — finalize the live bubble. No extra `message` reply
+      // is emitted for this id because the client already grew it from
+      // deltas; stream_end carries the canonical text for any client that
+      // missed deltas (web SSE listeners, reconnects mid-round, etc).
+      replyFn({
+        type: 'stream_end',
+        conversationId,
+        messageId: msgId,
+        content: out.text,
+        metadata: senderMeta,
+      });
+    } else {
+      // Defensive fallback — if onDelta never fired (e.g. provider returned
+      // the entire body in one chunk) we still need to deliver the message.
+      replyFn({
+        type: 'message',
+        conversationId,
+        messageId: msgId,
+        content: out.text,
+        metadata: senderMeta,
+      });
+    }
     delivered++;
   }
 
