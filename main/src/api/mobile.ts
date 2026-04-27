@@ -41,17 +41,23 @@ mobileApiRoutes.use('*', requireAuthMiddleware);
 
 // ── Bots ────────────────────────────────────────────────────────────────────
 
-// Returns only public-facing bot info (id, display_name). Full config stays
-// server-side — iOS doesn't need model names / prompts etc.
+// Returns public-facing bot info (id, display_name, model). The model slug
+// drives the dynamic "name · model" tag the client renders alongside each bot.
 mobileApiRoutes.get('/bots', (c) => {
   const bots = listBots();
   const out = bots.map((b: any) => {
     let accessMode: string | undefined;
-    try { accessMode = configManager.getBotConfig(b.id).accessMode; } catch { /* ignore */ }
+    let model: string | undefined;
+    try {
+      const cfg = configManager.getBotConfig(b.id);
+      accessMode = cfg.accessMode;
+      model = cfg.model;
+    } catch { /* ignore */ }
     return {
       id: b.id,
       display_name: b.display_name,
       access_mode: accessMode,
+      model,
     };
   });
   return c.json(out);

@@ -37,30 +37,30 @@ defaults:
 # 每个 bot 也可以绑定自己的 Telegram / 飞书账号(不填则仅网页可用)。
 bots:
   "001":
-    displayName: "001"
+    displayName: "01"
     promptFile: "default.md"
     model: "z-ai/glm-5.1"
   "002":
-    displayName: "002"
+    displayName: "02"
     promptFile: "default.md"
     model: "z-ai/glm-4.5-air:free"
   "003":
-    displayName: "003"
+    displayName: "03"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-flash"
   "004":
-    displayName: "004"
+    displayName: "04"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-pro"
   "005":
-    displayName: "005"
+    displayName: "05"
     promptFile: "default.md"
     model: "minimax/minimax-m2.7"
   "006":
-    displayName: "006"
+    displayName: "06"
     promptFile: "default.md"
     model: "tencent/hy3-preview:free"
   "007":
-    displayName: "007"
+    displayName: "07"
     promptFile: "default.md"
     model: "google/gemini-3.1-flash-lite-preview"
