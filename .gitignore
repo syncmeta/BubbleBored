@@ -24,3 +24,6 @@ main/bun.lock
 
 # Claude Code
 .claude/
+
+# Deploy script (contains prod infra defaults)
+deploy.sh
