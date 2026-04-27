@@ -1,21 +1,25 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 /// Bottom-of-screen input bar — capsule field flanked by circle buttons.
 /// Matches the PendingBot composer:
 ///   • Left  — circle attach button (hairline border, surface fill)
 ///   • Center — capsule textfield (1–6 lines, hairline border)
 ///   • Right — circle send button (state-aware: accent on, muted off)
+///
+/// The "+" panel is rendered inline below the input row. Mounted via
+/// `.safeAreaInset(edge: .bottom)` from the host so the message scroll
+/// view shrinks predictably when the panel opens — this is what lets
+/// the existing scroll position stay put instead of "jumping from above"
+/// when the host's animation timing fights with keyboard avoidance.
 struct ComposerView: View {
     @Binding var input: String
     @Binding var pending: [PendingAttachment]
     @Binding var photoItems: [PhotosPickerItem]
-    @Binding var modelOverride: String
-    var enabledSkillCount: Int = 0
+    @Binding var cameraImage: UIImage?
     var canSend: Bool
     var onSend: () -> Void
-    var onApplyModel: (String?, ModelPickScope) -> Void
-    var onOpenSkills: () -> Void = {}
 
     @State private var showActions = false
     @FocusState private var isFocused: Bool
@@ -29,12 +33,9 @@ struct ComposerView: View {
                 Button {
                     Haptics.tap()
                     if showActions {
-                        // Tap "+" again → close panel, bring keyboard back.
                         showActions = false
                         isFocused = true
                     } else {
-                        // Open panel → drop the keyboard so the panel slides
-                        // into the same space (iMessage / WeChat behavior).
                         isFocused = false
                         showActions = true
                     }
@@ -101,13 +102,7 @@ struct ComposerView: View {
             if showActions {
                 ChatActionSheet(
                     photoItems: $photoItems,
-                    modelOverride: $modelOverride,
-                    enabledSkillCount: enabledSkillCount,
-                    onApplyModel: onApplyModel,
-                    onOpenSkills: {
-                        showActions = false
-                        onOpenSkills()
-                    },
+                    cameraImage: $cameraImage,
                     onDismiss: { showActions = false }
                 )
                 .frame(height: 240)
@@ -115,6 +110,12 @@ struct ComposerView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .background(
+            // Solid backstop — without it the safeAreaInset region above
+            // the panel is transparent during the open/close transition,
+            // and the message list briefly bleeds through.
+            Theme.Palette.canvas
+        )
         .animation(.easeInOut(duration: 0.22), value: showActions)
     }
 

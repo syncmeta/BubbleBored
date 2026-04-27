@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 import Combine
 
 /// One conversation. Loads history via REST, opens a WebSocket for live
@@ -20,6 +21,7 @@ struct ConversationView: View {
     @State private var input = ""
     @State private var pendingAttachments: [PendingAttachment] = []
     @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var cameraImage: UIImage?
     @State private var modelOverride: String = ""    // "" = use bot default
     @State private var error: String?
     @State private var pending = false              // server is generating (bot_typing active)
@@ -32,14 +34,18 @@ struct ConversationView: View {
     // the search trace doesn't disappear, it just folds away. Session-only;
     // not persisted across reloads (server doesn't store it yet).
     @State private var pinnedToolLogs: [String: [String]] = [:]
-    // Skill summaries for the chat-header chip count + popover. Loaded on
-    // view appear and refreshed when the popover sheet closes.
+    // Skill summaries — counted in the settings sheet so the user sees
+    // how many are active without leaving the conversation.
     @State private var skills: [SkillSummary] = []
     @State private var showingSkills = false
+    @State private var showingSettings = false
     @State private var saveAsSkillBody: String?
     // Per-user tone preference, persisted globally across conversations.
     // 'wechat' = casual multi-bubble (default); 'normal' = single-message AI.
     @AppStorage("bb_chatTone") private var chatTone = "wechat"
+    // Streaming preference. The settings sheet auto-flips this whenever
+    // tone changes (normal=on, wechat=off) — see ConversationSettingsView.
+    @AppStorage("bb_chatStreaming") private var streaming = false
 
     /// "<bot_name> · <effective-model-tag>". Effective model = the per-conv
     /// override if set, otherwise the bot's resolved model (which itself
@@ -130,25 +136,28 @@ struct ConversationView: View {
                     scrollToBottom(proxy: proxy)
                 }
             }
-
-            Divider().opacity(0.5)
-
-            ComposerView(
-                input: $input,
-                pending: $pendingAttachments,
-                photoItems: $photoPickerItems,
-                modelOverride: $modelOverride,
-                enabledSkillCount: skills.filter { $0.enabled }.count,
-                canSend: canSend,
-                onSend: { Task { await send() } },
-                onApplyModel: { slug, scope in
-                    Task { await applyModelPick(slug: slug, scope: scope) }
-                },
-                onOpenSkills: { showingSkills = true }
-            )
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        // Mount the composer as a bottom safe-area inset so the message
+        // list above it gets a stable bottom edge — this is what fixes
+        // the "input bar / messages jump in from above" glitch when the
+        // "+" panel toggles. With safeAreaInset, SwiftUI accounts for
+        // the inset change in one coordinated layout pass instead of the
+        // ScrollView and composer animating against each other.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider().opacity(0.5)
+                ComposerView(
+                    input: $input,
+                    pending: $pendingAttachments,
+                    photoItems: $photoPickerItems,
+                    cameraImage: $cameraImage,
+                    canSend: canSend,
+                    onSend: { Task { await send() } }
+                )
+            }
+        }
         .task {
             ws.bind(account: account)
             modelOverride = conversation.model_override ?? ""
@@ -164,6 +173,21 @@ struct ConversationView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .onDisappear { Task { await loadSkills() } }
+        }
+        .sheet(isPresented: $showingSettings) {
+            ConversationSettingsView(
+                chatTone: $chatTone,
+                streaming: $streaming,
+                modelOverride: $modelOverride,
+                enabledSkillCount: skills.filter { $0.enabled }.count,
+                totalSkillCount: skills.count,
+                onOpenSkills: { showingSkills = true },
+                onApplyModel: { slug, scope in
+                    Task { await applyModelPick(slug: slug, scope: scope) }
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: Binding(
             get: { saveAsSkillBody.map { SkillDraft(body: $0) } },
@@ -183,6 +207,10 @@ struct ConversationView: View {
         }
         .onChange(of: photoPickerItems) { _, items in
             Task { await ingestPhotos(items) }
+        }
+        .onChange(of: cameraImage) { _, image in
+            guard let image else { return }
+            Task { await ingestCameraImage(image) }
         }
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
@@ -223,10 +251,58 @@ struct ConversationView: View {
             if let content = event.content, !content.isEmpty {
                 searchLog.append(content)
             }
+        case "stream_start":
+            // Streaming reply opened — drop a placeholder bubble we'll grow
+            // as deltas arrive. Only used when the user has 流式输出 on; the
+            // server otherwise sends `message` once the segment is complete.
+            pending = false
+            searchLog.removeAll()
+            guard let id = event.messageId else { return }
+            if !messages.contains(where: { $0.id == id }) {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    messages.append(ChatMessage(
+                        id: id, conversation_id: conversation.id,
+                        sender_type: "bot", sender_id: event.senderId ?? "",
+                        content: "",
+                        created_at: Int(Date().timeIntervalSince1970),
+                        attachments: nil
+                    ))
+                }
+            }
+        case "stream_delta":
+            guard let id = event.messageId, let delta = event.delta, !delta.isEmpty,
+                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
+            let prev = messages[idx]
+            messages[idx] = ChatMessage(
+                id: prev.id, conversation_id: prev.conversation_id,
+                sender_type: prev.sender_type, sender_id: prev.sender_id,
+                content: prev.content + delta,
+                created_at: prev.created_at,
+                attachments: prev.attachments
+            )
+        case "stream_end":
+            // Final content is authoritative — replaces whatever we
+            // accumulated from deltas. Covers the case where deltas were
+            // dropped on a bad connection.
+            guard let id = event.messageId,
+                  let idx = messages.firstIndex(where: { $0.id == id }) else { return }
+            if let content = event.content {
+                let prev = messages[idx]
+                messages[idx] = ChatMessage(
+                    id: prev.id, conversation_id: prev.conversation_id,
+                    sender_type: prev.sender_type, sender_id: prev.sender_id,
+                    content: content,
+                    created_at: prev.created_at,
+                    attachments: prev.attachments
+                )
+            }
+            Haptics.receive()
+            onChange()
         case "message":
-            // Full bot reply — server-side bots aren't token-streamed, the
-            // whole message lands in one frame. Append (or replace if we
-            // already have a row with this id from a previous load).
+            // Full bot reply — server-side bots aren't token-streamed when
+            // streaming is off, the whole message lands in one frame.
+            // Append (or replace if we already have a row with this id from
+            // a previous load or a just-finished stream).
             pending = false
             guard let content = event.content, !content.isEmpty else { return }
             let id = event.messageId ?? "remote-\(UUID().uuidString)"
@@ -337,80 +413,22 @@ struct ConversationView: View {
                 }
             }
             Spacer(minLength: 0)
-            HStack(spacing: 6) {
-                skillsChip
-                toneToggle
+            Button {
+                Haptics.tap()
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(Theme.Palette.ink)
+                    .frame(width: 32, height: 32)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("会话设置")
         }
         .animation(.easeInOut(duration: 0.2), value: pending)
         .padding(.horizontal, Theme.Metrics.gutter)
         .padding(.top, 6)
         .padding(.bottom, 8)
-    }
-
-    // Compact tone toggle in the chat header. Tap to flip between
-    // 「微信」(wechat — casual, multi-bubble) and 「普通AI」(normal —
-    // single-message ChatGPT-style). State is global across conversations.
-    private var toneToggle: some View {
-        Button {
-            Haptics.tap()
-            chatTone = (chatTone == "normal") ? "wechat" : "normal"
-        } label: {
-            chipText(label: chatTone == "normal" ? "普通AI" : "微信",
-                     active: chatTone == "normal")
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("切换语气")
-        .accessibilityValue(chatTone == "normal" ? "普通AI语气" : "微信语气")
-    }
-
-    // Chat-header skills chip — shows the count of currently-enabled skills.
-    // Tap opens the full skills management sheet so the user can toggle /
-    // edit without leaving the conversation.
-    private var skillsChip: some View {
-        let enabledCount = skills.filter { $0.enabled }.count
-        return Button {
-            Haptics.tap()
-            showingSkills = true
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 10, weight: .medium))
-                if enabledCount > 0 {
-                    Text("\(enabledCount)")
-                        .font(Theme.Fonts.rounded(size: 11, weight: .semibold))
-                }
-            }
-            .foregroundStyle(enabledCount > 0 ? Theme.Palette.accent : Theme.Palette.inkMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .overlay(
-                Capsule().strokeBorder(
-                    enabledCount > 0 ? Theme.Palette.accent.opacity(0.5)
-                                     : Theme.Palette.inkMuted.opacity(0.25),
-                    lineWidth: 0.8
-                )
-            )
-        }
-        .buttonStyle(.plain)
-        .opacity(skills.isEmpty ? 0 : 1)
-        .accessibilityLabel("已启用 \(enabledCount) 个技能")
-    }
-
-    // Shared chip styling so the row reads as one cohesive control group.
-    private func chipText(label: String, active: Bool) -> some View {
-        Text(label)
-            .font(Theme.Fonts.rounded(size: 11, weight: .medium))
-            .foregroundStyle(active ? Theme.Palette.accent : Theme.Palette.inkMuted)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .overlay(
-                Capsule().strokeBorder(
-                    active ? Theme.Palette.accent.opacity(0.5)
-                           : Theme.Palette.inkMuted.opacity(0.25),
-                    lineWidth: 0.8
-                )
-            )
     }
 
     // Inline list of recent surf_status events while the server is doing a
@@ -496,7 +514,8 @@ struct ConversationView: View {
                 conversationId: conversation.id,
                 content: text,
                 attachmentIds: attachIds,
-                tone: chatTone
+                tone: chatTone,
+                streaming: streaming
             ))
         } catch {
             self.error = "发送失败: \(error.localizedDescription)"
@@ -530,8 +549,7 @@ struct ConversationView: View {
         }
     }
 
-    /// Apply a model pick from the composer's "模型选择" tile. The user
-    /// chose a scope:
+    /// Apply a model pick from the settings sheet. The user chose a scope:
     ///   - `.conversation` — only this conversation; sets/clears the
     ///     per-conversation override on the server.
     ///   - `.bot` — this bot for this user across all conversations; sets
@@ -626,6 +644,30 @@ struct ConversationView: View {
             }
         }
         photoPickerItems = []
+    }
+
+    /// Same upload flow as `ingestPhotos`, but for one-shot camera captures.
+    /// JPEG-encode at 0.85 (same balance the rest of the app uses) so the
+    /// upload size matches what users get from the library picker.
+    private func ingestCameraImage(_ image: UIImage) async {
+        defer { cameraImage = nil }
+        guard let api, let data = image.jpegData(compressionQuality: 0.85) else { return }
+        do {
+            let response: UploadResponse = try await api.upload(
+                "api/upload/",
+                fileData: data,
+                fileName: "camera-\(UUID().uuidString.prefix(8)).jpg",
+                mime: "image/jpeg",
+                extraFields: ["conversationId": conversation.id]
+            )
+            pendingAttachments.append(PendingAttachment(
+                id: response.id, mime: response.mime, size: response.size
+            ))
+            Haptics.tap()
+        } catch {
+            self.error = "上传失败: \(error.localizedDescription)"
+            Haptics.error()
+        }
     }
 }
 

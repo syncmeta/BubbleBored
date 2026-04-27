@@ -151,9 +151,14 @@ struct OutboundMessage: Encodable {
 
     static func chat(botId: String, conversationId: String, content: String,
                      attachmentIds: [String] = [],
-                     tone: String? = nil) -> Self {
+                     tone: String? = nil,
+                     streaming: Bool? = nil) -> Self {
         var meta: [String: MetaValue] = [:]
         if let tone { meta["tone"] = .string(tone) }
+        // Server reads metadata.streaming === true to decide whether to
+        // emit per-token stream_delta events. Default behavior (no flag,
+        // or false) keeps the existing whole-segment `message` delivery.
+        if let streaming { meta["streaming"] = .bool(streaming) }
         return Self(type: "chat", botId: botId, conversationId: conversationId,
                     content: content, attachmentIds: attachmentIds,
                     metadata: meta.isEmpty ? nil : meta)
@@ -172,6 +177,9 @@ struct InboundMessage: Decodable {
     let type: String
     let conversationId: String?
     let content: String?
+    /// Per-token chunk for `stream_delta` events. Concatenated client-side
+    /// onto the bubble keyed by `messageId` until `stream_end` arrives.
+    let delta: String?
     let messageId: String?
     let senderId: String?
     let active: Bool?

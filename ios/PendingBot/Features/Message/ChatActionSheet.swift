@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 /// WeChat-style "+" action panel for the chat composer. Renders inline
 /// below the input row (iMessage / WeChat style), so tapping the
@@ -7,26 +8,20 @@ import PhotosUI
 /// keyboard would have been. `onDismiss` lets the host close the panel
 /// (e.g. after a photo pick) without the panel needing its own modal
 /// context.
-/// Where to apply a model pick from the composer's "模型选择" tile.
+///
+/// Slimmed down — model picker + skills moved to ConversationSettingsView
+/// (gear icon in chat header). The remaining tiles are the per-message
+/// attach actions: 图片 (library) and 拍照 (camera).
 enum ModelPickScope { case conversation, bot }
 
 struct ChatActionSheet: View {
     @Binding var photoItems: [PhotosPickerItem]
-    @Binding var modelOverride: String
-    var enabledSkillCount: Int = 0
-    var onApplyModel: (String?, ModelPickScope) -> Void
-    var onOpenSkills: () -> Void = {}
+    /// Image captured from the camera. ConversationView watches this and
+    /// runs the same upload pipeline as for library picks.
+    @Binding var cameraImage: UIImage?
     var onDismiss: () -> Void = {}
 
-    @State private var showModelPicker = false
-    // Pending pick waiting for the user to choose scope (conversation vs bot).
-    // nil slug = "clear" (revert to default), still needs the same scope ask.
-    @State private var pendingPick: PickPayload?
-
-    private struct PickPayload: Identifiable {
-        let id = UUID()
-        let slug: String?
-    }
+    @State private var showCamera = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,21 +35,10 @@ struct ChatActionSheet: View {
                 }
 
                 Button {
-                    showModelPicker = true
                     Haptics.tap()
+                    showCamera = true
                 } label: {
-                    actionTileLabel(icon: "cube.transparent", label: "模型选择")
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    Haptics.tap()
-                    onOpenSkills()
-                } label: {
-                    actionTileLabel(
-                        icon: "puzzlepiece.extension",
-                        label: enabledSkillCount > 0 ? "技能 · \(enabledSkillCount)" : "技能"
-                    )
+                    actionTileLabel(icon: "camera", label: "拍照")
                 }
                 .buttonStyle(.plain)
 
@@ -67,46 +51,16 @@ struct ChatActionSheet: View {
             Spacer(minLength: 0)
         }
         .background(Theme.Palette.canvas)
-        .sheet(isPresented: $showModelPicker) {
-            ModelPickerSheet(
-                initial: modelOverride,
-                allowsClear: true,
-                onPick: { picked in
-                    showModelPicker = false
-                    // Defer to a scope confirmation — same dialog whether the
-                    // user picked a slug or chose "跟随机器人默认" (nil).
-                    pendingPick = PickPayload(slug: picked)
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in
+                showCamera = false
+                if let image {
+                    cameraImage = image
+                    onDismiss()
                 }
-            )
-            .presentationDragIndicator(.visible)
-            .tint(Theme.Palette.accent)
-        }
-        .confirmationDialog(
-            pendingPick?.slug.map { "应用「\(shortSlug($0))」到…" } ?? "清除模型选择…",
-            isPresented: Binding(
-                get: { pendingPick != nil },
-                set: { if !$0 { pendingPick = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("仅本次会话") {
-                if let p = pendingPick { onApplyModel(p.slug, .conversation) }
-                pendingPick = nil
             }
-            Button("这个机器人（仅自己）") {
-                if let p = pendingPick { onApplyModel(p.slug, .bot) }
-                pendingPick = nil
-            }
-            Button("取消", role: .cancel) { pendingPick = nil }
-        } message: {
-            Text(pendingPick?.slug == nil
-                 ? "选择「仅本次会话」会清掉本会话的临时指定；选择「这个机器人」会把你为这个机器人指定的模型也一并清掉，回到机器人默认。"
-                 : "选择「仅本次会话」只影响当前对话；选择「这个机器人」会改你这台号上这个机器人的默认模型，对所有未单独指定的会话生效。")
+            .ignoresSafeArea()
         }
-    }
-
-    private func shortSlug(_ slug: String) -> String {
-        slug.split(separator: "/").last.map(String.init) ?? slug
     }
 
     private func actionTileLabel(icon: String, label: String) -> some View {
@@ -130,5 +84,38 @@ struct ChatActionSheet: View {
                 .truncationMode(.middle)
         }
         .frame(width: 64)
+    }
+}
+
+/// Thin UIImagePickerController wrapper for the camera. PhotosPicker is
+/// already used for library selection; UIKit's picker is the cleanest
+/// way to get a one-shot camera capture without dragging in AVFoundation.
+struct CameraPicker: UIViewControllerRepresentable {
+    var onPick: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onPick: (UIImage?) -> Void
+        init(onPick: @escaping (UIImage?) -> Void) { self.onPick = onPick }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            let image = (info[.editedImage] as? UIImage) ?? (info[.originalImage] as? UIImage)
+            onPick(image)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onPick(nil)
+        }
     }
 }

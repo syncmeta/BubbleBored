@@ -12,6 +12,7 @@
 		0805B09651FBC60ED2B1F2CD /* SurfRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CFF84848C477B2B3264A64 /* SurfRunView.swift */; };
 		08962059E80F11B979C4C31C /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 520E0AE34E01CC3ECEF49928 /* WebSocketClient.swift */; };
 		091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9E90A433CF0CAC8986218C6 /* ConversationView.swift */; };
+		AA01CONVSETTINGS01 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01CONVSETTINGSREF01 /* ConversationSettingsView.swift */; };
 		0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CADBAC8F028F13BC61D5286 /* EmptyHint.swift */; };
 		11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E4E56DDBD71AB05278A385 /* ServerImage.swift */; };
 		187DAD3EDABBDAEBC553A550 /* Connect.swift in Sources */ = {isa = PBXBuildFile; fileRef = D01CECBBCBB7D19F9EB9FFA7 /* Connect.swift */; };
@@ -103,6 +104,7 @@
 		F883A93862FE10AC98EE0FDD /* DebateRoundView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebateRoundView.swift; sourceTree = "<group>"; };
 		F932206D62405FD4C1F0143B /* BubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BubbleView.swift; sourceTree = "<group>"; };
 		F9E90A433CF0CAC8986218C6 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
+		BB01CONVSETTINGSREF01 /* ConversationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSettingsView.swift; sourceTree = "<group>"; };
 		FB16E5402FB9F31D68B74165 /* TabRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRoot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -160,6 +162,7 @@
 				37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */,
 				3085FEC82B399B97022B1078 /* ComposerView.swift */,
 				F9E90A433CF0CAC8986218C6 /* ConversationView.swift */,
+				BB01CONVSETTINGSREF01 /* ConversationSettingsView.swift */,
 				E68B229EDD3BD50361009601 /* MessageTabView.swift */,
 			);
 			path = Message;
@@ -405,6 +408,7 @@
 				F21D3DA278967B87BA15A3EF /* ComposerView.swift in Sources */,
 				187DAD3EDABBDAEBC553A550 /* Connect.swift in Sources */,
 				091D2F4E1050EAF98F72B1B1 /* ConversationView.swift in Sources */,
+				AA01CONVSETTINGS01 /* ConversationSettingsView.swift in Sources */,
 				3C7E3014585C7C0E7E915014 /* DebateRoundView.swift in Sources */,
 				B4CE20E56EB24A8AB3F753DC /* DebateTabView.swift in Sources */,
 				0AC7612397D7D0B4E07DD2AC /* EmptyHint.swift in Sources */,
