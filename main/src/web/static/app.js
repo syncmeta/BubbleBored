@@ -3623,6 +3623,13 @@ function statusLabel(status, active) {
   })[status] ?? status;
 }
 
+function formatSurfCost(conv) {
+  const used = Number(conv?.cost_used_usd ?? 0);
+  const budget = Number(conv?.cost_budget_usd ?? 0);
+  if (!budget) return '—';
+  return `$${used.toFixed(3)} / $${budget.toFixed(2)}`;
+}
+
 function renderSurfConvItem(conv) {
   const el = document.createElement('div');
   el.className = 'conv-item';
@@ -3635,12 +3642,12 @@ function renderSurfConvItem(conv) {
   const subtitle = conv.source_message_conv_id
     ? `源 · ${conv.source_message_conv_id.slice(0, 8)}`
     : '自由冲浪';
-  const modelHint = conv.model_slug ? conv.model_slug.split('/').pop() : '';
+  const costHint = formatSurfCost(conv);
 
   el.innerHTML = `
     <span class="conv-body">
       <span class="conv-title">${esc(conv.title || '冲浪')}</span>
-      <span class="conv-subtitle">${esc(subtitle)} · ${esc(modelHint)}</span>
+      <span class="conv-subtitle">${esc(subtitle)} · ${esc(costHint)}</span>
       <span class="conv-debate-meta">${esc(status)}${dot ? ' ' + dot : ''}</span>
     </span>
     <span class="conv-actions">
@@ -3706,7 +3713,7 @@ function updateSurfHeader() {
   title.textContent = c.title || '冲浪';
   const isActive = state.activeSurfs.has(c.id) || c.active;
   const parts = [
-    `模型 ${c.model_slug ?? '—'}`,
+    formatSurfCost(c),
     c.source_message_conv_id ? `源 ${c.source_message_conv_id.slice(0, 8)}` : '自由冲浪',
     `状态 ${statusLabel(c.status, isActive)}`,
   ];
@@ -3821,22 +3828,11 @@ async function stopCurrentSurf() {
 
 async function openSurfModal() {
   surfTabState.modalSelectedSource = '';
-  document.getElementById('surf-modal-budget').value = '10';
+  document.getElementById('surf-modal-budget').value = '0.30';
 
   // Default bot: whatever is filtered in the sidebar, else the first configured.
   surfTabState.modalSelectedBot =
     state.botFilter || (state.bots[0]?.id ?? '');
-
-  // Reset vector-direction controls each time the modal opens. Re-running
-  // onSurfDirectionChange() after the radio reset keeps the manual-fields
-  // visibility in sync with the radio (otherwise a leftover state from a
-  // prior open could show the wrong subset).
-  const autoRadio = document.querySelector('input[name="surf-direction"][value="auto"]');
-  if (autoRadio) autoRadio.checked = true;
-  document.getElementById('surf-modal-vector-topic').value = '';
-  document.getElementById('surf-modal-vector-mode').value = 'depth';
-  document.getElementById('surf-modal-vector-fresh').value = '';
-  onSurfDirectionChange();
 
   // Render bot picker; switching bot also reloads the source list (the chosen
   // anchor must belong to the selected bot).
@@ -3878,42 +3874,20 @@ async function reloadSurfModalSources() {
 
 function closeSurfModal(e) { closeModal('surf-modal', e); }
 
-function onSurfDirectionChange() {
-  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
-  document.getElementById('surf-manual-fields').style.display = dir === 'manual' ? 'flex' : 'none';
-  if (dir === 'manual') onSurfModeChange();
-}
-
-function onSurfModeChange() {
-  const mode = document.getElementById('surf-modal-vector-mode').value;
-  document.getElementById('surf-modal-vector-fresh').style.display = mode === 'fresh' ? 'block' : 'none';
-}
-
 async function submitSurfModal() {
   if (!surfTabState.modalSelectedBot) { alert('请选一个机器人'); return; }
   const budgetRaw = document.getElementById('surf-modal-budget').value.trim();
-  const budget = budgetRaw ? Math.max(1, parseInt(budgetRaw)) : undefined;
+  const costBudgetUsd = budgetRaw ? Math.max(0.01, parseFloat(budgetRaw)) : undefined;
+  if (budgetRaw && !Number.isFinite(costBudgetUsd)) {
+    alert('预算需要填一个数字（USD）');
+    return;
+  }
   const body = {
     autoStart: true,
     botId: surfTabState.modalSelectedBot,
   };
   if (surfTabState.modalSelectedSource) body.sourceMessageConversationId = surfTabState.modalSelectedSource;
-  if (budget) body.budget = budget;
-
-  const dir = document.querySelector('input[name="surf-direction"]:checked')?.value || 'auto';
-  if (dir === 'manual') {
-    const topic = document.getElementById('surf-modal-vector-topic').value.trim();
-    if (!topic) { alert('请填 topic 或切回自动选'); return; }
-    const mode = document.getElementById('surf-modal-vector-mode').value;
-    const override = { topic, mode };
-    if (mode === 'fresh') {
-      const fresh = document.getElementById('surf-modal-vector-fresh').value.trim();
-      if (fresh) override.freshness_window = fresh;
-    }
-    body.vectorOverride = override;
-  } else if (dir === 'serendipity') {
-    body.forceSerendipity = true;
-  }
+  if (costBudgetUsd) body.costBudgetUsd = costBudgetUsd;
 
   try {
     const res = await fetch('/api/surf/conversations', {

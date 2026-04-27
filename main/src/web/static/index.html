@@ -182,38 +182,8 @@
             <div id="surf-modal-bot-host" class="bot-pick-row"></div>
             <label class="modal-label" id="surf-modal-source-label">基于该机器人哪次会话？（可空 — 自由冲浪）</label>
             <div id="surf-modal-source-list" class="source-list"></div>
-            <label class="modal-label">预算（搜索 + 阅读次数上限）</label>
-            <input type="text" id="surf-modal-budget" placeholder="10">
-            <label class="modal-label">冲浪方向</label>
-            <div id="surf-modal-direction" class="surf-direction">
-              <label class="surf-dir-row">
-                <input type="radio" name="surf-direction" value="auto" checked
-                       onchange="onSurfDirectionChange()">
-                <span>自动选向量（按你的兴趣 / 保存文章 / 最近聊的来挑）</span>
-              </label>
-              <label class="surf-dir-row">
-                <input type="radio" name="surf-direction" value="manual"
-                       onchange="onSurfDirectionChange()">
-                <span>指定向量</span>
-              </label>
-              <div id="surf-manual-fields" class="surf-manual-fields" style="display:none">
-                <input type="text" id="surf-modal-vector-topic"
-                       placeholder="topic（具体到能搜的兴趣点，如：serendipity 引擎的 evaluation）">
-                <select id="surf-modal-vector-mode" onchange="onSurfModeChange()">
-                  <option value="depth">挖深（追机制 / 原理 / 一手资料）</option>
-                  <option value="granular">挖细（子分支 / 边角案例 / 具体例子）</option>
-                  <option value="fresh">挖新（最近进展 / 论文 / 发布）</option>
-                </select>
-                <input type="text" id="surf-modal-vector-fresh"
-                       placeholder="freshness window（仅挖新用，如 past 90 days）"
-                       style="display:none">
-              </div>
-              <label class="surf-dir-row">
-                <input type="radio" name="surf-direction" value="serendipity"
-                       onchange="onSurfDirectionChange()">
-                <span>挖远（serendipity）—— 跨域瞎逛模式</span>
-              </label>
-            </div>
+            <label class="modal-label">预算（USD，机器人按此自调节奏）</label>
+            <input type="text" id="surf-modal-budget" placeholder="0.30">
           </div>
           <div class="modal-foot">
             <button class="btn-ghost" onclick="closeModal('surf-modal')">取消</button>

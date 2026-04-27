@@ -1749,31 +1749,6 @@ main {
   width: 18px; height: 18px; font-size: 10px;
 }
 
-.surf-direction { display: flex; flex-direction: column; gap: 6px; }
-.surf-dir-row {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 13px; color: var(--text-1); cursor: pointer;
-  padding: 4px 0;
-}
-.surf-dir-row input[type="radio"] { margin: 0; }
-.surf-manual-fields {
-  display: flex; flex-direction: column; gap: 8px;
-  margin: 4px 0 6px 22px;
-  padding: 10px;
-  background: var(--bg);
-  border: 1px solid var(--border-light);
-  border-radius: var(--r-sm, 6px);
-}
-.surf-manual-fields select {
-  font: inherit;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  background: var(--bg);
-  color: var(--text-1);
-}
-.surf-manual-fields select:focus { border-color: var(--accent-muted); outline: none; }
-
 /* ── Reusable searchable model picker (model-picker.js) ── */
 
 .model-picker-wrap {
