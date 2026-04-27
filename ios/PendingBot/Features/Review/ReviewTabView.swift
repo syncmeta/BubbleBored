@@ -105,7 +105,7 @@ private struct NewReviewSheet: View {
             Form {
                 Section("Bot") {
                     Picker("Bot", selection: $selectedBot) {
-                        ForEach(bots) { Text($0.display_name).tag(Optional($0)) }
+                        ForEach(bots) { Text($0.nameWithModel).tag(Optional($0)) }
                     }
                 }
                 Section("回顾哪个会话?") {

@@ -8,6 +8,23 @@ struct Bot: Codable, Identifiable, Hashable {
     let id: String
     let display_name: String
     let access_mode: String?
+    let model: String?
+
+    /// Short tag derived from the OpenRouter slug — drops the provider prefix
+    /// so "z-ai/glm-5.1" renders as "glm-5.1". Returns nil when no model is set.
+    var modelTag: String? {
+        guard let m = model, !m.isEmpty else { return nil }
+        if let slash = m.lastIndex(of: "/") {
+            return String(m[m.index(after: slash)...])
+        }
+        return m
+    }
+
+    /// Display name with the live model tag appended, e.g. "01 · glm-5.1".
+    var nameWithModel: String {
+        guard let tag = modelTag else { return display_name }
+        return "\(display_name) · \(tag)"
+    }
 }
 
 struct Conversation: Codable, Identifiable, Hashable {

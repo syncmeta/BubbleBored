@@ -17,7 +17,7 @@ struct MessageTabView: View {
                 TabHeaderBar(title: "消息") {
                     Menu {
                         ForEach(bots) { bot in
-                            Button(bot.display_name) {
+                            Button(bot.nameWithModel) {
                                 Task { await createConversation(with: bot) }
                             }
                         }
@@ -141,7 +141,9 @@ private struct ConversationListRow: View {
     let isUnread: Bool
 
     private var botName: String {
-        conv.bot_name ?? bot?.display_name ?? conv.bot_id
+        // Prefer the live bot record so the model tag stays in sync with config;
+        // fall back to the joined bot_name if we don't have the bot loaded yet.
+        bot?.nameWithModel ?? conv.bot_name ?? conv.bot_id
     }
 
     var body: some View {

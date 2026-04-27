@@ -24,7 +24,7 @@ struct ConversationView: View {
     @State private var pending = false              // server is generating (bot_typing active)
 
     private var botName: String {
-        conversation.bot_name ?? bot?.display_name ?? conversation.bot_id
+        bot?.nameWithModel ?? conversation.bot_name ?? conversation.bot_id
     }
 
     init(conversation: Conversation, bot: Bot?, onChange: @escaping () -> Void = {}) {

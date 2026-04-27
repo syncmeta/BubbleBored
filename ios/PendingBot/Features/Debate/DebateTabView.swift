@@ -152,7 +152,7 @@ private struct NewDebateSheet: View {
     private var botCard: some View {
         debateCard(title: "Bot") {
             Picker("Bot", selection: $selectedBot) {
-                ForEach(bots) { Text($0.display_name).tag(Optional($0)) }
+                ForEach(bots) { Text($0.nameWithModel).tag(Optional($0)) }
             }
             .pickerStyle(.menu)
             .tint(Theme.Palette.ink)
