@@ -5,7 +5,9 @@ import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
 import { buildPrompt, type ChatTone } from './prompt-builder';
 import { checkSilent } from './silent';
-import { augmentWithWebSearch } from './search/augment';
+import { SEARCH_WEB_TOOL, runSearchToolCall, buildToolRoundMessages } from './search/tool';
+import type { ToolCallAccum } from '../llm/stream';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   insertMessage, updateConversationRound, updateConversationActivity,
   resetSurfInterval, findConversationById, bindAttachmentsToMessage,
@@ -199,27 +201,9 @@ export async function handleUserMessage(params: {
     }
   }
 
-  // 联网搜索: run search BEFORE building the prompt so findings are part
-  // of the same system message. Result merges into extraContext (if the
-  // caller already passed something, the search block is appended after).
-  if (webSearch && userMessages.length > 0) {
-    const queryText = userMessages.map(e => e.content).filter(Boolean).join('\n').trim();
-    if (queryText) {
-      const augment = await augmentWithWebSearch({
-        userId, conversationId, query: queryText,
-        emitLog: (content) => replyFn({ type: 'surf_status', conversationId, content }),
-      });
-      if (augment.context) {
-        extraContext = extraContext
-          ? `${extraContext}\n\n${augment.context}`
-          : augment.context;
-      }
-    }
-  }
-
   // Build prompt
   console.log(`[chat] building prompt...`);
-  const messages = await buildPrompt({
+  const promptMessages = await buildPrompt({
     botId,
     conversationId,
     userId,
@@ -227,36 +211,40 @@ export async function handleUserMessage(params: {
     tone,
   });
   const chatModel = modelFor(botId, conversationId);
-  console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}`);
+  console.log(`[chat] prompt: ${promptMessages.length} messages, model: ${chatModel}`);
+
+  // 联网 toggle exposes one tool to the model — `search_web`. The model
+  // chooses whether and what to query. Pre-fetching every send turns into
+  // garbage results for "hi", and the user explicitly asked for the
+  // ChatGPT/Claude-style behaviour where the model decides.
+  const tools = webSearch ? [SEARCH_WEB_TOOL] : undefined;
+  const TOOL_LOOP_MAX = 4;
 
   const messageId = randomUUID();
   const startTime = Date.now();
   const streamMeta: StreamMeta = {};
 
   try {
-    console.log(`[chat] calling LLM...`);
-    const { stream } = await chatCompletionStream({
-      model: chatModel,
-      messages,
-    });
-
     let fullOutput = '';
     let silentDetected = false;
+    // Segments accumulate across rounds; a segmentIndex is monotonically
+    // growing so multi-bubble ordering survives the tool round handoff.
     const segments: Map<number, string> = new Map();
     const sentSegments = new Set<number>();
     let earlyBuffer = '';
     let earlyCheckDone = false;
-
     const rawSegments: string[] = [];
-    const onSegmentReady = (segmentIndex: number, fullText: string) => {
+
+    let segmentBase = 0; // starting segmentIndex for the current round
+    const onSegmentReady = (roundLocalIndex: number, fullText: string) => {
+      const segmentIndex = segmentBase + roundLocalIndex;
       rawSegments[segmentIndex] = fullText;
       const trimmed = fullText.trim();
       if (trimmed) segments.set(segmentIndex, trimmed);
     };
-
     const sendSegment = (idx: number) => {
       if (sentSegments.has(idx)) return;
-      if (isInterrupted(conversationId, genStartedAt)) return; // new message arrived, grace expired
+      if (isInterrupted(conversationId, genStartedAt)) return;
       const content = segments.get(idx);
       if (content) {
         sentSegments.add(idx);
@@ -269,36 +257,107 @@ export async function handleUserMessage(params: {
       }
     };
 
-    for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta, { disableSplit: tone === 'normal' })) {
-      // Check if new message arrived and grace period expired
-      if (isInterrupted(conversationId, genStartedAt)) {
-        console.log(`[chat] interrupted by new message, stopping generation`);
-        break;
-      }
+    let conversationMessages: ChatCompletionMessageParam[] = promptMessages;
+    let interrupted = false;
 
-      fullOutput += seg.delta;
+    for (let round = 0; round < TOOL_LOOP_MAX; round++) {
+      const isLastRound = round === TOOL_LOOP_MAX - 1;
+      console.log(`[chat] calling LLM (round ${round + 1}${tools ? ', tools=on' : ''})...`);
+      const { stream } = await chatCompletionStream({
+        model: chatModel,
+        messages: conversationMessages,
+        // Surface the tool unless this is the final fallback round — that
+        // way a runaway model can't keep tool-calling forever.
+        ...(tools && !isLastRound ? { tools } : {}),
+      });
 
-      // Early [SILENT] detection
-      if (!earlyCheckDone) {
-        earlyBuffer += seg.delta;
-        if (earlyBuffer.length >= 10) {
-          earlyCheckDone = true;
-          if (checkSilent(earlyBuffer).isSilent) {
-            silentDetected = true;
-            break;
+      const toolCallSink = new Map<number, ToolCallAccum>();
+      let roundContent = '';
+
+      for await (const seg of streamWithSplit(stream, onSegmentReady, streamMeta, {
+        disableSplit: tone === 'normal',
+        toolCallSink,
+      })) {
+        if (isInterrupted(conversationId, genStartedAt)) {
+          console.log(`[chat] interrupted by new message, stopping generation`);
+          interrupted = true;
+          break;
+        }
+
+        roundContent += seg.delta;
+        fullOutput += seg.delta;
+
+        if (!earlyCheckDone) {
+          earlyBuffer += seg.delta;
+          if (earlyBuffer.length >= 10) {
+            earlyCheckDone = true;
+            if (checkSilent(earlyBuffer).isSilent) {
+              silentDetected = true;
+              break;
+            }
           }
         }
-      }
 
-      // When a segment boundary is hit, immediately send completed segments
-      if (seg.isNewSegment) {
-        for (const [idx] of segments) {
-          sendSegment(idx);
+        if (seg.isNewSegment) {
+          for (const [idx] of segments) sendSegment(idx);
         }
       }
+
+      if (interrupted || silentDetected) break;
+
+      // Move the segment cursor past whatever this round produced (even if
+      // it ended without a final \n\n — the trailing buffer becomes one
+      // more segment in onSegmentReady's terminal flush).
+      segmentBase = (segments.size === 0)
+        ? segmentBase
+        : Math.max(...segments.keys()) + 1;
+
+      const calls = Array.from(toolCallSink.values()).sort((a, b) => a.index - b.index);
+      const searchCalls = calls.filter(c => c.name === 'search_web' && c.id);
+      if (searchCalls.length === 0) break; // no tool calls → final answer streamed
+
+      // Tool round. Execute calls (in parallel — they're independent), feed
+      // results back into the conversation, loop. Live progress goes through
+      // surf_status so the chat UI shows "搜索：…" / "搜索完成" while we wait.
+      console.log(`[chat] tool round ${round + 1}: ${searchCalls.length} search call(s)`);
+      const queryList = searchCalls.map(c => {
+        try {
+          const args = JSON.parse(c.args || '{}');
+          return String(args.query ?? '').slice(0, 200);
+        } catch { return ''; }
+      });
+      replyFn({
+        type: 'surf_status', conversationId,
+        content: `🔍 搜索：${queryList.filter(Boolean).join('；')}`,
+      });
+
+      const results = await Promise.all(searchCalls.map(async (c, i) => {
+        const q = queryList[i] ?? '';
+        return runSearchToolCall({
+          userId, conversationId,
+          call: { id: c.id, query: q },
+        });
+      }));
+
+      replyFn({
+        type: 'surf_status', conversationId,
+        content: '搜索完成，整理回答中…',
+      });
+
+      // Append the tool round to the conversation context so the next round
+      // can read the results.
+      conversationMessages = [
+        ...conversationMessages,
+        ...buildToolRoundMessages(
+          roundContent,
+          searchCalls.map((c, i) => ({ id: c.id, query: queryList[i] ?? '' })),
+          results,
+        ),
+      ];
     }
 
-    // Check [SILENT]
+    // Final-output [SILENT] recheck — handles the case where the marker
+    // appears past the early-detection window (10 chars in).
     if (!silentDetected && checkSilent(fullOutput).isSilent) {
       silentDetected = true;
     }
