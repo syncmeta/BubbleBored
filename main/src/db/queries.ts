@@ -39,6 +39,34 @@ export function setUserAdmin(id: string, isAdmin: boolean): void {
   ).run(isAdmin ? 1 : 0, id);
 }
 
+// Wipe a user and every row that hangs off them. Returns attachment file
+// paths so the caller can unlink the blobs from disk. Used by the 钥匙 panel
+// revoke flow — each iOS-mint key has its own user, so revoking the key
+// purges that holder's chats, portraits, audit log, profile, etc.
+//
+// Caller MUST guard against passing an admin user — this would happily wipe
+// the only-admin row and brick the system.
+export function deleteUserCascade(userId: string): string[] {
+  const db = getDb();
+  const convIds = db.query<{ id: string }, [string]>(
+    'SELECT id FROM conversations WHERE user_id = ?'
+  ).all(userId).map(r => r.id);
+  const attachmentPaths: string[] = [];
+  for (const id of convIds) attachmentPaths.push(...deleteConversation(id));
+  db.query('DELETE FROM audit_log WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM ai_picks WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM device_tokens WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM user_profile WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM skills WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM surf_vectors WHERE user_id = ?').run(userId);
+  db.query('DELETE FROM api_keys WHERE user_id = ?').run(userId);
+  // The invite history belongs to the admin who minted invites, not the
+  // recipient — null the back-pointer rather than dropping the row.
+  db.query('UPDATE invites SET redeemed_by_user_id = NULL WHERE redeemed_by_user_id = ?').run(userId);
+  db.query('DELETE FROM users WHERE id = ?').run(userId);
+  return attachmentPaths;
+}
+
 // Bots
 export function upsertBot(id: string, displayName: string, configHash: string) {
   getDb().query(
@@ -53,6 +81,18 @@ export function findBot(id: string) {
 
 export function listBots() {
   return getDb().query<any, []>('SELECT * FROM bots').all();
+}
+
+// Wipe a bot and every conversation tree that hangs off it. Used when a bot
+// disappears from config.yaml (rename/remove) — leaving stale rows behind
+// would orphan conversations that no findBot() lookup can satisfy.
+export function deleteBotCascade(botId: string): void {
+  const db = getDb();
+  const convIds = db.query<{ id: string }, [string]>(
+    'SELECT id FROM conversations WHERE bot_id = ?'
+  ).all(botId).map(r => r.id);
+  for (const id of convIds) deleteConversation(id);
+  db.query('DELETE FROM bots WHERE id = ?').run(botId);
 }
 
 // Conversations
@@ -87,6 +127,14 @@ export function updateConversationTitle(id: string, title: string) {
   getDb().query(
     'UPDATE conversations SET title = ? WHERE id = ?'
   ).run(title, id);
+}
+
+// Per-conversation model override. Pass null to clear and fall back to the
+// bot's default model in config.yaml.
+export function setConversationModelOverride(id: string, slug: string | null) {
+  getDb().query(
+    'UPDATE conversations SET model_override = ? WHERE id = ?'
+  ).run(slug, id);
 }
 
 // Returns paths of any attachment files the caller should unlink from disk.
@@ -555,52 +603,11 @@ export function setReviewRunStatus(
   ).run(status, conversationId);
 }
 
-// ---------- Model assignments (UI-managed per-task model picks) ----------
-
-export type ModelTaskType =
-  | 'chat'      // default chat reply
-  | 'review'    // self-review
-  | 'surfing'   // surfing planner / curator
-  | 'title'     // title generation
-  | 'perception'// task-phase + cross-focus signals
-  | 'portrait'  // portrait generators
-  ;
-
-export const MODEL_TASK_TYPES: readonly ModelTaskType[] = [
-  'chat', 'review', 'surfing', 'title', 'perception', 'portrait',
-];
-
-export interface ModelAssignmentRow {
-  task_type: ModelTaskType;
-  slug: string;
-  updated_at: number;
-}
-
-export function listModelAssignments(): ModelAssignmentRow[] {
-  return getDb().query<ModelAssignmentRow, []>(
-    `SELECT * FROM model_assignments`
-  ).all();
-}
-
-export function getModelAssignment(taskType: ModelTaskType): string | null {
-  const row = getDb().query<{ slug: string }, [string]>(
-    `SELECT slug FROM model_assignments WHERE task_type = ?`
-  ).get(taskType);
-  return row?.slug ?? null;
-}
-
-export function upsertModelAssignment(taskType: ModelTaskType, slug: string): void {
-  getDb().query(
-    `INSERT INTO model_assignments (task_type, slug, updated_at) VALUES (?, ?, unixepoch())
-     ON CONFLICT(task_type) DO UPDATE SET slug = excluded.slug, updated_at = unixepoch()`
-  ).run(taskType, slug);
-}
-
 // ---------- Debate ----------
 
 export interface DebateSettingsRow {
   conversation_id: string;
-  model_slugs: string;
+  bot_ids: string;
   topic: string | null;
   round_count: number;
   created_at: number;
@@ -608,11 +615,11 @@ export interface DebateSettingsRow {
 }
 
 export function createDebateSettings(
-  conversationId: string, modelSlugs: string[], topic: string | null,
+  conversationId: string, botIds: string[], topic: string | null,
 ): void {
   getDb().query(
-    `INSERT INTO debate_settings (conversation_id, model_slugs, topic) VALUES (?, ?, ?)`
-  ).run(conversationId, JSON.stringify(modelSlugs), topic);
+    `INSERT INTO debate_settings (conversation_id, bot_ids, topic) VALUES (?, ?, ?)`
+  ).run(conversationId, JSON.stringify(botIds), topic);
 }
 
 export function getDebateSettings(conversationId: string): DebateSettingsRow | null {

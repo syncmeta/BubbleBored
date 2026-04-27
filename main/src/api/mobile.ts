@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import {
   listBots, findBot,
   listConversationsByUser, findConversationById, createConversation,
-  updateConversationTitle, deleteConversation,
+  updateConversationTitle, setConversationModelOverride, deleteConversation,
   getMessages, resetConversation, deleteMessage,
   getAttachmentsForMessages,
 } from '../db/queries';
@@ -92,9 +92,16 @@ mobileApiRoutes.post('/conversations', async (c) => {
 
 mobileApiRoutes.patch('/conversations/:id', async (c) => {
   const id = c.req.param('id');
-  const { title } = await c.req.json<{ title: string }>();
-  if (typeof title !== 'string') return c.json({ error: 'title required' }, 400);
-  updateConversationTitle(id, title.trim());
+  const body = await c.req.json<{ title?: string; modelOverride?: string | null }>();
+  if (typeof body.title === 'string') {
+    updateConversationTitle(id, body.title.trim());
+  }
+  if (body.modelOverride !== undefined) {
+    const slug = typeof body.modelOverride === 'string' && body.modelOverride.trim()
+      ? body.modelOverride.trim()
+      : null;
+    setConversationModelOverride(id, slug);
+  }
   return c.json({ ok: true });
 });
 

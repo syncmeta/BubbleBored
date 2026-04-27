@@ -50,7 +50,7 @@ async function checkAllConversations(): Promise<void> {
       const surfConvId = createSurfConversation({
         botId: conv.bot_id, userId: conv.user_id,
         sourceMessageConvId: conv.id,
-        modelSlug: modelFor('surfing'),
+        modelSlug: modelFor(conv.bot_id),
         budget: botConfig.surfing.maxRequests,
         title: '自动冲浪',
       });

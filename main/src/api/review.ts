@@ -88,7 +88,7 @@ reviewRoutes.post('/conversations', async (c) => {
     fromSourceConvId: sourceConvId,
   });
 
-  const modelSlug = body.modelSlug?.trim() || modelFor('review');
+  const modelSlug = body.modelSlug?.trim() || modelFor(botId);
 
   const reviewConvId = createReviewConversation({
     botId, userId: user.id,
@@ -143,7 +143,9 @@ reviewRoutes.post('/run/:id', async (c) => {
 reviewRoutes.get('/sources', (c) => {
   const user = findUser(c);
   if (!user) return c.json([]);
-  return c.json(listConversationsByUser(user.id, 'message'));
+  const botId = c.req.query('botId');
+  const all = listConversationsByUser(user.id, 'message');
+  return c.json(botId ? all.filter((c: any) => c.bot_id === botId) : all);
 });
 
 // In-message trigger from the chat-header review button. Creates a 回顾

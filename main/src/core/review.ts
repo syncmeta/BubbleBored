@@ -141,7 +141,7 @@ export async function runReview(params: RunReviewParams): Promise<void> {
     }
 
     const reviewPrompt = await configManager.readPrompt('review.md');
-    const model = run.model_slug || modelFor('review');
+    const model = run.model_slug || modelFor(reviewConv.bot_id);
     emit(reviewConvId, `模型：${model}`);
 
     const historyMessages = history.map((m: any) => ({
@@ -336,7 +336,7 @@ export async function checkAndTriggerReview(
     botId,
     userId: conv.user_id,
     sourceMessageConvId: messageConvId,
-    modelSlug: modelFor('review'),
+    modelSlug: modelFor(botId),
     title: manual ? '回顾' : '自动回顾',
   });
   reviewsByMessageConv.set(messageConvId, reviewConvId);
@@ -398,7 +398,7 @@ export async function continueReview(params: ContinueReviewParams): Promise<void
 
   try {
     const followupPrompt = await configManager.readPrompt('review-followup.md');
-    const model = run.model_slug || modelFor('review');
+    const model = run.model_slug || modelFor(reviewConv.bot_id);
 
     // Source-conv reference (the conversation being reviewed). Same 30-msg
     // slice runReview uses, rendered as plain text so we can stuff it into

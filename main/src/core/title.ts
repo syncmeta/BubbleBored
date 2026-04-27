@@ -30,7 +30,7 @@ export async function generateTitle(
     const history = getMessages(conversationId, historyLimit);
     if (history.length < 2) return; // need at least one exchange
 
-    const model = modelFor('title');
+    const model = modelFor(conv.bot_id);
 
     const promptText = await configManager.readPrompt('title.md');
 

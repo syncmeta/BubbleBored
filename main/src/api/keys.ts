@@ -2,12 +2,13 @@ import { Hono } from 'hono';
 import { randomUUID, randomBytes } from 'crypto';
 import QRCode from 'qrcode';
 import {
-  createUser, createApiKey, findApiKeyById,
+  createUser, createApiKey, findApiKeyById, findUserById,
   listApiKeys, revokeApiKey, rotateApiKeyShareToken,
-  updateApiKeyShareUrls,
+  updateApiKeyShareUrls, deleteUserCascade,
 } from '../db/queries';
 import { hashApiKey, base64UrlEncode, requireAdminMiddleware } from './_helpers';
 import { detectServerUrls } from './server-urls';
+import { unlinkAttachmentFiles } from '../core/attachments';
 
 /**
  * Keys management API. Powers the 钥匙 admin panel in the web UI.
@@ -204,10 +205,27 @@ keysRoutes.patch('/:id/share/urls', async (c) => {
 });
 
 // ── Revoke ──────────────────────────────────────────────────────────────────
+//
+// Revoking an iOS key also wipes the holder's data — chats, portraits, audit,
+// attachments, the lot. Each key was minted with its own fresh users row, so
+// "revoke key" and "delete user" are the same action by design.
+//
+// Admin users are an exception: their `users` row may also be the entry point
+// the admin themselves uses, so we soft-revoke the key and leave the account
+// intact. Use the recovery script (scripts/reset-admin-key.ts) if the admin
+// loses their key — don't try to clean it up through this endpoint.
 
 keysRoutes.delete('/:id', (c) => {
   const row = findApiKeyById(c.req.param('id'));
   if (!row) return c.json({ error: 'not found' }, 404);
-  revokeApiKey(row.id);
-  return c.json({ ok: true });
+
+  const target = findUserById(row.user_id);
+  if (target?.is_admin) {
+    revokeApiKey(row.id);
+    return c.json({ ok: true, mode: 'revoke' });
+  }
+
+  const paths = deleteUserCascade(row.user_id);
+  unlinkAttachmentFiles(paths).catch(() => {});
+  return c.json({ ok: true, mode: 'purge' });
 });

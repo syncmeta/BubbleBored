@@ -91,15 +91,6 @@ function runMigrations(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_type, created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_model ON audit_log(model, created_at);
 
-    -- Self-heal: model_assignments was added in v10 but some pre-v10 DBs
-    -- already had user_version > 10 from earlier schema iterations, so the
-    -- gated block below never fired for them. Idempotent CREATE here ensures
-    -- the table exists regardless of the recorded migration version.
-    CREATE TABLE IF NOT EXISTS model_assignments (
-      task_type TEXT PRIMARY KEY,
-      slug TEXT NOT NULL,
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
   `);
   // NOTE: indexes/tables that depend on the v16 schema (audit_log.user_id +
   // the invites table) are created inside the v16 migration block below so
@@ -262,9 +253,9 @@ function runMigrations(db: Database): void {
     db.exec('PRAGMA user_version = 9');
   }
 
-  // v10: model_assignments — UI-managed per-task model picks. Replaces the
-  // openrouter.* slugs in config.yaml as the source of truth. Seeded from
-  // config.yaml on first run so an existing install upgrades smoothly.
+  // v10: model_assignments — UI-managed per-task model picks. (Dropped in
+  // v19 once model selection moved to per-bot. The table is created here so
+  // older installs reach a consistent shape before v19 tears it down.)
   if (userVersion < 10) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS model_assignments (
@@ -348,7 +339,7 @@ function runMigrations(db: Database): void {
 
   // v13: drop provider_models — the picker now pulls the full model list
   // straight from OpenRouter's /api/v1/models, so the local library table is
-  // dead weight. model_assignments still holds per-task slug picks.
+  // dead weight.
   if (userVersion < 13) {
     db.exec(`DROP TABLE IF EXISTS provider_models;`);
     db.exec('PRAGMA user_version = 13');
@@ -402,9 +393,9 @@ function runMigrations(db: Database): void {
   // backing the admin-issued onboarding flow.
   if (userVersion < 16) {
     console.log('[db] v16: wiping anonymous data and adding account columns');
-    // Wipe in FK-safe order. bots + model_assignments stay intact (no user
-    // data there); everything below either FKs to users directly or to
-    // conversations, so the cascade through these tables covers it.
+    // Wipe in FK-safe order. bots stay intact (no user data there);
+    // everything below either FKs to users directly or to conversations, so
+    // the cascade through these tables covers it.
     db.exec(`
       DELETE FROM attachments;
       DELETE FROM messages;
@@ -497,5 +488,52 @@ function runMigrations(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id, sort_order, created_at);
     `);
     db.exec('PRAGMA user_version = 17');
+  }
+
+  // v18: 议论 switches from "models debate" to "bots debate". Each row in
+  // debate_settings now points to a list of bot IDs (instead of raw model
+  // slugs); the orchestrator looks up each bot's model + display name from
+  // config at run time. Old debate convs are unrecoverable (the slug list is
+  // useless without the bot context) so we wipe them. We also cull orphan bot
+  // rows + their conversations after the bot key rename in config.yaml
+  // (001/002/… → glm-5.1/glm-4.5-air/…) so registry.syncBots() won't leave
+  // dead rows behind.
+  if (userVersion < 18) {
+    db.exec(`DELETE FROM debate_settings;`);
+    db.exec(`
+      DELETE FROM messages WHERE conversation_id IN (
+        SELECT id FROM conversations WHERE feature_type = 'debate'
+      );
+      DELETE FROM conversations WHERE feature_type = 'debate';
+    `);
+    db.exec(`DROP TABLE IF EXISTS debate_settings;`);
+    db.exec(`
+      CREATE TABLE debate_settings (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),
+        bot_ids TEXT NOT NULL,
+        topic TEXT,
+        round_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 18');
+  }
+
+  // v19: drop model_assignments. Per-task model picks are gone — every task
+  // now uses the model defined on the bot it runs against.
+  if (userVersion < 19) {
+    db.exec(`DROP TABLE IF EXISTS model_assignments;`);
+    db.exec('PRAGMA user_version = 19');
+  }
+
+  // v20: per-conversation model override for the chat path. NULL = use the
+  // bot's configured model. Set/cleared from the iOS chat action sheet.
+  if (userVersion < 20) {
+    const cols = db.query(`PRAGMA table_info(conversations)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'model_override')) {
+      db.exec(`ALTER TABLE conversations ADD COLUMN model_override TEXT`);
+    }
+    db.exec('PRAGMA user_version = 20');
   }
 }

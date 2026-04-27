@@ -98,7 +98,7 @@ export async function generatePortrait(input: GenerateInput): Promise<GenerateRe
   }
 
   const systemPrompt = await configManager.readPrompt(PROMPT_FILES[input.kind]);
-  const model = input.model ?? modelFor('portrait');
+  const model = input.model ?? modelFor(sourceConv.bot_id);
 
   const userMessage = [
     profileText ? profileText + '\n' : '',

@@ -41,7 +41,6 @@ import { cancelPendingReview } from './core/review';
 import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
-import { ensureModelAssignmentsSeeded } from './core/models';
 import { runSurf, createSurfConversation } from './core/surfing/searcher';
 import { modelFor } from './core/models';
 
@@ -93,8 +92,6 @@ function ensureBootstrapAdminInvite() {
   console.log('='.repeat(72) + '\n');
 }
 
-ensureModelAssignmentsSeeded();
-
 syncBots();
 console.log('[init] bots synced');
 
@@ -122,7 +119,7 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
       const surfConvId = createSurfConversation({
         botId, userId,
         sourceMessageConvId: conversationId,
-        modelSlug: modelFor('surfing'),
+        modelSlug: modelFor(botId),
         budget: configManager.getBotConfig(botId).surfing.maxRequests,
       });
       runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })

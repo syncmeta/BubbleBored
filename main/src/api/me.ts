@@ -3,10 +3,7 @@ import { randomUUID } from 'crypto';
 import {
   getUserDashboardProfile, upsertUserDashboardProfile, setUserDisplayName,
   listAiPicks, createAiPick, softDeleteAiPick, hardDeleteAiPick,
-  listModelAssignments, upsertModelAssignment, MODEL_TASK_TYPES,
-  type ModelTaskType,
 } from '../db/queries';
-import { modelFor } from '../core/models';
 import { findUser, getOrCreateUser } from './_helpers';
 
 export const meRoutes = new Hono();
@@ -99,31 +96,6 @@ meRoutes.delete('/picks/:id', (c) => {
   const hard = c.req.query('hard') === '1';
   if (hard) hardDeleteAiPick(c.req.param('id'));
   else softDeleteAiPick(c.req.param('id'));
-  return c.json({ ok: true });
-});
-
-// ── Model assignments (one slug per task type) ──
-
-meRoutes.get('/model-assignments', (c) => {
-  const rows = listModelAssignments();
-  const map: Record<string, string> = {};
-  for (const t of MODEL_TASK_TYPES) {
-    // modelFor() falls back to config.yaml if the row is missing. The UI
-    // sees a fully-populated map either way, so the user always knows what
-    // model is in effect.
-    map[t] = rows.find(r => r.task_type === t)?.slug ?? modelFor(t);
-  }
-  return c.json(map);
-});
-
-meRoutes.patch('/model-assignments', async (c) => {
-  const body = await c.req.json<Partial<Record<ModelTaskType, string>>>();
-  for (const taskType of MODEL_TASK_TYPES) {
-    const slug = body[taskType];
-    if (typeof slug === 'string' && slug.trim()) {
-      upsertModelAssignment(taskType, slug.trim());
-    }
-  }
   return c.json({ ok: true });
 });
 

@@ -178,7 +178,7 @@ portraitRoutes.post('/chat/:convId', async (c) => {
   }));
 
   const systemPrompt = await configManager.readPrompt('portrait/chat.md');
-  const model = modelFor('chat');
+  const model = modelFor(conv.bot_id);
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },

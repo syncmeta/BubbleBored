@@ -32,7 +32,7 @@ function emit(conversationId: string, content: string, kind: string = 'log') {
 }
 
 interface DebaterOutput {
-  slug: string;
+  botId: string;
   displayName: string;
   text: string;
   passed: boolean;
@@ -47,13 +47,13 @@ function fillPrompt(template: string, vars: Record<string, string>): string {
 }
 
 // Render a single debater's transcript. Each prior debater message appears as
-// `<{slug}> ...`. User clarifications (sender_type='user', kind='clarify')
-// are tagged `<用户辟谣>` so the model treats them as authoritative updates.
+// `<{botId}> ...`. User clarifications (sender_type='user', kind='clarify')
+// are tagged `<用户辟谣>` so the bot treats them as authoritative updates.
 function renderTranscript(
   rows: Array<{
     sender_type: string; sender_id: string; content: string; created_at: number;
   }>,
-  selfSlug: string,
+  selfBotId: string,
 ): string {
   if (rows.length === 0) return '（这是第一轮，还没有发言）';
   return rows.map(r => {
@@ -61,7 +61,7 @@ function renderTranscript(
       return `<用户辟谣>\n${r.content}\n</用户辟谣>`;
     }
     if (r.sender_type === 'debater') {
-      const tag = r.sender_id === selfSlug ? `<${r.sender_id} (你自己)>` : `<${r.sender_id}>`;
+      const tag = r.sender_id === selfBotId ? `<${r.sender_id} (你自己)>` : `<${r.sender_id}>`;
       return `${tag}\n${r.content}\n`;
     }
     return r.content;
@@ -71,22 +71,28 @@ function renderTranscript(
 async function runOneDebater(params: {
   userId: string;
   conversationId: string;
-  slug: string;
-  displayName: string;
+  botId: string;
   topic: string | null;
-  sourceContext: string;
+  ownContext: string;
   transcript: string;
   systemPrompt: string;
 }): Promise<DebaterOutput> {
-  const { userId, conversationId, slug, displayName, topic, sourceContext, transcript, systemPrompt } = params;
+  const { userId, conversationId, botId, topic, ownContext, transcript, systemPrompt } = params;
 
-  const filledSystem = fillPrompt(systemPrompt, { model_display_name: displayName });
+  // Resolve bot → model + display name. If the bot vanished from config
+  // mid-debate, fall back to using the id as the name and bail; the caller
+  // catches the throw and counts it as a failure.
+  const botCfg = configManager.getBotConfig(botId);
+  const displayName = botCfg.displayName || botId;
+  const model = botCfg.model;
+
+  const filledSystem = fillPrompt(systemPrompt, { bot_display_name: displayName });
 
   const userBlock = [
     topic ? `议题：${topic}` : '议题：对该用户最近的对话与立场的整体观感。',
     '',
-    '─── 对方最近的对话（与某 bot 的会话片段） ───',
-    sourceContext || '（无相关源会话上下文）',
+    '─── 你和对方最近的对话 ───',
+    ownContext || '（你和该用户还没有过对话）',
     '',
     '─── 已有议论记录 ───',
     transcript,
@@ -100,12 +106,12 @@ async function runOneDebater(params: {
   ];
 
   const { result, latencyMs, costUsd } = await chatCompletion({
-    model: slug, messages,
+    model, messages,
   });
 
   logAudit({
     userId,
-    conversationId, taskType: 'debate', model: slug,
+    conversationId, taskType: 'debate', model,
     inputTokens: result.usage?.prompt_tokens ?? 0,
     outputTokens: result.usage?.completion_tokens ?? 0,
     totalTokens: result.usage?.total_tokens ?? 0,
@@ -116,28 +122,24 @@ async function runOneDebater(params: {
 
   const raw = result.choices[0]?.message?.content?.trim() ?? '';
   const passed = /^\s*\[PASS\]\s*$/i.test(raw);
-  return { slug, displayName, text: passed ? '' : raw, passed };
+  return { botId, displayName, text: passed ? '' : raw, passed };
 }
 
-// Pull a snippet of a "source" message conversation if the debate has one
-// linked. For now we use the most recent message conv of the same (bot,
-// user) pair — caller can override later. Returns a flat string ready to
-// embed.
-function loadSourceContext(debateConv: {
-  bot_id: string; user_id: string;
-}): string {
-  const msgConv = findConversation(debateConv.bot_id, debateConv.user_id, 'message');
+// Pull this bot's own recent conversation with the user. Each debater uses
+// its own message-conv as personal context — no shared "source" snippet.
+function loadOwnContext(botId: string, userId: string): string {
+  const msgConv = findConversation(botId, userId, 'message');
   if (!msgConv) return '';
   const msgs = getMessages(msgConv.id, 30);
   return msgs.map((m: any) =>
-    `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
+    `${m.sender_type === 'user' ? '用户' : '机器人'}：${m.content}`
   ).join('\n');
 }
 
-function pickNextSlug(slugs: string[], lastSlug: string | null): string {
-  if (slugs.length === 1) return slugs[0];
-  const pool = lastSlug ? slugs.filter(s => s !== lastSlug) : slugs;
-  const choices = pool.length > 0 ? pool : slugs;
+function pickNextBotId(botIds: string[], lastBotId: string | null): string {
+  if (botIds.length === 1) return botIds[0];
+  const pool = lastBotId ? botIds.filter(s => s !== lastBotId) : botIds;
+  const choices = pool.length > 0 ? pool : botIds;
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
@@ -153,9 +155,9 @@ export async function runDebateRound(
   const settings = getDebateSettings(conversationId);
   if (!settings) throw new Error('debate settings missing');
 
-  const slugs: string[] = JSON.parse(settings.model_slugs);
-  if (!Array.isArray(slugs) || slugs.length < 2) {
-    throw new Error('debate needs at least 2 models');
+  const botIds: string[] = JSON.parse(settings.bot_ids);
+  if (!Array.isArray(botIds) || botIds.length < 2) {
+    throw new Error('debate needs at least 2 bots');
   }
 
   const requested = Number.isFinite(opts.maxMessages) ? Number(opts.maxMessages) : DEFAULT_MAX_MESSAGES_PER_ROUND;
@@ -165,23 +167,28 @@ export async function runDebateRound(
   cancelRequests.delete(conversationId);
 
   const round = bumpDebateRound(conversationId);
-  emit(conversationId, `Round ${round} 开始 · 群聊上限 ${maxMessages} 条 · 参与模型 ${slugs.length} 个`);
+  emit(conversationId, `Round ${round} 开始 · 群聊上限 ${maxMessages} 条 · 参与机器人 ${botIds.length} 个`);
 
-  const sourceContext = loadSourceContext(conv);
+  // Pre-load each participating bot's own recent conv with this user so we
+  // don't re-query SQLite every step.
+  const ownContextByBot = new Map<string, string>();
+  for (const id of botIds) {
+    ownContextByBot.set(id, loadOwnContext(id, conv.user_id));
+  }
   const systemPrompt = await loadPrompt();
 
   let delivered = 0;
-  let lastSlug: string | null = null;
+  let lastBotId: string | null = null;
   let consecutiveFailures = 0;
   let paused = false;
-  const failureLimit = slugs.length * 2;
+  const failureLimit = botIds.length * 2;
 
   for (let step = 0; step < maxMessages; step++) {
     if (cancelRequests.has(conversationId)) {
       paused = true;
       break;
     }
-    const slug = pickNextSlug(slugs, lastSlug);
+    const botId = pickNextBotId(botIds, lastBotId);
     const history = getMessages(conversationId, ROUND_HISTORY_LIMIT);
 
     let out: DebaterOutput;
@@ -189,15 +196,14 @@ export async function runDebateRound(
       out = await runOneDebater({
         userId: conv.user_id,
         conversationId,
-        slug,
-        displayName: slug,
+        botId,
         topic: settings.topic,
-        sourceContext,
-        transcript: renderTranscript(history, slug),
+        ownContext: ownContextByBot.get(botId) ?? '',
+        transcript: renderTranscript(history, botId),
         systemPrompt,
       });
     } catch (e: any) {
-      emit(conversationId, `⚠️ ${slug} 出错：${e?.message ?? e}`, 'error');
+      emit(conversationId, `⚠️ ${botId} 出错：${e?.message ?? e}`, 'error');
       consecutiveFailures++;
       if (consecutiveFailures >= failureLimit) {
         emit(conversationId, '连续失败过多，本轮提前结束', 'error');
@@ -209,7 +215,7 @@ export async function runDebateRound(
     if (out.passed || !out.text.trim()) {
       emit(conversationId, `[${out.displayName}] 跳过（[PASS]）`);
       consecutiveFailures++;
-      lastSlug = slug;
+      lastBotId = botId;
       if (consecutiveFailures >= failureLimit) {
         emit(conversationId, '没人想接话了，本轮提前结束');
         break;
@@ -218,16 +224,16 @@ export async function runDebateRound(
     }
 
     consecutiveFailures = 0;
-    lastSlug = slug;
+    lastBotId = botId;
 
     const msgId = randomUUID();
-    insertMessage(msgId, conversationId, 'debater', out.slug, out.text);
+    insertMessage(msgId, conversationId, 'debater', out.botId, out.text);
     replyFn({
       type: 'message',
       conversationId,
       messageId: msgId,
       content: out.text,
-      metadata: { sender_kind: 'debater', slug: out.slug, display_name: out.displayName },
+      metadata: { sender_kind: 'debater', bot_id: out.botId, display_name: out.displayName },
     });
     delivered++;
   }

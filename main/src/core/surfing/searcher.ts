@@ -143,7 +143,7 @@ export async function runSurf(params: RunSurfParams): Promise<void> {
     const effectiveSourceId = sourceConvId ?? surfRun.source_message_conv_id;
     const sourceConv = effectiveSourceId ? findConversationById(effectiveSourceId) : null;
 
-    const model = surfRun.model_slug || modelFor('surfing');
+    const model = surfRun.model_slug || modelFor(botId);
     const totalBudget = surfRun.budget;
 
     emit(`模型：${model}${sourceConv ? ` · 源会话：${sourceConv.title?.trim() || sourceConv.id.slice(0, 8)}` : ' · 自由冲浪（无源会话）'}`);

@@ -68,10 +68,6 @@ export const GlobalConfigSchema = z.object({
   }),
   openrouter: z.object({
     defaultModel: z.string().default('anthropic/claude-sonnet-4'),
-    debounceModel: z.string().default('openrouter/free'),
-    reviewModel: z.string().optional(),
-    surfingModel: z.string().optional(),
-    titleModel: z.string().optional(),
   }),
   defaults: z.object({
     accessMode: z.enum(['open', 'approval', 'private']).default('open'),

@@ -201,7 +201,7 @@ export async function handleUserMessage(params: {
     extraContext,
     tone,
   });
-  const chatModel = modelFor('chat');
+  const chatModel = modelFor(botId, conversationId);
   console.log(`[chat] prompt: ${messages.length} messages, model: ${chatModel}`);
 
   const messageId = randomUUID();

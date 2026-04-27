@@ -102,7 +102,7 @@ surfRoutes.post('/conversations', async (c) => {
     fromSourceConvId: sourceConvId,
   });
 
-  const modelSlug = body.modelSlug?.trim() || modelFor('surfing');
+  const modelSlug = body.modelSlug?.trim() || modelFor(botId);
   const budget = body.budget && body.budget > 0
     ? body.budget
     : configManager.getBotConfig(botId).surfing.maxRequests;
@@ -189,11 +189,15 @@ surfRoutes.get('/active', (c) => {
   return c.json(Array.from(activeSurfs.keys()));
 });
 
-// Source message conversations the user can pin a surf to.
+// Source message conversations the user can pin a surf to. Filtered by bot
+// when ?botId= is given (the modal picks bot first, then optionally anchors
+// to one of that bot's conversations).
 surfRoutes.get('/sources', (c) => {
   const user = findUser(c);
   if (!user) return c.json([]);
-  return c.json(listConversationsByUser(user.id, 'message'));
+  const botId = c.req.query('botId');
+  const all = listConversationsByUser(user.id, 'message');
+  return c.json(botId ? all.filter((c: any) => c.bot_id === botId) : all);
 });
 
 // SSE for live log lines (every emit() in searcher.ts streams here).

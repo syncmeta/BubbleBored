@@ -9,6 +9,7 @@ import { runDebateRound, injectClarification, debateEvents, requestPause } from 
 import {
   makeReplyFn, getOrCreateUser, findUser, resolveBotId, sseStream, assertFeatureType,
 } from './_helpers';
+import type { OutboundMessage } from '../bus/types';
 
 export const debateRoutes = new Hono();
 
@@ -19,13 +20,13 @@ debateRoutes.get('/conversations', (c) => {
   const user = findUser(c);
   if (!user) return c.json([]);
   const convs = listConversationsByUser(user.id, 'debate');
-  // Hydrate with debate_settings so the UI can show topic + model count.
+  // Hydrate with debate_settings so the UI can show topic + bot count.
   const out = convs.map((conv: any) => {
     const settings = getDebateSettings(conv.id);
     return {
       ...conv,
       topic: settings?.topic ?? null,
-      model_slugs: settings ? JSON.parse(settings.model_slugs) : [],
+      bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
       round_count_debate: settings?.round_count ?? 0,
     };
   });
@@ -34,23 +35,31 @@ debateRoutes.get('/conversations', (c) => {
 
 debateRoutes.post('/conversations', async (c) => {
   const body = await c.req.json<{
-    botId?: string; topic?: string; modelSlugs: string[];
+    topic?: string; botIds: string[];
   }>();
-  if (!Array.isArray(body.modelSlugs) || body.modelSlugs.length < 2) {
-    return c.json({ error: 'need at least 2 modelSlugs' }, 400);
+  if (!Array.isArray(body.botIds) || body.botIds.length < 2) {
+    return c.json({ error: 'need at least 2 botIds' }, 400);
   }
 
   const user = getOrCreateUser(c);
-  // Debate doesn't really "belong" to a bot, but it does pull source context
-  // from a (bot, user) message conv — pass the explicit one or fall back.
-  const botId = resolveBotId({ explicit: body.botId });
+  // The conversations table requires a non-null bot_id; debate doesn't really
+  // "belong" to one bot — each debater pulls its own (bot, user) context — so
+  // we just stamp the first participant for FK purposes.
+  const ownerBotId = resolveBotId({ explicit: body.botIds[0] });
 
   const id = randomUUID();
   const title = body.topic?.trim() || '议论';
-  createConversation(id, botId, user.id, title, 'debate');
-  createDebateSettings(id, body.modelSlugs, body.topic?.trim() || null);
+  createConversation(id, ownerBotId, user.id, title, 'debate');
+  createDebateSettings(id, body.botIds, body.topic?.trim() || null);
 
-  return c.json({ id, botId, topic: body.topic ?? null, modelSlugs: body.modelSlugs });
+  const conv = findConversationById(id);
+  const settings = getDebateSettings(id);
+  return c.json({
+    ...conv,
+    topic: settings?.topic ?? null,
+    bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
+    round_count_debate: settings?.round_count ?? 0,
+  });
 });
 
 debateRoutes.delete('/conversations/:id', (c) => {
@@ -76,14 +85,18 @@ debateRoutes.get('/conversations/:id', (c) => {
   return c.json({
     ...conv,
     topic: settings?.topic ?? null,
-    model_slugs: settings ? JSON.parse(settings.model_slugs) : [],
+    bot_ids: settings ? JSON.parse(settings.bot_ids) : [],
     round_count_debate: settings?.round_count ?? 0,
   });
 });
 
-// Run one round
-debateRoutes.post('/round/:convId', async (c) => {
-  const conv = findConversationById(c.req.param('convId'));
+// Run one round. Streams each generated message back to the caller as an
+// SSE `log` event whose data is the ChatMessage row. Web also reads this
+// (its fetch just blocks until the round finishes); mobile parses the SSE
+// directly. The web channel WS still receives the same messages so any
+// other listeners (audit panes, etc.) keep working.
+debateRoutes.post('/conversations/:id/round', async (c) => {
+  const conv = findConversationById(c.req.param('id'));
   if (!conv) return c.json({ error: 'not found' }, 404);
   assertFeatureType(conv, 'debate');
 
@@ -93,25 +106,13 @@ debateRoutes.post('/round/:convId', async (c) => {
     if (typeof body?.maxMessages === 'number') maxMessages = body.maxMessages;
   } catch {}
 
-  const replyFn = makeReplyFn(conv);
-
-  // Fire-and-forget so HTTP returns fast; client gets the messages over WS +
-  // SSE log stream. Errors surface on the SSE log channel.
-  runDebateRound(conv.id, replyFn, { maxMessages }).catch(e => {
-    console.error('[debate] error:', e);
-    debateEvents.emit('log', {
-      conversationId: conv.id, kind: 'error',
-      content: `Round failed: ${e?.message ?? e}`, timestamp: Date.now(),
-    });
-  });
-
-  return c.json({ ok: true });
+  return streamingRound(conv, maxMessages);
 });
 
 // Pause an in-flight round. The orchestrator finishes the message currently
 // being generated, then stops before picking the next model.
-debateRoutes.post('/pause/:convId', (c) => {
-  const conv = findConversationById(c.req.param('convId'));
+debateRoutes.post('/conversations/:id/pause', (c) => {
+  const conv = findConversationById(c.req.param('id'));
   if (!conv) return c.json({ error: 'not found' }, 404);
   assertFeatureType(conv, 'debate');
   requestPause(conv.id);
@@ -120,8 +121,8 @@ debateRoutes.post('/pause/:convId', (c) => {
 
 // User clarification injection ("辟谣"). Stored as a user message with a
 // small marker; the orchestrator will surface it as <用户辟谣> on the next round.
-debateRoutes.post('/inject/:convId', async (c) => {
-  const conv = findConversationById(c.req.param('convId'));
+debateRoutes.post('/conversations/:id/clarify', async (c) => {
+  const conv = findConversationById(c.req.param('id'));
   if (!conv) return c.json({ error: 'not found' }, 404);
   assertFeatureType(conv, 'debate');
 
@@ -130,28 +131,98 @@ debateRoutes.post('/inject/:convId', async (c) => {
   if (!content) return c.json({ error: 'content required' }, 400);
 
   const messageId = injectClarification(conv.id, content);
-
-  // Push the injection back to the client too so the bubble lands in real time.
-  const replyFn = makeReplyFn(conv);
-  replyFn({
+  const clarifyMsg: OutboundMessage = {
     type: 'message',
     conversationId: conv.id,
     messageId,
     content,
     metadata: { sender_kind: 'clarify' },
-  });
+  };
 
-  if (body.autoRound !== false) {
-    runDebateRound(conv.id, replyFn, { maxMessages: body.maxMessages }).catch(e => {
-      console.error('[debate] error:', e);
-      debateEvents.emit('log', {
-        conversationId: conv.id, kind: 'error',
-        content: `Auto-round failed: ${e?.message ?? e}`, timestamp: Date.now(),
-      });
-    });
+  // Mirror the clarification into the WS channel so any web listeners see it.
+  makeReplyFn(conv)(clarifyMsg);
+
+  if (body.autoRound === false) {
+    return c.json({ ok: true, messageId });
   }
-  return c.json({ ok: true, messageId });
+
+  return streamingRound(conv, body.maxMessages, {
+    initialMessage: { id: messageId, sender_type: 'user', sender_id: 'clarify', content },
+  });
 });
 
 // SSE for the debate log channel (status / errors / round-done).
 debateRoutes.get('/events', (c) => sseStream(debateEvents, c.req.raw.signal));
+
+// Inline SSE response that drives one debate round and streams each
+// generated message back as a `log` event with the same ChatMessage shape
+// that GET /conversations/:id/messages returns. Used by both the round and
+// auto-round-after-clarify endpoints. The WS reply path is preserved so any
+// other listeners still receive their copy of each message.
+function streamingRound(
+  conv: { id: string; user_id: string },
+  maxMessages: number | undefined,
+  opts?: {
+    initialMessage?: { id: string; sender_type: string; sender_id: string; content: string };
+  },
+): Response {
+  const wsReply = makeReplyFn(conv);
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {}
+      };
+      const sendMessage = (m: {
+        id: string; sender_type: string; sender_id: string; content: string;
+      }) => send('log', {
+        id: m.id,
+        conversation_id: conv.id,
+        sender_type: m.sender_type,
+        sender_id: m.sender_id,
+        content: m.content,
+        created_at: Math.floor(Date.now() / 1000),
+        attachments: null,
+      });
+
+      if (opts?.initialMessage) sendMessage(opts.initialMessage);
+
+      const replyFn = (msg: OutboundMessage) => {
+        wsReply(msg);
+        if (msg.type === 'message' && msg.messageId && msg.content) {
+          const meta = msg.metadata ?? {};
+          sendMessage({
+            id: msg.messageId,
+            sender_type: (meta.sender_kind as string) ?? 'debater',
+            sender_id: (meta.bot_id as string) ?? '',
+            content: msg.content,
+          });
+        }
+      };
+
+      try {
+        await runDebateRound(conv.id, replyFn, { maxMessages });
+        send('done', {});
+      } catch (e: any) {
+        console.error('[debate] error:', e);
+        debateEvents.emit('log', {
+          conversationId: conv.id, kind: 'error',
+          content: `Round failed: ${e?.message ?? e}`, timestamp: Date.now(),
+        });
+        send('error', { message: e?.message ?? String(e) });
+      } finally {
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+}

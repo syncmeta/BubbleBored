@@ -58,7 +58,7 @@ function rhythmSignal(messages: Array<{ created_at: number; sender_type: string 
   return `今日活跃 ${todayMsgs.length} 条消息，距上一条 ${minutes < 1 ? '<1' : minutes} 分钟`;
 }
 
-async function inferTaskPhase(conversationId: string, userId: string): Promise<string> {
+async function inferTaskPhase(conversationId: string, botId: string, userId: string): Promise<string> {
   const cached = taskPhaseCache.get(conversationId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -69,7 +69,7 @@ async function inferTaskPhase(conversationId: string, userId: string): Promise<s
     `${m.sender_type === 'user' ? '用户' : 'bot'}：${m.content}`
   ).join('\n');
 
-  const model = modelFor('perception');
+  const model = modelFor(botId);
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({
@@ -129,7 +129,7 @@ async function inferCrossFocus(userId: string, botId: string): Promise<string> {
   }
 
   // Cheap LLM summary — same model as task-phase
-  const model = modelFor('perception');
+  const model = modelFor(botId);
 
   try {
     const { result, latencyMs, costUsd } = await chatCompletion({
@@ -227,7 +227,7 @@ async function buildPerceptionBlockInternal(params: {
 
   // These two go in parallel — they're independent network calls.
   const [taskPhase, crossFocus, weather] = await Promise.all([
-    inferTaskPhase(params.conversationId, conv.user_id),
+    inferTaskPhase(params.conversationId, conv.bot_id, conv.user_id),
     inferCrossFocus(conv.user_id, conv.bot_id),
     getWeather().catch(() => ''),
   ]);

@@ -6,7 +6,8 @@
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
     "test": "bun test",
-    "pdf": "node scripts/export-pdf.mjs"
+    "pdf": "node scripts/export-pdf.mjs",
+    "reset-admin-key": "bun run scripts/reset-admin-key.ts"
   },
   "dependencies": {
     "@honcho-ai/sdk": "^2.1.1",

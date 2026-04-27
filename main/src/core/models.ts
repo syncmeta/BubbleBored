@@ -1,44 +1,21 @@
-// Resolve the model slug to use for a given task type.
+// Resolve the model slug to use. The bot owns its model — every task (chat,
+// review, surfing, title, perception, portrait, debate) runs through the bot
+// the conversation belongs to, so model selection is normally a function of
+// `botId`. config.yaml's `bots.<id>.model` is the source of truth, with
+// `openrouter.defaultModel` as the last-resort fallback when a bot omits it.
 //
-// Source of truth: model_assignments table (UI-managed). config.yaml's
-// openrouter.* fields are kept only as the seed values for first-time setup
-// and as a last-resort fallback when the table doesn't have a row yet.
+// One exception: the chat path threads `conversationId` through, and a
+// per-conversation override (set from the iOS chat action sheet) trumps the
+// bot's default. The override is stored on the conversation row.
 
-import {
-  getModelAssignment, upsertModelAssignment,
-  type ModelTaskType,
-} from '../db/queries';
 import { configManager } from '../config/loader';
+import { findConversationById } from '../db/queries';
 
-function configFallback(taskType: ModelTaskType): string {
-  const c = configManager.get().openrouter;
-  switch (taskType) {
-    case 'chat':       return c.defaultModel;
-    case 'review':     return c.reviewModel ?? c.defaultModel;
-    case 'surfing':    return c.surfingModel ?? c.defaultModel;
-    case 'title':      return c.titleModel ?? c.debounceModel ?? c.defaultModel;
-    case 'perception': return c.debounceModel ?? c.defaultModel;
-    case 'portrait':   return c.defaultModel;
+export function modelFor(botId: string, conversationId?: string): string {
+  if (conversationId) {
+    const conv = findConversationById(conversationId) as { model_override?: string | null } | undefined;
+    const override = conv?.model_override?.trim();
+    if (override) return override;
   }
-}
-
-export function modelFor(taskType: ModelTaskType): string {
-  const assigned = getModelAssignment(taskType);
-  if (assigned) return assigned;
-  return configFallback(taskType);
-}
-
-// One-time seed: ensure each task type has an assignment, defaulting to the
-// config.yaml value. Picker pulls the searchable list from OpenRouter, so we
-// don't need to register the slug anywhere local.
-export function ensureModelAssignmentsSeeded(): void {
-  const taskTypes: ModelTaskType[] = [
-    'chat', 'review', 'surfing', 'title', 'perception', 'portrait',
-  ];
-  for (const t of taskTypes) {
-    if (getModelAssignment(t)) continue;
-    const slug = configFallback(t);
-    if (!slug) continue;
-    upsertModelAssignment(t, slug);
-  }
+  return configManager.getBotConfig(botId).model;
 }

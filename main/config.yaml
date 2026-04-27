@@ -6,12 +6,10 @@ server:
   # publicURL: "https://bot.example.com"
 
 openrouter:
+  # Last-resort fallback when a bot omits its `model` field. Each bot
+  # otherwise picks its own model below — task-level overrides no longer
+  # exist (a bot owns one model for everything it does).
   defaultModel: "anthropic/claude-opus-4.6"
-  debounceModel: "tencent/hy3-preview:free"
-  reviewModel: "x-ai/grok-4.20"
-  surfingModel: "x-ai/grok-4.20"
-
-  titleModel: "deepseek/deepseek-v4-flash" # 不填则用 debounceModel
 
 defaults:
   accessMode: "open"
@@ -32,35 +30,35 @@ defaults:
     enabled: true
     maxWaitMs: 15000
 
-# 预设机器人 — 名字 001/002… 排开,模型对齐「议论」里的预设阵容
-# (见 main/src/web/static/app.js 的 DEFAULT_DEBATE_SLUGS)。
-# 每个 bot 也可以绑定自己的 Telegram / 飞书账号(不填则仅网页可用)。
+# 预设机器人 — 名字直接对齐它们用的默认模型,「议论」里也是这套机器人在吵。
+# 每个机器人可以绑自己的 Telegram / 飞书账号(不填则仅网页可用);
+# 想要同模型不同人格,新增一个 key 改 promptFile 即可。
 bots:
-  "001":
-    displayName: "01"
+  "glm-5.1":
+    displayName: "bot-glm-5.1"
     promptFile: "default.md"
     model: "z-ai/glm-5.1"
-  "002":
-    displayName: "02"
+  "glm-4.5-air":
+    displayName: "bot-glm-4.5-air"
     promptFile: "default.md"
     model: "z-ai/glm-4.5-air:free"
-  "003":
-    displayName: "03"
+  "deepseek-v4-flash":
+    displayName: "bot-deepseek-v4-flash"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-flash"
-  "004":
-    displayName: "04"
+  "deepseek-v4-pro":
+    displayName: "bot-deepseek-v4-pro"
     promptFile: "default.md"
     model: "deepseek/deepseek-v4-pro"
-  "005":
-    displayName: "05"
+  "minimax-m2.7":
+    displayName: "bot-minimax-m2.7"
     promptFile: "default.md"
     model: "minimax/minimax-m2.7"
-  "006":
-    displayName: "06"
+  "hy3-preview":
+    displayName: "bot-hy3-preview"
     promptFile: "default.md"
     model: "tencent/hy3-preview:free"
-  "007":
-    displayName: "07"
+  "gemini-3.1-flash-lite":
+    displayName: "bot-gemini-3.1-flash-lite"
     promptFile: "default.md"
     model: "google/gemini-3.1-flash-lite-preview"
