@@ -14,6 +14,8 @@ options:
   bundleIdPrefix: com.pendingname
   deploymentTarget:
     iOS: "17.0"
+    # Mac Catalyst maps the iOS 17 SDK onto macOS 14 (Sonoma) and later.
+    macOS: "14.0"
   developmentLanguage: zh-Hans
   groupSortPosition: top
 
@@ -38,6 +40,13 @@ targets:
   PendingBot:
     type: application
     platform: iOS
+    # Single binary that runs on iPhone, iPad, and Mac (via Catalyst).
+    # Catalyst is the lightest path: same SwiftUI code, same UIKit bridge —
+    # no separate AppKit target to maintain. iPad app on Apple Silicon Macs
+    # still works as a fallback for users on macOS without Catalyst opt-in.
+    supportedDestinations:
+      - iOS
+      - macCatalyst
     sources:
       - path: PendingBot
         excludes:
@@ -48,7 +57,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
         INFOPLIST_FILE: PendingBot/Resources/Info.plist
-        TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad
+        TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad (Catalyst rides on 2)
+        SUPPORTS_MACCATALYST: YES
+        # Use the same bundle id on Mac so a single App Store record covers
+        # iOS + Catalyst — flip to YES if you want a separate Mac-only id.
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        # "Optimize for Mac" — render at native Mac sizing instead of the
+        # zoomed iPad metrics. Keeps controls tight in landscape on desktop.
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "0.1.0"

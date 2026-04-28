@@ -3,6 +3,12 @@
 原生 SwiftUI thin client。和 `main/` 服务端通过 Bearer Key 鉴权,数据按
 key 隔离。覆盖六个 tab:消息 / 议论 / 冲浪 / 回顾 / 画像 / 你。
 
+**支持平台:** iPhone (iOS 17+) · iPad (含横屏 / 分屏) · Mac (通过
+Mac Catalyst,macOS 14 Sonoma+)。同一份代码一次构建,Xcode scheme
+切换 destination 即可在 iPhone 模拟器 / iPad / "My Mac (Mac Catalyst)"
+之间编译运行。Mac / iPad 横屏下,长内容(聊天气泡、列表、议论 / 回顾
+streaming)居中铺在一个最大 760pt 的可读列里,不会拉宽到 1500pt。
+
 ## 一次性设置
 
 ```bash
