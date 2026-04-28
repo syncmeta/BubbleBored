@@ -22,7 +22,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.pendingname.bot</string>
+			<string>com.pendingname.pendingbot</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>pendingbot</string>

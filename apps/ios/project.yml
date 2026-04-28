@@ -61,7 +61,7 @@ targets:
       - path: PendingBot/Resources/Assets.xcassets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.bot
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
         INFOPLIST_FILE: PendingBot/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad (Catalyst rides on 2)
         SUPPORTS_MACCATALYST: YES
@@ -126,6 +126,6 @@ targets:
         # handlers (e.g. notification taps). Currently unused on the
         # hosted build but kept registered so it won't conflict later.
         CFBundleURLTypes:
-          - CFBundleURLName: com.pendingname.bot
+          - CFBundleURLName: com.pendingname.pendingbot
             CFBundleURLSchemes:
               - pendingbot

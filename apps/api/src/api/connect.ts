@@ -55,7 +55,7 @@ connectRoutes.get('/i/:token', (c) => {
 // can sign under different teams without rebuilding.
 
 const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID || 'TEAMID';
-const IOS_BUNDLE_ID = 'com.pendingname.bot';
+const IOS_BUNDLE_ID = 'com.pendingname.pendingbot';
 
 connectRoutes.get('/.well-known/apple-app-site-association', (c) => {
   c.header('Content-Type', 'application/json');
