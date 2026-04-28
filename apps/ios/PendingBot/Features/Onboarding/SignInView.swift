@@ -99,6 +99,16 @@ struct SignInView: View {
                         Text(errorText)
                             .font(Theme.Fonts.caption)
                             .foregroundStyle(.red)
+                        // Escape hatch: if a stale Clerk session is making
+                        // every fresh sign-in fail, let the user nuke it.
+                        if clerk.session != nil {
+                            Button("清除已有登录态再试") {
+                                Task { await resetClerkSession() }
+                            }
+                            .buttonStyle(.plain)
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.accent.opacity(0.85))
+                        }
                     }
 
                     Button {
@@ -148,6 +158,17 @@ struct SignInView: View {
             .onAppear {
                 focusedField = stage == .enteringEmail ? .email : .code
             }
+            .task {
+                // Clerk's SDK persists sessions across app launches in
+                // its own keychain. If a previous login left one around,
+                // jump straight to exchange instead of asking the user to
+                // sign in again — fresh attempts on top of an existing
+                // session 400 with `session_exists`.
+                if clerk.session != nil {
+                    stage = .exchanging
+                    await runExchange()
+                }
+            }
         }
     }
 
@@ -191,14 +212,21 @@ struct SignInView: View {
         signIn = nil
         signUp = nil
 
+        // If a previous attempt left a Clerk session in the SDK's local
+        // store, the next SignIn.create will 400 with session_exists.
+        // Skip the whole form and exchange that session directly.
+        if clerk.session != nil {
+            stage = .exchanging
+            await runExchange()
+            return
+        }
+
         // Try sign-in first (existing user). If Clerk reports the
         // identifier doesn't exist yet, fall through to sign-up so the
         // same UI works for both first-time and returning users — that's
         // what password-less email-code login expects.
         do {
             let pending = try await SignIn.create(strategy: .identifier(trimmed))
-            // Belt-and-braces: ensure the email-code factor is prepared
-            // even if create() didn't auto-prepare (multi-factor tenants).
             try await pending.prepareFirstFactor(strategy: .emailCode())
             signIn = pending
             stage = .codeSent
@@ -206,6 +234,12 @@ struct SignInView: View {
             Haptics.tap()
             return
         } catch {
+            if isSessionExistsError(error) {
+                // Clerk decided there's a session anyway — exchange it.
+                stage = .exchanging
+                await runExchange()
+                return
+            }
             // Clerk surfaces the "no such user" error as
             // ClerkAPIError.code == "form_identifier_not_found" — when we
             // see that, branch to sign-up. Anything else is a real error.
@@ -223,8 +257,38 @@ struct SignInView: View {
             focusedField = .code
             Haptics.tap()
         } catch {
+            if isSessionExistsError(error) {
+                stage = .exchanging
+                await runExchange()
+                return
+            }
             errorText = friendly(error)
         }
+    }
+
+    private func isSessionExistsError(_ error: Error) -> Bool {
+        return clerkErrorCode(error) == "session_exists"
+            || String(describing: error).contains("session_exists")
+    }
+
+    @MainActor
+    private func resetClerkSession() async {
+        try? await clerk.signOut()
+        signIn = nil
+        signUp = nil
+        code = ""
+        errorText = nil
+        stage = .enteringEmail
+        focusedField = .email
+    }
+
+    /// Pull the structured `code` field off a ClerkAPIError, if present.
+    private func clerkErrorCode(_ error: Error) -> String? {
+        let mirror = Mirror(reflecting: error)
+        if let code = mirror.children.first(where: { $0.label == "code" })?.value as? String {
+            return code
+        }
+        return nil
     }
 
     /// Returns true when the underlying Clerk API error is the "user
@@ -275,6 +339,15 @@ struct SignInView: View {
 
         // Hand the Clerk session JWT to the backend, get a pbk_live_* back.
         stage = .exchanging
+        await runExchange()
+    }
+
+    /// Take whatever active Clerk session exists, post its JWT to
+    /// /api/auth/clerk/exchange, persist the returned pbk_live_* into
+    /// AccountStore, dismiss. Used by both verifyCode (after attempt)
+    /// and the .task on first appear (existing-session fast path).
+    @MainActor
+    private func runExchange() async {
         do {
             guard let session = clerk.session,
                   let token = try await session.getToken()?.jwt else {
@@ -296,7 +369,7 @@ struct SignInView: View {
             dismiss()
         } catch {
             errorText = friendly(error)
-            stage = .codeSent
+            stage = signIn != nil || signUp != nil ? .codeSent : .enteringEmail
         }
     }
 
