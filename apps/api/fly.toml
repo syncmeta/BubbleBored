@@ -1,88 +1,51 @@
-# Fly.io deploy config for the PendingBot API.
+# fly.toml app configuration file generated for pendingbot-api on 2026-04-28T17:59:10+08:00
 #
-# Topology: a single Fly VM in iad sits behind Cloudflare. Cloudflare is the
-# canonical edge — proxies bot.pendingname.com (web on Cloudflare Pages) and
-# routes /api/*, /ws*, /uploads/* to this Fly origin via a Worker. iOS app
-# only ever calls bot.pendingname.com; *.fly.dev is internal-only.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# State: SQLite on a 1GB persistent volume + R2 for attachments. With R2 in
-# place, the volume holds only the database (~tens of MB for a long time).
-# This is single-writer by design — never raise min_machines_running above 1
-# or the SQLite WAL will corrupt.
-#
-# First-time deploy:
-#   fly auth login
-#   cd apps/api
-#   fly launch --copy-config --no-deploy --name pendingbot-api --region iad
-#   fly volumes create pendingbot_data --region iad --size 1
-#   fly secrets set \
-#       OPENROUTER_API_KEY=sk-or-... \
-#       BYOK_ENC_KEY="$(openssl rand -hex 32)" \
-#       CLERK_ISSUER=https://...clerk.accounts.dev \
-#       R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
-#       R2_BUCKET=pendingbot-prod \
-#       CORS_ALLOWED_ORIGINS=https://bot.pendingname.com
-#   fly deploy
-#
-# After that, GitHub Actions handles `fly deploy` on push to main.
 
-app = "pendingbot-api"
-primary_region = "iad"
+app = 'pendingbot-api'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  PORT = "3456"
-  DATA_DIR = "/data"
+  DATA_DIR = '/data'
+  PORT = '3456'
 
-# Auto-stop puts the VM to sleep when idle, auto-start wakes on the next
-# request. For hobby traffic the bill becomes a few dollars a month.
+[[mounts]]
+  source = 'pendingbot_data'
+  destination = '/data'
+  initial_size = '1gb'
+
 [[services]]
+  protocol = 'tcp'
   internal_port = 3456
-  protocol = "tcp"
-  auto_stop_machines = "stop"
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
   [[services.ports]]
-    handlers = ["tls", "http"]
     port = 443
+    handlers = ['tls', 'http']
     force_https = true
 
   [[services.ports]]
-    handlers = ["http"]
     port = 80
+    handlers = ['http']
+
+  [services.concurrency]
+    type = 'requests'
+    hard_limit = 500
+    soft_limit = 200
 
   [[services.tcp_checks]]
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "10s"
-
-  # Cloudflare upstream timeout is 100s — keep ours generous so Worker
-  # reverse-proxy can survive long LLM streams without 524s.
-  [services.concurrency]
-    type = "requests"
-    soft_limit = 200
-    hard_limit = 500
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
 
 [[vm]]
-  cpu_kind = "shared"
+  cpu_kind = 'shared'
   cpus = 1
   memory_mb = 512
-
-[mounts]
-  source = "pendingbot_data"
-  destination = "/data"
-  initial_size = "1gb"
-
-# Health check at the public path Cloudflare's "Origin Health" + uptime
-# monitors hit. Distinct from the tcp_checks above which only verify the
-# socket is listening.
-[[http_service.checks]]
-  type = "http"
-  path = "/api/health"
-  interval = "30s"
-  timeout = "5s"
-  grace_period = "20s"

@@ -3,7 +3,7 @@ server:
   host: "0.0.0.0"
   # 当本服务部署到公网/有固定域名时填这里。iOS 客户端的「钥匙」分享链接会
   # 默认用这个地址 — 不填的话默认用本机检测到的 LAN IP。
-  # publicURL: "https://bot.example.com"
+  publicURL: "https://bot.pendingname.com"
 
 openrouter:
   # Per-task model assignment.
