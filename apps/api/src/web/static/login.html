@@ -103,8 +103,9 @@
     return;
   }
 
-  // Lazy-load Clerk's browser SDK from their CDN. It's hosted at the
-  // tenant's frontend API origin, so the URL changes per Clerk app.
+  // Lazy-load Clerk's browser SDK from their CDN. With the
+  // data-clerk-publishable-key attribute set, the script auto-initialises
+  // window.Clerk as a singleton instance — we don't `new` it ourselves.
   const { issuer, publishableKey } = cfg.auth.clerk;
   const sdkUrl = `${issuer.replace(/\/+$/, '')}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`;
 
@@ -119,47 +120,47 @@
     document.head.appendChild(s);
   });
 
-  // The data-attribute style boot needs Clerk to construct itself,
-  // but the global is exposed once the SDK loads.
-  const Clerk = new window.Clerk(publishableKey);
-  await Clerk.load({
-    appearance: { /* defaults are fine */ },
-  });
-
-  // If Clerk says we're signed in, exchange immediately and bounce.
-  if (Clerk.session) {
-    await exchangeAndRedirect(Clerk);
+  if (!window.Clerk) {
+    status.className = 'err';
+    status.textContent = 'Clerk SDK 加载完成但未挂上 window.Clerk — 检查 publishable key';
     return;
   }
 
-  // Otherwise mount the sign-in widget. Clerk handles all UI: email
-  // code, Google, etc.
+  await window.Clerk.load({ /* default appearance */ });
+
+  // Already signed in via Clerk (e.g. cookie still valid) — exchange
+  // straight to a pbk_live_* and bounce.
+  if (window.Clerk.session) {
+    await exchangeAndRedirect();
+    return;
+  }
+
+  // Mount Clerk's hosted SignIn widget. It handles all UI: email code,
+  // Google OAuth, etc.
   status.style.display = 'none';
-  Clerk.mountSignIn(mount, {
-    afterSignInUrl: '/',
-    afterSignUpUrl: '/',
-    signUpUrl: '/login',
+  window.Clerk.mountSignIn(mount, {
+    afterSignInUrl: '/login.html',
+    afterSignUpUrl: '/login.html',
   });
 
-  // Watch for sign-in completion: Clerk fires 'change' on its session
-  // resource. We poll once a second as a belt-and-braces fallback so we
-  // catch the case where mountSignIn redirects internally instead of
-  // emitting an event.
+  // Poll for session to appear, then exchange. This is the same approach
+  // the Clerk hosted UI uses internally; addListener would be cleaner but
+  // is brittle across SDK versions.
   const tick = setInterval(async () => {
-    if (Clerk.session) {
+    if (window.Clerk.session) {
       clearInterval(tick);
-      await exchangeAndRedirect(Clerk);
+      await exchangeAndRedirect();
     }
-  }, 1000);
+  }, 800);
 })();
 
-async function exchangeAndRedirect(Clerk) {
+async function exchangeAndRedirect() {
   const status = document.getElementById('status');
   status.style.display = 'block';
   status.className = 'loader';
   status.textContent = '登录中…';
   try {
-    const token = await Clerk.session.getToken();
+    const token = await window.Clerk.session.getToken();
     const res = await fetch('/api/auth/clerk/exchange', {
       method: 'POST',
       credentials: 'include',
