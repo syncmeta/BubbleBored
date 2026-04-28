@@ -425,7 +425,7 @@
               <label>名称（给谁用？）
                 <input type="text" id="keys-new-name" maxlength="40" placeholder="例如：朋友的 iPhone">
               </label>
-              <label>分享链接的服务器地址
+              <label>登录码里的服务器地址
                 <select id="keys-new-baseurl"></select>
               </label>
               <div id="keys-baseurl-warning" class="me-section-status" style="display:none"></div>
@@ -448,7 +448,7 @@
             <button class="modal-close" onclick="closeModal('keys-show-modal')" aria-label="关闭">×</button>
           </div>
           <div class="modal-body">
-            <p style="margin-top:0;color:var(--muted)">关闭此对话框后将无法再次查看完整钥匙。请立即复制保存或通过下方分享链接发给使用者。</p>
+            <p style="margin-top:0;color:var(--muted)">关闭此对话框后将无法再次查看完整钥匙或登录码。请立即复制保存。</p>
 
             <label class="modal-label">完整钥匙</label>
             <div class="keys-copy-row">
@@ -456,15 +456,12 @@
               <button class="btn-soft" onclick="copyToClipboard('keys-show-key', this)">复制</button>
             </div>
 
-            <label class="modal-label" style="margin-top:16px">分享链接（单条 URL，可直接发微信）</label>
+            <label class="modal-label" style="margin-top:16px">登录码（一串文本，可直接发微信）</label>
             <div class="keys-copy-row">
-              <input type="text" id="keys-show-share" readonly>
-              <button class="btn-soft" onclick="copyToClipboard('keys-show-share', this)">复制</button>
+              <textarea id="keys-show-logincode" readonly rows="3" style="resize:none;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+              <button class="btn-soft" onclick="copyToClipboard('keys-show-logincode', this)">复制</button>
             </div>
-            <p style="font-size:12px;color:var(--muted);margin:6px 0 0">点链接 → 在 iPhone 上自动唤起大绿豆 app 完成导入。链接首次使用后会失效，可在列表中重新生成。</p>
-
-            <label class="modal-label" style="margin-top:16px">或直接扫描二维码</label>
-            <div id="keys-show-qr" class="keys-qr-host"></div>
+            <p style="font-size:12px;color:var(--muted);margin:6px 0 0">登录码包含服务器地址和钥匙。使用者在大绿豆 iOS app 里粘贴一次即可登录。建议一次性使用，用完丢弃。</p>
           </div>
         </div>
       </div>

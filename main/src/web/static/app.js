@@ -3473,9 +3473,9 @@ function renderKeyRow(row) {
   const created = `${relTime(row.created_at)}前`;
   const status = row.revoked_at
     ? '<span class="keys-badge revoked">已撤销</span>'
-    : (row.has_share_link ? '<span class="keys-badge pending">待领取</span>' : '<span class="keys-badge active">已激活</span>');
+    : '<span class="keys-badge active">已激活</span>';
   const baseUrlBit = row.share_base_url
-    ? `<div class="keys-row-meta">分享地址 <code>${esc(row.share_base_url)}</code></div>`
+    ? `<div class="keys-row-meta">服务器 <code>${esc(row.share_base_url)}</code></div>`
     : '';
   wrap.innerHTML = `
     <div class="keys-row-main">
@@ -3491,19 +3491,6 @@ function renderKeyRow(row) {
   `;
   const actions = wrap.querySelector('.keys-row-actions');
   if (!row.revoked_at) {
-    if (row.has_share_link) {
-      const shareBtn = document.createElement('button');
-      shareBtn.className = 'btn-soft';
-      shareBtn.textContent = '查看分享链接';
-      shareBtn.onclick = () => showExistingShare(row.id);
-      actions.appendChild(shareBtn);
-    } else {
-      const reShareBtn = document.createElement('button');
-      reShareBtn.className = 'btn-soft';
-      reShareBtn.textContent = '重新生成分享链接';
-      reShareBtn.onclick = () => rotateShare(row.id);
-      actions.appendChild(reShareBtn);
-    }
     const revokeBtn = document.createElement('button');
     revokeBtn.className = 'btn-soft danger';
     revokeBtn.textContent = '撤销';
@@ -3542,53 +3529,17 @@ async function createNewKey() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const out = await res.json();
     if (nameEl) nameEl.value = '';
-    showKeyModal({ key: out.key, share_url: out.share_url, id: out.id, share_base_url: out.share_base_url });
+    showKeyModal({ key: out.key, login_code: out.login_code });
     loadKeysList();
   } catch (e) {
     alert(`创建失败: ${e}`);
   }
 }
 
-function showKeyModal({ key, share_url, id }) {
+function showKeyModal({ key, login_code }) {
   document.getElementById('keys-show-key').value = key ?? '';
-  document.getElementById('keys-show-share').value = share_url ?? '';
-  const qrHost = document.getElementById('keys-show-qr');
-  if (qrHost) {
-    qrHost.innerHTML = `<img src="/api/keys/${encodeURIComponent(id)}/qr?t=${Date.now()}" alt="二维码" loading="lazy">`;
-  }
+  document.getElementById('keys-show-logincode').value = login_code ?? '';
   document.getElementById('keys-show-modal').style.display = 'flex';
-}
-
-async function showExistingShare(id) {
-  try {
-    const res = await fetch(`/api/keys/${encodeURIComponent(id)}/share`);
-    if (!res.ok) {
-      // No live share link — offer to rotate (mints a fresh one)
-      if (confirm('该钥匙暂无分享链接,生成一条新的?')) await rotateShare(id);
-      return;
-    }
-    const out = await res.json();
-    document.getElementById('keys-show-key').value = '（已隐藏 — 完整钥匙仅在创建时显示一次）';
-    document.getElementById('keys-show-share').value = out.share_url ?? '';
-    const qrHost = document.getElementById('keys-show-qr');
-    if (qrHost) {
-      qrHost.innerHTML = `<img src="/api/keys/${encodeURIComponent(id)}/qr?t=${Date.now()}" alt="二维码" loading="lazy">`;
-    }
-    document.getElementById('keys-show-modal').style.display = 'flex';
-  } catch (e) {
-    alert(`加载失败: ${e}`);
-  }
-}
-
-async function rotateShare(id) {
-  try {
-    const res = await fetch(`/api/keys/${encodeURIComponent(id)}/share/rotate`, { method: 'POST' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await loadKeysList();
-    await showExistingShare(id);
-  } catch (e) {
-    alert(`生成分享链接失败: ${e}`);
-  }
 }
 
 async function revokeKey(id, name) {
