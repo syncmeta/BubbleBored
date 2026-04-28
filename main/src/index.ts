@@ -25,10 +25,12 @@ import { keysRoutes } from './api/keys';
 import { connectRoutes } from './api/connect';
 import { invitesRoutes } from './api/invites';
 import { adminRoutes } from './api/admin';
+import { authRoutes } from './api/auth';
 import {
   apiKeyAuthMiddleware, resolveApiKeyAuth, hashApiKey,
   clearSessionCookie,
 } from './api/_helpers';
+import { corsMiddleware, userRateLimitMiddleware } from './api/middleware';
 import {
   countAdmins, createInvite, findApiKeyByHash, findUserById,
   findConversationById, findLatestBootstrapInvite,
@@ -42,6 +44,8 @@ import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
 import { runSurf, createSurfConversation } from './core/surfing/searcher';
+import { runWithUser } from './core/request-context';
+import { QuotaExceededError } from './core/quota';
 
 // Initialize
 await configManager.load();
@@ -122,8 +126,12 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
         sourceMessageConvId: conversationId,
         costBudgetUsd: configManager.getBotConfig(botId).surfing.costBudgetUsd,
       });
-      runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' })
+      runWithUser(userId, () => runSurf({ surfConvId, sourceConvId: conversationId, replyFn, trigger: 'user' }))
         .catch(e => {
+          if (e instanceof QuotaExceededError) {
+            replyFn({ type: 'error', conversationId, content: '本月免费额度已用完。下月 1 号自动重置；可在「你」→「设置」里填自己的 OpenRouter Key 继续使用。' });
+            return;
+          }
           console.error('[surf] error:', e);
           replyFn({ type: 'error', conversationId, content: '冲浪出了点问题 稍后再试' });
         });
@@ -156,14 +164,18 @@ messageBus.setMessageHandler(({ conversationId, botId, userId, content, attachme
   // Pass through debounce. Each entry the user sent becomes its own DB row —
   // only at LLM-request time do consecutive user rows get joined with \n\n.
   debounceAdd(conversationId, botId, userId, content, attachmentIds, replyFn, (entries) => {
-    handleUserMessage({
+    runWithUser(userId, () => handleUserMessage({
       conversationId, botId, userId,
       userMessages: entries,
       tone,
       webSearch,
       streaming,
       replyFn,
-    }).catch(e => {
+    })).catch(e => {
+      if (e instanceof QuotaExceededError) {
+        replyFn({ type: 'error', conversationId, content: '本月免费额度已用完。下月 1 号自动重置；可在「你」→「设置」里填自己的 OpenRouter Key 继续使用。' });
+        return;
+      }
       console.error('[orchestrator] error:', e);
       replyFn({ type: 'error', conversationId, content: '出了点问题 稍后再试' });
     });
@@ -231,11 +243,13 @@ app.onError((err, c) => {
 });
 
 // API routes
-// Auth runs before every /api route. Resolves the caller from either the
-// Authorization: Bearer header (iOS / programmatic) or the pb_session
-// cookie (web), then stashes the user on the context. Onboarding endpoints
-// (invite redeem) and /api/health are whitelisted inside the middleware.
+// Order matters: CORS first (so preflights short-circuit before auth), then
+// auth (resolves user + binds runWithUser), then per-user rate limit (keyed
+// on the resolved user id). The auth middleware whitelists onboarding
+// endpoints and /api/health for unauthenticated callers.
+app.use('/api/*', corsMiddleware);
 app.use('/api/*', apiKeyAuthMiddleware);
+app.use('/api/*', userRateLimitMiddleware);
 
 app.route('/api', apiRoutes);
 app.route('/api/audit', auditRoutes);
@@ -252,6 +266,7 @@ app.route('/api/upload', uploadRoutes);
 app.route('/api/keys', keysRoutes);
 app.route('/api/invites', invitesRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/auth', authRoutes);
 
 // Logout — clear the session cookie. The api key itself stays valid (so
 // existing iOS sessions don't blow up if the same user logs out of the web
