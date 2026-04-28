@@ -1,4 +1,5 @@
 import SwiftUI
+import Clerk
 
 /// Multi-server switcher. Lists every saved Account; tap to activate, swipe
 /// to remove, "+" to add another (re-runs onboarding). Uses the same
@@ -94,7 +95,15 @@ struct AccountsView: View {
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
+                                let wasCurrent = store.current?.id == account.id
                                 store.remove(account)
+                                // If that was the active account and no
+                                // other account is left, the user has
+                                // signed out — clear the Clerk session
+                                // too so re-login starts clean.
+                                if wasCurrent && store.current == nil {
+                                    Task { try? await Clerk.shared.signOut() }
+                                }
                                 Haptics.success()
                             } label: { Label("移除", systemImage: "trash") }
                         }

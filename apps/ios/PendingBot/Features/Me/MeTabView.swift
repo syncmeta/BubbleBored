@@ -1,4 +1,5 @@
 import SwiftUI
+import Clerk
 
 /// 我 — profile, 当前服务器, 画像, AI 收藏. Visual language mirrors the
 /// PendingBot settings sheet: canvas background, vertical stack of
@@ -514,6 +515,10 @@ struct MeTabView: View {
     private func signOut() {
         guard let current = store.current else { return }
         store.remove(current)
+        // Also clear the Clerk SDK's local session — otherwise the next
+        // tap on "登录 / 注册" would auto-exchange that lingering session
+        // and put the user right back where they started.
+        Task { try? await Clerk.shared.signOut() }
         Haptics.success()
     }
 
