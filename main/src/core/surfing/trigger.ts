@@ -3,6 +3,8 @@ import { configManager } from '../../config/loader';
 import { updateSurfState } from '../../db/queries';
 import { messageBus } from '../../bus/router';
 import { activeSurfs, surfsByMessageConv, createSurfConversation, runSurf } from './searcher';
+import { runWithUser } from '../request-context';
+import { QuotaExceededError } from '../quota';
 
 // Auto-triggers a surf for active message conversations whose surf cooldown
 // has expired. Each auto-triggered surf creates a new 冲浪 tab conversation
@@ -58,13 +60,21 @@ async function checkAllConversations(): Promise<void> {
       surfsByMessageConv.set(conv.id, surfConvId);
 
       // Fire-and-forget — the scheduler shouldn't block on the surf.
-      runSurf({
+      // Wrap in the conv owner's user context so quota / BYOK / audit see
+      // the right account even though the trigger came from a timer.
+      runWithUser(conv.user_id, () => runSurf({
         surfConvId,
         sourceConvId: conv.id,
         replyFn,
         signal: controller.signal,
         trigger: 'auto',
-      }).catch(e => console.error(`[surf] auto error for ${conv.id}:`, e));
+      })).catch(e => {
+        if (e instanceof QuotaExceededError) {
+          console.log(`[surf] auto skipped for ${conv.id}: quota exhausted`);
+          return;
+        }
+        console.error(`[surf] auto error for ${conv.id}:`, e);
+      });
 
       // Update decay state on the message conv
       const newInterval = Math.min(
