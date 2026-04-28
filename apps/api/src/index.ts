@@ -253,9 +253,9 @@ app.route('/', connectRoutes);
 // the same user is about to bind to a message).
 app.get('/uploads/:id', async (c) => {
   const id = c.req.param('id');
-  const entry = await getAttachmentForServing(id);
-  if (!entry) return c.text('not found', 404);
 
+  // Resolve viewer first so we don't even hint at object existence to
+  // unauthenticated callers.
   const auth = c.req.header('authorization');
   let viewer = auth ? resolveApiKeyAuth(auth) : null;
   if (!viewer) {
@@ -274,20 +274,15 @@ app.get('/uploads/:id', async (c) => {
   }
   if (!viewer) return c.text('not authenticated', 401);
 
+  const entry = await getAttachmentForServing(id);
+  if (!entry) return c.text('not found', 404);
+
   if (entry.row.conversation_id) {
     const conv = findConversationById(entry.row.conversation_id);
     if (!conv || conv.user_id !== viewer.user.id) return c.text('not found', 404);
   }
 
-  const file = Bun.file(entry.absPath);
-  return new Response(file, {
-    headers: {
-      'Content-Type': entry.row.mime,
-      'Content-Length': String(entry.size),
-      // Attachment ids are immutable + unguessable, so cache aggressively.
-      'Cache-Control': 'private, max-age=31536000, immutable',
-    },
-  });
+  return entry.response;
 });
 
 // Health check

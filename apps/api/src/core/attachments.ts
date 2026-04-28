@@ -1,6 +1,3 @@
-import { join } from 'path';
-import { mkdir, unlink, writeFile, stat } from 'fs/promises';
-import { existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import {
   createAttachment,
@@ -8,12 +5,12 @@ import {
   deleteOrphanAttachments,
   type AttachmentRow,
 } from '../db/queries';
+import { getBlob } from '../adapters/blob';
 
-// All attachments live under data/uploads/, bucketed by year-month to keep
-// any single directory from ballooning. The file name is `<uuid>.<ext>` so
-// URLs are stable and unguessable.
-const ROOT = join(import.meta.dir, '../..');
-const UPLOADS_ROOT = join(ROOT, 'data', 'uploads');
+// Attachments live behind the BlobDriver — local fs in self-host mode, R2 in
+// hosted mode. The DB still holds metadata + a stable opaque key (path-shaped
+// "yyyy-mm/<uuid>.<ext>"); the driver decides where bytes physically live and
+// how /uploads/<id> serves them.
 
 // Supported image types. We deliberately do not accept SVG (XSS vector) or
 // HEIC (browsers can't render it inline without decoding). Clients that send
@@ -39,30 +36,6 @@ function yearMonthBucket(ts: number = Date.now()): string {
   return `${y}-${m}`;
 }
 
-async function ensureDir(path: string): Promise<void> {
-  if (!existsSync(path)) await mkdir(path, { recursive: true });
-}
-
-// Resolve a stored relative path (e.g. "2026-04/abc.png") to its absolute
-// location on disk. Paths stored in the DB are always relative to
-// UPLOADS_ROOT so the data directory can be moved without rewrites.
-export function resolveAttachmentPath(relPath: string): string {
-  return join(UPLOADS_ROOT, relPath);
-}
-
-// Serve file for a given attachment row, or null if the file is gone.
-export async function readAttachmentFile(row: AttachmentRow): Promise<Uint8Array | null> {
-  const abs = resolveAttachmentPath(row.path);
-  try {
-    const f = Bun.file(abs);
-    if (!(await f.exists())) return null;
-    const buf = await f.arrayBuffer();
-    return new Uint8Array(buf);
-  } catch {
-    return null;
-  }
-}
-
 // The row the upload endpoint returns to the client, stripped of the on-disk
 // path (clients refer to attachments by id, not filesystem location).
 export interface UploadedAttachment {
@@ -76,9 +49,9 @@ export interface UploadedAttachment {
 }
 
 /**
- * Persist an uploaded file to disk and create an orphan (message_id=NULL)
- * attachment row. The client later sends the returned id in the WS chat
- * payload to bind it to a message.
+ * Persist an uploaded file to blob storage and create an orphan
+ * (message_id=NULL) attachment row. The client later sends the returned id
+ * in the WS chat payload to bind it to a message.
  *
  * Returns null on validation failure so the caller can pick a 4xx.
  */
@@ -103,18 +76,16 @@ export async function saveUpload(args: {
   const ext = IMAGE_MIME_TO_EXT[normMime];
   const id = randomUUID();
   const bucket = yearMonthBucket();
-  const relPath = `${bucket}/${id}.${ext}`;
-  const absPath = join(UPLOADS_ROOT, bucket, `${id}.${ext}`);
+  const key = `${bucket}/${id}.${ext}`;
 
-  await ensureDir(join(UPLOADS_ROOT, bucket));
-  await writeFile(absPath, bytes);
+  await getBlob().put(key, bytes, normMime);
 
   createAttachment(
     id,
     args.conversationId ?? null,
     'image',
     normMime,
-    relPath,
+    key,
     bytes.byteLength,
     null, null, // width/height — not probed yet; cheap to add later with a decoder
   );
@@ -128,24 +99,43 @@ export async function saveUpload(args: {
   };
 }
 
-// Best-effort file deletion: swallow ENOENT but log anything else so an
-// operator notices if the filesystem is drifting out of sync with the DB.
-export async function unlinkAttachmentFile(relPath: string): Promise<void> {
-  const abs = resolveAttachmentPath(relPath);
-  try {
-    await unlink(abs);
-  } catch (e: any) {
-    if (e?.code !== 'ENOENT') {
-      console.warn(`[attachments] failed to unlink ${abs}:`, e?.message ?? e);
-    }
-  }
+/**
+ * Read raw attachment bytes. Used by the vision prompt path which needs to
+ * inline the image into the LLM payload. Prefer the serving response path
+ * for HTTP responses so R2 can short-circuit with a redirect.
+ */
+export async function readAttachmentFile(row: AttachmentRow): Promise<Uint8Array | null> {
+  return getBlob().getBytes(row.path);
 }
 
-// Convenience: unlink in parallel and don't throw — the rows are already gone
-// from the DB by the time this is called, so there's nothing to roll back to.
-export async function unlinkAttachmentFiles(relPaths: string[]): Promise<void> {
-  if (relPaths.length === 0) return;
-  await Promise.all(relPaths.map(p => unlinkAttachmentFile(p)));
+/**
+ * Build the response for `/uploads/<id>` after the caller has confirmed the
+ * viewer is authorized. Returns null if the row or backing object is missing
+ * — caller should map to 404.
+ */
+export async function getAttachmentServingResponse(id: string): Promise<{
+  row: AttachmentRow;
+  response: Response;
+} | null> {
+  const row = findAttachmentById(id);
+  if (!row) return null;
+  const response = await getBlob().servingResponse(row.path, row.mime);
+  if (!response) return null;
+  return { row, response };
+}
+
+// Best-effort blob deletion: log anything unexpected so an operator notices
+// if the store is drifting out of sync with the DB.
+export async function unlinkAttachmentFile(key: string): Promise<void> {
+  await getBlob().delete(key);
+}
+
+// Convenience: delete in parallel and don't throw — the rows are already
+// gone from the DB by the time this is called, so there's nothing to roll
+// back to.
+export async function unlinkAttachmentFiles(keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await getBlob().deleteMany(keys);
 }
 
 // Periodic orphan sweep. Called from index.ts on startup; rearms itself.
@@ -154,10 +144,10 @@ export async function unlinkAttachmentFiles(relPaths: string[]): Promise<void> {
 export function startOrphanSweeper(intervalMs: number = 10 * 60 * 1000): void {
   const tick = async () => {
     try {
-      const paths = deleteOrphanAttachments(15 * 60);
-      if (paths.length > 0) {
-        await unlinkAttachmentFiles(paths);
-        console.log(`[attachments] swept ${paths.length} orphan(s)`);
+      const keys = deleteOrphanAttachments(15 * 60);
+      if (keys.length > 0) {
+        await unlinkAttachmentFiles(keys);
+        console.log(`[attachments] swept ${keys.length} orphan(s)`);
       }
     } catch (e: any) {
       console.error('[attachments] sweep error:', e?.message ?? e);
@@ -169,20 +159,12 @@ export function startOrphanSweeper(intervalMs: number = 10 * 60 * 1000): void {
   setInterval(tick, intervalMs);
 }
 
-// Light-touch helper for the /uploads/<id> static route.
+// Kept for back-compat with callers that haven't been ported yet — returns
+// the old `{row, absPath, size}` shape only when the local driver is in use.
+// New code should prefer getAttachmentServingResponse.
 export async function getAttachmentForServing(id: string): Promise<{
   row: AttachmentRow;
-  absPath: string;
-  size: number;
+  response: Response;
 } | null> {
-  const row = findAttachmentById(id);
-  if (!row) return null;
-  const absPath = resolveAttachmentPath(row.path);
-  try {
-    const s = await stat(absPath);
-    if (!s.isFile()) return null;
-    return { row, absPath, size: s.size };
-  } catch {
-    return null;
-  }
+  return getAttachmentServingResponse(id);
 }
