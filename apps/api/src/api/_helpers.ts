@@ -114,6 +114,8 @@ function isPublicApiPath(pathname: string): boolean {
   if (pathname === '/api/session/install') return true;
   // Clerk JWT exchange: caller has a Clerk session JWT but no api key yet.
   if (pathname === '/api/auth/clerk/exchange') return true;
+  // Public client-config snapshot (no secrets) — drives the login page.
+  if (pathname === '/api/config') return true;
   return false;
 }
 

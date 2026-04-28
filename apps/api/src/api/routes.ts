@@ -20,6 +20,25 @@ apiRoutes.post('/session/install', async (c) => {
   return c.json({ ok: true, user_id: resolved.user.id });
 });
 
+// Public client-config snapshot. Drives the login page so the frontend
+// knows which auth methods are available without hard-coding env-derived
+// values into the bundle. Self-host installs (no Clerk env) just see
+// `{ auth: { clerk: null } }` and fall back to the invite-code flow.
+//
+// IMPORTANT: only include values that are already public (publishable
+// keys, frontend API URLs). Server secrets must never end up here.
+apiRoutes.get('/config', (c) => {
+  const clerkIssuer = process.env.CLERK_ISSUER?.trim();
+  const clerkPublishable = process.env.CLERK_PUBLISHABLE_KEY?.trim();
+  return c.json({
+    auth: {
+      clerk: (clerkIssuer && clerkPublishable)
+        ? { issuer: clerkIssuer, publishableKey: clerkPublishable }
+        : null,
+    },
+  });
+});
+
 // Bot list
 apiRoutes.get('/bots', (c) => {
   const bots = listBots();
