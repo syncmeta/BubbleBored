@@ -16,6 +16,7 @@ struct ConversationView: View {
     @Environment(\.api) private var api
     @Environment(\.account) private var account
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.useSidebarLayout) private var sidebarLayout
     @StateObject private var ws: ConversationWS
     @State private var messages: [ChatMessage] = []
     @State private var input = ""
@@ -391,16 +392,21 @@ struct ConversationView: View {
     /// tappable. The whole row stays at one height, like the tab headers.
     private var chatHeader: some View {
         HStack(alignment: .center, spacing: 10) {
-            Button {
-                Haptics.tap()
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .padding(.trailing, 2)
+            // In sidebar layout (iPad landscape / Mac), the detail pane has
+            // no parent stack to pop back to — picking another conversation
+            // is what swaps the detail. Drop the chevron there.
+            if !sidebarLayout {
+                Button {
+                    Haptics.tap()
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .padding(.trailing, 2)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             BotAvatar(seed: conversation.id, size: 30)
 

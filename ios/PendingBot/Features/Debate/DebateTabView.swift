@@ -2,77 +2,128 @@ import SwiftUI
 
 /// 议论 — multi-bot debate. List of past debates; "+" to start a new one
 /// (pick topic + ≥2 bots). Detail view runs rounds via SSE.
+///
+/// Compact: NavigationStack push. Regular (iPad landscape, Mac Catalyst):
+/// NavigationSplitView sidebar+detail. See MessageTabView for the same
+/// branching rationale.
 struct DebateTabView: View {
     @Environment(\.api) private var api
+    @Environment(\.useSidebarLayout) private var sidebarLayout
     @State private var conversations: [DebateConversation] = []
     @State private var bots: [Bot] = []
     @State private var creating = false
-    @State private var path: [DebateRoute] = []
+    @State private var path: [DebateRoute] = []         // compact
+    @State private var selected: DebateRoute?           // regular
     @State private var error: String?
 
     var body: some View {
-        NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                TabHeaderBar(title: "议论") {
-                    Button { creating = true } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .medium))
-                    }
-                    .disabled(bots.isEmpty)
-                }
-                Group {
-                    if conversations.isEmpty {
-                        EmptyHint(text: "让 AI 们议论你")
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
-                            ForEach(conversations) { conv in
-                                NavigationLink(value: DebateRoute(conv: conv, autoStart: false)) {
-                                    runRow(title: conv.title ?? "议论",
-                                           subtitle: conv.bot_ids.map { "\($0.count) 机器人" },
-                                           active: false,
-                                           ts: conv.last_activity_at)
-                                }
-                                .buttonStyle(.plain)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        Task { await delete(conv) }
-                                    } label: { Label("删除", systemImage: "trash") }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, Theme.Metrics.gutter)
-                        .padding(.vertical, 12)
-                        .readableColumnWidth()
-                    }
-                    .refreshable { await load() }
-                    }
-                }
+        Group {
+            if sidebarLayout {
+                regularBody
+            } else {
+                compactBody
             }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: DebateRoute.self) { route in
-                DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
-            }
-            .sheet(isPresented: $creating) {
-                NewDebateSheet(bots: bots) { result in
-                    creating = false
-                    switch result {
-                    case .none: break
-                    case .created(let created):
-                        Task { await load() }
-                        // Push straight into the round view and auto-start so
-                        // the user lands inside a debate that's already going.
-                        path.append(DebateRoute(conv: created, autoStart: true))
+        }
+        .task { await load() }
+        .sheet(isPresented: $creating) {
+            NewDebateSheet(bots: bots) { result in
+                creating = false
+                switch result {
+                case .none: break
+                case .created(let created):
+                    Task { await load() }
+                    // Push / open the just-created debate and auto-start so
+                    // the user lands inside a stream that's already going.
+                    let route = DebateRoute(conv: created, autoStart: true)
+                    if sidebarLayout {
+                        selected = route
+                    } else {
+                        path.append(route)
                     }
                 }
             }
         }
-        // Drive tab-bar visibility from the NavigationStack root so it
-        // slides in/out alongside push/pop instead of snapping back at
-        // the end of the back transition.
+    }
+
+    private var compactBody: some View {
+        NavigationStack(path: $path) {
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: DebateRoute.self) { route in
+                    DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
+                }
+        }
         .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
-        .task { await load() }
+    }
+
+    private var regularBody: some View {
+        NavigationSplitView {
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .sidebarColumnWidth()
+        } detail: {
+            if let route = selected {
+                DebateRoundView(conversation: route.conv, autoStart: route.autoStart)
+                    .id(route.conv.id)
+            } else {
+                EmptyDetailHint(text: "选一场议论", systemImage: "person.2.wave.2")
+            }
+        }
+    }
+
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            TabHeaderBar(title: "议论") {
+                Button { creating = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                }
+                .disabled(bots.isEmpty)
+            }
+            Group {
+                if conversations.isEmpty {
+                    EmptyHint(text: "让 AI 们议论你")
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(conversations) { conv in
+                                rowTap(conv)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            Task { await delete(conv) }
+                                        } label: { Label("删除", systemImage: "trash") }
+                                    }
+                            }
+                        }
+                        .padding(.horizontal, Theme.Metrics.gutter)
+                        .padding(.vertical, 12)
+                        .readableColumnWidth(sidebarLayout ? .infinity : Theme.Metrics.readableColumn)
+                    }
+                    .refreshable { await load() }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowTap(_ conv: DebateConversation) -> some View {
+        let row = runRow(title: conv.title ?? "议论",
+                         subtitle: conv.bot_ids.map { "\($0.count) 机器人" },
+                         active: false,
+                         ts: conv.last_activity_at,
+                         selected: sidebarLayout && selected?.conv.id == conv.id)
+        if sidebarLayout {
+            Button {
+                selected = DebateRoute(conv: conv, autoStart: false)
+                Haptics.tap()
+            } label: { row }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(value: DebateRoute(conv: conv, autoStart: false)) { row }
+                .buttonStyle(.plain)
+        }
     }
 
     private func load() async {

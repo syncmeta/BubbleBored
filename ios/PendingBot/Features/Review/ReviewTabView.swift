@@ -5,68 +5,112 @@ import SwiftUI
 /// one tied to a message conv.
 struct ReviewTabView: View {
     @Environment(\.api) private var api
+    @Environment(\.useSidebarLayout) private var sidebarLayout
     @State private var conversations: [ReviewConversation] = []
     @State private var bots: [Bot] = []
     @State private var creating = false
     @State private var error: String?
-    // Path-based nav so `.toolbar(.hidden, for: .tabBar)` lives on the
-    // NavigationStack root and animates with push/pop (see MessageTabView
-    // for the rationale).
-    @State private var path: [ReviewConversation] = []
+    @State private var path: [ReviewConversation] = []   // compact
+    @State private var selected: ReviewConversation?     // regular
 
     var body: some View {
+        Group {
+            if sidebarLayout {
+                regularBody
+            } else {
+                compactBody
+            }
+        }
+        .task { await load() }
+        .sheet(isPresented: $creating) {
+            NewReviewSheet(bots: bots) { didCreate in
+                creating = false
+                if didCreate { Task { await load() } }
+            }
+        }
+    }
+
+    private var compactBody: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                TabHeaderBar(title: "回顾") {
-                    Button { creating = true } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .medium))
-                    }
-                    .disabled(bots.isEmpty)
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: ReviewConversation.self) { conv in
+                    ReviewRunView(conversation: conv) { Task { await load() } }
                 }
-                Group {
-                    if conversations.isEmpty {
-                        EmptyHint(text: "和 AI 一起回顾、反思你们的过往")
+        }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+    }
+
+    private var regularBody: some View {
+        NavigationSplitView {
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .sidebarColumnWidth()
+        } detail: {
+            if let conv = selected {
+                NavigationStack {
+                    ReviewRunView(conversation: conv) { Task { await load() } }
+                }
+                .id(conv.id)
+            } else {
+                EmptyDetailHint(text: "选一次回顾", systemImage: "magnifyingglass")
+            }
+        }
+    }
+
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            TabHeaderBar(title: "回顾") {
+                Button { creating = true } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
+                }
+                .disabled(bots.isEmpty)
+            }
+            Group {
+                if conversations.isEmpty {
+                    EmptyHint(text: "和 AI 一起回顾、反思你们的过往")
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
-                                NavigationLink(value: conv) {
-                                    runRow(title: conv.title ?? "回顾",
-                                           subtitle: conv.status,
-                                           active: false,
-                                           ts: conv.last_activity_at)
-                                }
-                                .buttonStyle(.plain)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        Task { await delete(conv) }
-                                    } label: { Label("删除", systemImage: "trash") }
-                                }
+                                rowTap(conv)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            Task { await delete(conv) }
+                                        } label: { Label("删除", systemImage: "trash") }
+                                    }
                             }
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.vertical, 12)
-                        .readableColumnWidth()
+                        .readableColumnWidth(sidebarLayout ? .infinity : Theme.Metrics.readableColumn)
                     }
                     .refreshable { await load() }
-                    }
-                }
-            }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: ReviewConversation.self) { conv in
-                ReviewRunView(conversation: conv) { Task { await load() } }
-            }
-            .sheet(isPresented: $creating) {
-                NewReviewSheet(bots: bots) { didCreate in
-                    creating = false
-                    if didCreate { Task { await load() } }
                 }
             }
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
-        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func rowTap(_ conv: ReviewConversation) -> some View {
+        let row = runRow(title: conv.title ?? "回顾",
+                         subtitle: conv.status,
+                         active: false,
+                         ts: conv.last_activity_at,
+                         selected: sidebarLayout && selected?.id == conv.id)
+        if sidebarLayout {
+            Button {
+                selected = conv
+                Haptics.tap()
+            } label: { row }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(value: conv) { row }
+                .buttonStyle(.plain)
+        }
     }
 
     private func load() async {
