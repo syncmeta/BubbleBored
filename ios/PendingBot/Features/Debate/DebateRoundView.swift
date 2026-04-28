@@ -47,6 +47,7 @@ struct DebateRoundView: View {
                         Color.clear.frame(height: 96).id("bottom")
                     }
                     .padding(.top, 4)
+                    .readableColumnWidth()
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await load() }

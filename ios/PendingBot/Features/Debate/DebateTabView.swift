@@ -43,6 +43,7 @@ struct DebateTabView: View {
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.vertical, 12)
+                        .readableColumnWidth()
                     }
                     .refreshable { await load() }
                     }
@@ -143,6 +144,7 @@ private struct NewDebateSheet: View {
                     .padding(.horizontal, Theme.Metrics.gutter)
                     .padding(.top, 12)
                     .padding(.bottom, 32)
+                    .readableColumnWidth()
                 }
             }
             .navigationBarTitleDisplayMode(.inline)

@@ -127,6 +127,7 @@ struct ConversationView: View {
                         Color.clear.frame(height: 8).id("bottom")
                     }
                     .padding(.top, 4)
+                    .readableColumnWidth()
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.count) { _, _ in
@@ -156,6 +157,7 @@ struct ConversationView: View {
                     canSend: canSend,
                     onSend: { Task { await send() } }
                 )
+                .readableColumnWidth()
             }
         }
         .task {

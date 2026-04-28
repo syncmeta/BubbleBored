@@ -69,6 +69,27 @@ enum Theme {
         static let bubbleRadius: CGFloat = 18
         static let cardRadius: CGFloat = 14
         static let pillRadius: CGFloat = 999
+
+        /// Cap on a column of long-form content (chat bubbles, list rows).
+        /// Above this width — iPad landscape, Mac Catalyst windows — letting
+        /// the column stretch produces 1500pt-wide bubbles that read poorly.
+        /// 760 keeps lines around 70–80 chars which matches reading research.
+        static let readableColumn: CGFloat = 760
+    }
+}
+
+// ── Wide-screen reading column ──────────────────────────────────────────────
+
+extension View {
+    /// Center the view inside a column capped at `Theme.Metrics.readableColumn`.
+    /// On iPhone portrait this is a no-op (the screen is narrower than the cap);
+    /// on iPad landscape and Mac Catalyst windows it keeps content from
+    /// spreading across the full window width.
+    func readableColumnWidth(
+        _ maxWidth: CGFloat = Theme.Metrics.readableColumn
+    ) -> some View {
+        frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 

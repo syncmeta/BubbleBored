@@ -72,6 +72,7 @@ struct MessageTabView: View {
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.vertical, 12)
+                        .readableColumnWidth()
                     }
                     .refreshable { await load() }
                     }
