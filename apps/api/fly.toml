@@ -1,16 +1,32 @@
-# Fly.io deploy config for PendingBot backend.
-# Single VM in iad (US East — best blended latency for global hobby traffic),
-# 256 MB shared CPU + 1 GB volume. Cloudflare sits in front of *.fly.dev for
-# WAF / DDoS / global CDN; origin is reached via a Cloudflare-proxied CNAME
-# pointing at this app's *.fly.dev hostname.
+# Fly.io deploy config for the PendingBot API.
 #
-# Deploy:
-#   fly launch --no-deploy            # one-time, accept the import
-#   fly secrets set OPENROUTER_API_KEY=... CLERK_ISSUER=... BYOK_ENC_KEY=...
+# Topology: a single Fly VM in iad sits behind Cloudflare. Cloudflare is the
+# canonical edge — proxies bot.pendingname.com (web on Cloudflare Pages) and
+# routes /api/*, /ws*, /uploads/* to this Fly origin via a Worker. iOS app
+# only ever calls bot.pendingname.com; *.fly.dev is internal-only.
+#
+# State: SQLite on a 1GB persistent volume + R2 for attachments. With R2 in
+# place, the volume holds only the database (~tens of MB for a long time).
+# This is single-writer by design — never raise min_machines_running above 1
+# or the SQLite WAL will corrupt.
+#
+# First-time deploy:
+#   fly auth login
+#   cd apps/api
+#   fly launch --copy-config --no-deploy --name pendingbot-api --region iad
 #   fly volumes create pendingbot_data --region iad --size 1
+#   fly secrets set \
+#       OPENROUTER_API_KEY=sk-or-... \
+#       BYOK_ENC_KEY="$(openssl rand -hex 32)" \
+#       CLERK_ISSUER=https://...clerk.accounts.dev \
+#       R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
+#       R2_BUCKET=pendingbot-prod \
+#       CORS_ALLOWED_ORIGINS=https://bot.pendingname.com
 #   fly deploy
+#
+# After that, GitHub Actions handles `fly deploy` on push to main.
 
-app = "pendingbot"
+app = "pendingbot-api"
 primary_region = "iad"
 
 [build]
@@ -20,9 +36,8 @@ primary_region = "iad"
   PORT = "3456"
   DATA_DIR = "/data"
 
-# SQLite is single-writer; never run more than one instance. Auto-stop puts
-# the VM to sleep when idle and resumes on the next request — for a hobby
-# deployment this turns the bill into "pennies per active hour".
+# Auto-stop puts the VM to sleep when idle, auto-start wakes on the next
+# request. For hobby traffic the bill becomes a few dollars a month.
 [[services]]
   internal_port = 3456
   protocol = "tcp"
@@ -45,6 +60,8 @@ primary_region = "iad"
     timeout = "5s"
     grace_period = "10s"
 
+  # Cloudflare upstream timeout is 100s — keep ours generous so Worker
+  # reverse-proxy can survive long LLM streams without 524s.
   [services.concurrency]
     type = "requests"
     soft_limit = 200
@@ -53,9 +70,19 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 256
+  memory_mb = 512
 
 [mounts]
   source = "pendingbot_data"
   destination = "/data"
   initial_size = "1gb"
+
+# Health check at the public path Cloudflare's "Origin Health" + uptime
+# monitors hit. Distinct from the tcp_checks above which only verify the
+# socket is listening.
+[[http_service.checks]]
+  type = "http"
+  path = "/api/health"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"

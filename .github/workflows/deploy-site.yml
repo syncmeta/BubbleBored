@@ -1,0 +1,19 @@
+name: Deploy site
+
+# Cloudflare Pages auto-deploys from this repo when wired via the Pages
+# dashboard's Git connection (build output: apps/site/public). This
+# workflow is purely a sentinel — it lights up green so a green main
+# branch implies the static site change at least passed CI checks. The
+# real deploy is done by Cloudflare's git integration.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/site/**'
+      - '.github/workflows/deploy-site.yml'
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Cloudflare Pages will pick up apps/site changes via its Git integration."
