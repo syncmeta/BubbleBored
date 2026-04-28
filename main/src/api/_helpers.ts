@@ -25,6 +25,7 @@ declare module 'hono' {
     authApiKey: ApiKeyRow;
   }
 }
+import { runWithUser } from '../core/request-context';
 import { messageBus } from '../bus/router';
 import { webChannel } from '../bus/channels/web';
 import { iosChannel } from '../bus/channels/ios';
@@ -111,6 +112,8 @@ function isPublicApiPath(pathname: string): boolean {
   // server-side. Used as the recovery path when the cookie has been lost
   // (HttpOnly means JS in the browser can't write it directly).
   if (pathname === '/api/session/install') return true;
+  // Clerk JWT exchange: caller has a Clerk session JWT but no api key yet.
+  if (pathname === '/api/auth/clerk/exchange') return true;
   return false;
 }
 
@@ -131,7 +134,10 @@ export const apiKeyAuthMiddleware: MiddlewareHandler = async (c, next) => {
   if (resolved) {
     c.set('authUser', resolved.user);
     c.set('authApiKey', resolved.apiKey);
-    return next();
+    // Run the rest of the request inside a user-scoped async context so the
+    // LLM client / quota / audit layers can read the caller without every
+    // route threading userId by hand.
+    return runWithUser(resolved.user.id, () => next());
   }
 
   // Reject Bearer tokens that we couldn't resolve (avoids the silent fallthrough

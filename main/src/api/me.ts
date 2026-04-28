@@ -5,6 +5,8 @@ import {
   listAiPicks, createAiPick, softDeleteAiPick, hardDeleteAiPick,
 } from '../db/queries';
 import { findUser, getOrCreateUser } from './_helpers';
+import { saveOpenrouterByok, saveJinaByok, summarizeByok } from '../core/byok';
+import { getQuotaSummary } from '../core/quota';
 
 export const meRoutes = new Hono();
 
@@ -102,3 +104,42 @@ meRoutes.delete('/picks/:id', (c) => {
 function safeParse(s: string): any {
   try { return JSON.parse(s); } catch { return {}; }
 }
+
+// ── BYOK (bring-your-own-key) ─────────────────────────────────────────────
+//
+// Lets a user supply their own OpenRouter (and optionally Jina) API key. When
+// set, all LLM calls made on behalf of that user route through their key —
+// they pay OpenRouter directly and bypass the platform quota entirely.
+//
+// We never return decrypted keys; only `configured` + `last4` so the UI can
+// say "✓ saved (sk-xxxx)". To rotate, the user re-PUTs; to remove, DELETE.
+
+meRoutes.get('/keys', (c) => {
+  const user = findUser(c);
+  return c.json(summarizeByok(user.id));
+});
+
+meRoutes.put('/keys', async (c) => {
+  const body = await c.req.json<{
+    openrouter?: string | null;
+    jina?: string | null;
+  }>().catch(() => ({} as { openrouter?: string | null; jina?: string | null }));
+  const user = getOrCreateUser(c);
+  if (body.openrouter !== undefined) saveOpenrouterByok(user.id, body.openrouter ?? null);
+  if (body.jina !== undefined) saveJinaByok(user.id, body.jina ?? null);
+  return c.json(summarizeByok(user.id));
+});
+
+meRoutes.delete('/keys', (c) => {
+  const user = getOrCreateUser(c);
+  saveOpenrouterByok(user.id, null);
+  saveJinaByok(user.id, null);
+  return c.json(summarizeByok(user.id));
+});
+
+// ── Quota status (powers the "this month: $0.07 / $0.30" UI) ─────────────
+
+meRoutes.get('/quota', (c) => {
+  const user = findUser(c);
+  return c.json(getQuotaSummary(user.id));
+});
