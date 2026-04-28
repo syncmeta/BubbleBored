@@ -53,8 +53,9 @@ PendingBot/                  bun workspaces 单仓
 ├── apps/
 │   ├── api/                 Bun + Hono 后端（核心代码）
 │   ├── web/                 React + Vite + TS 前端（重写中，骨架）
-│   ├── site/                pendingname.com 占位页
 │   └── ios/                 SwiftUI 原生 iOS app
+                             （品牌官网 pendingname.com 在另一个仓库
+                              syncmeta/PendingName-web，不在这里）
 ├── packages/
 │   └── shared-types/        前后端共用类型 / zod schema
 ├── docs/

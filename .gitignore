@@ -5,6 +5,11 @@ node_modules/
 # Build output
 **/dist/
 **/.vite/
+**/.next/
+**/.vercel/
+**/.turbo/
+**/next-env.d.ts
+**/tsconfig.tsbuildinfo
 
 # SQLite database files (only matter for self-host dev runs)
 **/data/*.sqlite

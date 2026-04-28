@@ -127,16 +127,17 @@ curl -i https://pendingbot-api.fly.dev/api/health
    curl -i https://bot.pendingname.com/api/health
    ```
 
-## 6. Mark `pendingname.com` as the placeholder site
+## 6. `pendingname.com` marketing site
 
-Until the marketing site is real, just push the placeholder under
-`apps/site/public/` to Cloudflare Pages:
+The marketing site lives in its own repo at
+[`syncmeta/PendingName-web`](https://github.com/syncmeta/PendingName-web)
+— a Next.js + next-intl app that's deployed independently from the
+PendingBot product code. Cloudflare Pages connects directly to that
+repo:
 
-1. In the Cloudflare dashboard → **Pages → Create application → Connect to Git**.
-2. Pick the `PendingBot` repo, build command empty, output dir `apps/site/public`.
-3. After first deploy, Pages gives a `*.pages.dev` URL.
-4. Add custom domain `pendingname.com` to that Pages project; Cloudflare
-   will issue the cert + create the apex DNS record automatically.
+1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git**.
+2. Pick `syncmeta/PendingName-web`, framework preset **Next.js**.
+3. Add custom domain `pendingname.com` once the first build is green.
 
 ## 7. Smoke test the full chain
 
