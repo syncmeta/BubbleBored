@@ -39,7 +39,7 @@ struct WelcomeView: View {
                 welcomeButton(icon: "qrcode.viewfinder", title: "扫码") {
                     sheet = .scan
                 }
-                welcomeButton(icon: "doc.on.clipboard", title: "粘贴分享链接") {
+                welcomeButton(icon: "doc.on.clipboard", title: "粘贴登录码") {
                     sheet = .paste
                 }
                 welcomeButton(icon: "keyboard", title: "手动输入服务器地址和钥匙") {

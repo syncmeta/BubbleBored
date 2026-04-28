@@ -1,8 +1,12 @@
 import SwiftUI
 
-/// "Paste a share link" import sheet. Reads the system pasteboard on appear
-/// and pre-fills if it looks like a PendingBot link, then lets the user
+/// "Paste a 登录码" import sheet. Reads the system pasteboard on appear
+/// and pre-fills if it looks like a login code, then lets the user
 /// confirm. Falls back to a TextField if the pasteboard is empty.
+///
+/// Also accepts the legacy `https://server/i/<token>` and
+/// `pendingbot://import?...` URL forms — kept working for any old share
+/// links still in the wild.
 struct PasteLinkView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
@@ -14,21 +18,21 @@ struct PasteLinkView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("https://server/i/<token>", text: $input, axis: .vertical)
-                        .lineLimit(2...5)
+                    TextField("pbk1.…", text: $input, axis: .vertical)
+                        .lineLimit(2...6)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.callout)
                 } header: {
-                    Text("分享链接")
+                    Text("登录码")
                 } footer: {
-                    Text("链接形如 https://your-server/i/<token> 或 pendingbot://import?...")
+                    Text("粘贴管理员发来的登录码（一串以 pbk1. 开头的文本）。也支持旧版分享链接。")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red) }
                 }
             }
-            .navigationTitle("从链接导入")
+            .navigationTitle("用登录码登录")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -38,14 +42,14 @@ struct PasteLinkView: View {
                     if importing {
                         ProgressView()
                     } else {
-                        Button("导入") { Task { await importNow() } }
+                        Button("登录") { Task { await importNow() } }
                             .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
             }
             .onAppear {
                 if input.isEmpty, let s = UIPasteboard.general.string,
-                   s.contains("/i/") || s.hasPrefix("pendingbot://") {
+                   LoginCode.looksLike(s) || s.contains("/i/") || s.hasPrefix("pendingbot://") {
                     input = s
                 }
             }
@@ -56,7 +60,7 @@ struct PasteLinkView: View {
         importing = true; error = nil
         defer { importing = false }
         do {
-            _ = try await ImportFlow.importFromURLString(input, store: store)
+            _ = try await ImportFlow.importFromText(input, store: store)
             dismiss()
         } catch let e {
             error = e.localizedDescription
