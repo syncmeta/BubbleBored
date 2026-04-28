@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/app-icon.png" width="128" alt="大绿豆 应用图标" />
+</p>
+
 # 大绿豆 · PendingBot
 
 [English](README_EN.md)
@@ -254,6 +258,10 @@ bots:
 ## 接入 iOS
 
 仓库里附带一个原生 SwiftUI app，位于 `ios/PendingBot/`。覆盖六个 tab：消息 / 议论 / 冲浪 / 回顾 / 画像 / 你。
+
+<p align="center">
+  <img src="docs/screenshots/01-onboarding.png" width="280" alt="iOS 启动页：扫码 / 粘贴分享链接 / 手动输入" />
+</p>
 
 和 Telegram / 飞书不同，iOS 不需要 per-bot 配置——一把「钥匙」（API key）就能访问服务上所有的 Bot。走的是独立的 `/api/mobile/*` REST 接口和 `/ws/mobile` WebSocket，全部用 `Authorization: Bearer <api_key>` 鉴权，key 加密存在 Keychain。
 

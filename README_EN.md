@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/app-icon.png" width="128" alt="PendingBot app icon" />
+</p>
+
 # PendingBot
 
 Two goals:
@@ -252,6 +256,10 @@ Feishu event callbacks require a public URL. For local dev, use [ngrok](https://
 ## iOS App
 
 The repo ships with a native SwiftUI app at `ios/PendingBot/`. Six tabs: Messages / Debate / Surf / Review / Portrait / You.
+
+<p align="center">
+  <img src="docs/screenshots/01-onboarding.png" width="280" alt="iOS onboarding: scan QR / paste share link / manual entry" />
+</p>
 
 Unlike Telegram / Feishu, iOS does **not** need per-bot config — a single API key ("钥匙") gives the app access to every bot on the server. It uses a dedicated `/api/mobile/*` REST surface plus a `/ws/mobile` WebSocket, all authed with `Authorization: Bearer <api_key>`. The key is stored encrypted in the iOS Keychain.
 
