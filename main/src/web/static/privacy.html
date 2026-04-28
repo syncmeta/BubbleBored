@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>隐私政策 · 大绿豆 PendingBot</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #222; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  code { background: #f5f5f5; padding: 0.1rem 0.3rem; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>隐私政策</h1>
+<p><em>最后更新：2026-04-28</em></p>
+
+<p>本应用（"大绿豆 / PendingBot"，下称"本服务"）是一个开源的 AI 对话与信息推荐工具。我们尽量少收集你的数据，下面是全部清单。</p>
+
+<h2>1. 我们收集什么</h2>
+<ul>
+  <li><strong>账户标识</strong>：如果你通过 Sign in with Apple / Google / 邮箱登录，第三方身份服务商（Clerk）会向我们提供一个匿名用户 ID 和一个邮箱地址。</li>
+  <li><strong>对话内容</strong>：你与 AI 的全部对话、附件、画像、议论、冲浪历史，存储在服务器的 SQLite 数据库中。</li>
+  <li><strong>设备信息</strong>：iOS 端会注册设备 token 用于推送通知（仅 APNs token，不含设备型号或位置）。</li>
+  <li><strong>使用日志</strong>：每次模型调用的 token 数量与费用（用于计算月度免费额度），不包含对话原文。</li>
+</ul>
+<p>我们 <strong>不</strong> 收集：地理位置、通讯录、广告标识、第三方分析 SDK 上报、聊天内容外的任何数据。</p>
+
+<h2>2. 数据如何使用</h2>
+<ul>
+  <li>对话内容会发送给上游模型服务（OpenRouter 路由的各家模型，以及可选的 Jina 搜索）以生成回复。如果你选择 BYOK（自带 OpenRouter Key），对话会改用你自己的 OpenRouter 账户处理，本服务的服务器仅做转发。</li>
+  <li>邮箱仅用于登录身份识别，不会用于营销邮件、不会出售给第三方。</li>
+  <li>使用日志仅用于计算你的免费额度与生成"使用统计"图表。</li>
+</ul>
+
+<h2>3. 第三方服务商</h2>
+<ul>
+  <li><strong>Clerk</strong>（账号系统）— 隐私政策见 <a href="https://clerk.com/legal/privacy">clerk.com</a></li>
+  <li><strong>OpenRouter</strong>（模型路由）— <a href="https://openrouter.ai/privacy">openrouter.ai</a></li>
+  <li><strong>Cloudflare</strong>（CDN / WAF）— <a href="https://www.cloudflare.com/privacypolicy/">cloudflare.com</a></li>
+  <li><strong>Apple Push Notification service</strong>（仅 iOS 推送）</li>
+  <li>可选：<strong>Jina AI</strong>（搜索抓取）— 仅在你的对话触发冲浪功能时调用</li>
+</ul>
+
+<h2>4. 数据保留与删除</h2>
+<p>你随时可以在 App「你」→「设置」中点击 <strong>删除账户</strong>。这将立即从我们的数据库中删除你的全部对话、附件、画像、用量记录，且不可恢复。Clerk 一侧的身份记录需另行在 Clerk Account UI 中删除。</p>
+
+<h2>5. 数据安全</h2>
+<p>BYOK 中你提供的 API Key 在数据库中以 AES-256-GCM 加密存储，仅在调用上游服务时短暂解密。HTTPS 全程加密传输。</p>
+
+<h2>6. 适用范围与年龄</h2>
+<p>本服务面向 13 岁以上用户。我们不主动面向儿童提供服务，也不会在知情情况下收集儿童的个人信息。</p>
+
+<h2>7. 联系</h2>
+<p>有疑问、要求导出数据或反映其他隐私问题，请通过 <a href="https://github.com/syncmeta/PendingBot/issues">GitHub Issues</a> 联系。</p>
+
+</body>
+</html>
