@@ -56,6 +56,7 @@ struct SurfRunView: View {
                     .padding(.horizontal, Theme.Metrics.gutter + 4)
                     Color.clear.frame(height: 32).id("bottom")
                 }
+                .readableColumnWidth()
             }
             .onChange(of: entries.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.22)) {

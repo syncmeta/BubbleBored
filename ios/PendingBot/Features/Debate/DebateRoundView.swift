@@ -16,6 +16,7 @@ struct DebateRoundView: View {
 
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.useSidebarLayout) private var sidebarLayout
     @State private var messages: [ChatMessage] = []
     @State private var streaming = false
     @State private var pausing = false
@@ -47,6 +48,7 @@ struct DebateRoundView: View {
                         Color.clear.frame(height: 96).id("bottom")
                     }
                     .padding(.top, 4)
+                    .readableColumnWidth()
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await load() }
@@ -108,16 +110,20 @@ struct DebateRoundView: View {
     /// many participants; per-message avatars carry that info instead.
     private var chatHeader: some View {
         HStack(alignment: .center, spacing: 10) {
-            Button {
-                Haptics.tap()
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.ink)
-                    .padding(.trailing, 2)
+            // Drop the back chevron in sidebar layout — the detail pane
+            // doesn't pop, picking another row in the sidebar swaps it.
+            if !sidebarLayout {
+                Button {
+                    Haptics.tap()
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .padding(.trailing, 2)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(convTitle ?? conversation.title ?? "议论")

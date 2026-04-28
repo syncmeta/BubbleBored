@@ -68,6 +68,7 @@ struct ReviewRunView: View {
                     if streaming { ProgressView().padding(.top, 8) }
                 }
                 .padding(16)
+                .readableColumnWidth()
             }
             .onChange(of: messages.count) { _, _ in
                 if let last = messages.last {

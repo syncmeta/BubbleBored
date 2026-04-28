@@ -1,47 +1,114 @@
 import SwiftUI
 
-/// 消息 tab — primary chat. Conversations list on the left, drill into a
-/// chat on selection. NavigationStack so push/pop animates naturally.
+/// 消息 tab — primary chat.
+///
+/// Two layouts driven by horizontal size class:
+///   • compact (iPhone): NavigationStack push from list into ConversationView
+///   • regular (iPad landscape, Mac Catalyst): NavigationSplitView with the
+///     conversations list as a sidebar and ConversationView always visible
+///     on the right — picking another row swaps the detail in place, like
+///     ChatGPT / Claude / WeChat / QQ desktop.
+///
+/// The two paths share the same `sidebarBody` view so styling stays in lock
+/// step; only the row tap target differs (NavigationLink push vs setting
+/// `selected`).
 struct MessageTabView: View {
     @Environment(\.api) private var api
+    @Environment(\.useSidebarLayout) private var sidebarLayout
     @EnvironmentObject private var unread: UnreadStore
     @State private var conversations: [Conversation] = []
     @State private var bots: [Bot] = []
     @State private var loading = false
     @State private var error: String?
     @State private var creatingForBot: Bot?
-    // Path-based nav so we can drive the bottom-tab-bar visibility from the
-    // root: hiding via `.toolbar(.hidden, for: .tabBar)` on the destination
-    // view evaluates only after push/pop commits, which makes the tab bar
-    // snap back in *after* the back transition finishes. With the modifier
-    // on the NavigationStack and keyed to `path.isEmpty`, the system slides
-    // it in/out alongside the navigation transition.
+    // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
+    // so the bottom tab bar slides out alongside the push transition (rather
+    // than snapping back in *after* the back transition finishes, which is
+    // what we'd get if the modifier lived on the destination view).
     @State private var path: [Conversation] = []
+    // Selection-driven detail for regular size class.
+    @State private var selected: Conversation?
 
     var body: some View {
+        Group {
+            if sidebarLayout {
+                regularBody
+            } else {
+                compactBody
+            }
+        }
+        .task { await load() }
+        .alert("出错了", isPresented: .constant(error != nil), actions: {
+            Button("好") { error = nil }
+        }, message: { Text(error ?? "") })
+    }
+
+    // ── Compact (iPhone) ────────────────────────────────────────────────────
+
+    private var compactBody: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                TabHeaderBar(title: "消息") {
-                    Menu {
-                        Section("选择一个机器人") {
-                            ForEach(bots) { bot in
-                                Button(bot.nameWithModel) {
-                                    Task { await createConversation(with: bot) }
-                                }
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: Conversation.self) { conv in
+                    ConversationView(conversation: conv, bot: bot(for: conv)) {
+                        reload()
+                    }
+                    .onAppear { unread.markRead(conv.id) }
+                }
+        }
+        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
+    }
+
+    // ── Regular (iPad landscape, Mac Catalyst) ──────────────────────────────
+
+    private var regularBody: some View {
+        NavigationSplitView {
+            sidebarBody
+                .background(Theme.Palette.canvas.ignoresSafeArea())
+                .toolbar(.hidden, for: .navigationBar)
+                .sidebarColumnWidth()
+        } detail: {
+            if let conv = selected {
+                ConversationView(conversation: conv, bot: bot(for: conv)) {
+                    reload()
+                }
+                // .id forces a fresh ConversationView (and a fresh WS) when
+                // the user picks a different row — without it the existing
+                // view would just rebind, leaking the prior chat's state.
+                .id(conv.id)
+                .onAppear { unread.markRead(conv.id) }
+            } else {
+                EmptyDetailHint(text: "选一条对话开始", systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+    }
+
+    // ── Sidebar (shared) ────────────────────────────────────────────────────
+
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            TabHeaderBar(title: "消息") {
+                Menu {
+                    Section("选择一个机器人") {
+                        ForEach(bots) { bot in
+                            Button(bot.nameWithModel) {
+                                Task { await createConversation(with: bot) }
                             }
                         }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .medium))
                     }
-                    .disabled(bots.isEmpty)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .medium))
                 }
-                Group {
-                    if loading && conversations.isEmpty {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if conversations.isEmpty {
-                        EmptyHint(text: "和 AI 聊天")
-                    } else {
+                .disabled(bots.isEmpty)
+            }
+            Group {
+                if loading && conversations.isEmpty {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if conversations.isEmpty {
+                    EmptyHint(text: "和 AI 聊天")
+                } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(conversations) { conv in
@@ -59,38 +126,41 @@ struct MessageTabView: View {
                                         Task { await delete(conv) }
                                     },
                                 ]) {
-                                    NavigationLink(value: conv) {
-                                        ConversationListRow(
-                                            conv: conv,
-                                            bot: bot(for: conv),
-                                            isUnread: unread.isUnread(conv.id)
-                                        )
-                                    }
-                                    .buttonStyle(StaticButtonStyle())
+                                    rowTap(conv)
                                 }
                             }
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.vertical, 12)
+                        // Cap on compact only; on regular the sidebar already
+                        // has a fixed-width column so the cap would just push
+                        // rows further from the trailing edge.
+                        .readableColumnWidth(sidebarLayout ? .infinity : Theme.Metrics.readableColumn)
                     }
                     .refreshable { await load() }
-                    }
                 }
             }
-            .background(Theme.Palette.canvas.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: Conversation.self) { conv in
-                ConversationView(conversation: conv, bot: bot(for: conv)) {
-                    reload()
-                }
-                .onAppear { unread.markRead(conv.id) }
-            }
-            .alert("出错了", isPresented: .constant(error != nil), actions: {
-                Button("好") { error = nil }
-            }, message: { Text(error ?? "") })
         }
-        .toolbar(path.isEmpty ? .visible : .hidden, for: .tabBar)
-        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func rowTap(_ conv: Conversation) -> some View {
+        let row = ConversationListRow(
+            conv: conv,
+            bot: bot(for: conv),
+            isUnread: unread.isUnread(conv.id),
+            isSelected: sidebarLayout && selected?.id == conv.id
+        )
+        if sidebarLayout {
+            Button {
+                selected = conv
+                Haptics.tap()
+            } label: { row }
+            .buttonStyle(StaticButtonStyle())
+        } else {
+            NavigationLink(value: conv) { row }
+                .buttonStyle(StaticButtonStyle())
+        }
     }
 
     private func bot(for conv: Conversation) -> Bot? {
@@ -149,6 +219,11 @@ private struct ConversationListRow: View {
     let conv: Conversation
     let bot: Bot?
     let isUnread: Bool
+    /// True only in the regular-size sidebar layout when this row's
+    /// conversation is the one currently shown in the detail pane.
+    /// Drives a tinted background so the user can see what's selected
+    /// (compact mode pushes a new screen, so it never needs this).
+    var isSelected: Bool = false
 
     // Bot name + a separate, quieter tag for the model. Falls back to the
     // joined `bot_name` from the conversation row if we haven't loaded the
@@ -216,11 +291,14 @@ private struct ConversationListRow: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                .fill(Theme.Palette.surface)
+                .fill(isSelected ? Theme.Palette.accentBg : Theme.Palette.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                .strokeBorder(
+                    isSelected ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
+                    lineWidth: isSelected ? 1 : 0.5
+                )
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous))
     }

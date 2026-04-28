@@ -41,6 +41,7 @@ struct MeTabView: View {
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.top, 4)
                         .padding(.bottom, 32)
+                        .readableColumnWidth()
                     }
                     .refreshable { await load() }
                 }
