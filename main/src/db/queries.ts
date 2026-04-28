@@ -1054,6 +1054,123 @@ export function deleteInvite(id: string): void {
   getDb().query('DELETE FROM invites WHERE id = ? AND redeemed_at IS NULL').run(id);
 }
 
+// ── Clerk identity ─────────────────────────────────────────────────────────
+
+export function findUserByClerkId(clerkUserId: string) {
+  return getDb().query<any, [string]>(
+    'SELECT * FROM users WHERE clerk_user_id = ?'
+  ).get(clerkUserId);
+}
+
+export function setUserClerkIdentity(
+  userId: string, clerkUserId: string, email: string | null,
+) {
+  getDb().query(
+    `UPDATE users SET clerk_user_id = ?, email = ?, updated_at = unixepoch() WHERE id = ?`
+  ).run(clerkUserId, email, userId);
+}
+
+// ── Quota ──────────────────────────────────────────────────────────────────
+
+export interface UserQuotaRow {
+  user_id: string;
+  monthly_budget_usd: number;
+  used_usd: number;
+  period_start: number;
+  period_end: number;
+  hard_blocked: number;
+  updated_at: number;
+}
+
+export function getUserQuota(userId: string): UserQuotaRow | null {
+  return (getDb().query<any, [string]>(
+    'SELECT * FROM user_quota WHERE user_id = ?'
+  ).get(userId) as UserQuotaRow | null);
+}
+
+export function upsertUserQuota(
+  userId: string, periodStart: number, periodEnd: number,
+  monthlyBudgetUsd: number,
+) {
+  getDb().query(
+    `INSERT INTO user_quota
+      (user_id, monthly_budget_usd, used_usd, period_start, period_end)
+     VALUES (?, ?, 0, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET
+        monthly_budget_usd = excluded.monthly_budget_usd,
+        updated_at = unixepoch()`
+  ).run(userId, monthlyBudgetUsd, periodStart, periodEnd);
+}
+
+export function rolloverQuotaPeriod(
+  userId: string, periodStart: number, periodEnd: number,
+) {
+  getDb().query(
+    `UPDATE user_quota
+        SET used_usd = 0, period_start = ?, period_end = ?,
+            hard_blocked = 0, updated_at = unixepoch()
+      WHERE user_id = ?`
+  ).run(periodStart, periodEnd, userId);
+}
+
+export function chargeUserQuota(userId: string, costUsd: number) {
+  getDb().query(
+    `UPDATE user_quota
+        SET used_usd = used_usd + ?, updated_at = unixepoch()
+      WHERE user_id = ?`
+  ).run(costUsd, userId);
+}
+
+export function setUserQuotaBudget(userId: string, monthlyBudgetUsd: number) {
+  getDb().query(
+    `UPDATE user_quota SET monthly_budget_usd = ?, updated_at = unixepoch()
+      WHERE user_id = ?`
+  ).run(monthlyBudgetUsd, userId);
+}
+
+// ── User settings (BYOK) ───────────────────────────────────────────────────
+
+export interface UserSettingsRow {
+  user_id: string;
+  openrouter_key_enc: Uint8Array | null;
+  openrouter_key_last4: string | null;
+  jina_key_enc: Uint8Array | null;
+  jina_key_last4: string | null;
+  updated_at: number;
+}
+
+export function getUserSettings(userId: string): UserSettingsRow | null {
+  return (getDb().query<any, [string]>(
+    'SELECT * FROM user_settings WHERE user_id = ?'
+  ).get(userId) as UserSettingsRow | null);
+}
+
+export function setOpenrouterByok(
+  userId: string, enc: Uint8Array | null, last4: string | null,
+) {
+  getDb().query(
+    `INSERT INTO user_settings (user_id, openrouter_key_enc, openrouter_key_last4, updated_at)
+     VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(user_id) DO UPDATE SET
+       openrouter_key_enc = excluded.openrouter_key_enc,
+       openrouter_key_last4 = excluded.openrouter_key_last4,
+       updated_at = unixepoch()`
+  ).run(userId, enc, last4);
+}
+
+export function setJinaByok(
+  userId: string, enc: Uint8Array | null, last4: string | null,
+) {
+  getDb().query(
+    `INSERT INTO user_settings (user_id, jina_key_enc, jina_key_last4, updated_at)
+     VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(user_id) DO UPDATE SET
+       jina_key_enc = excluded.jina_key_enc,
+       jina_key_last4 = excluded.jina_key_last4,
+       updated_at = unixepoch()`
+  ).run(userId, enc, last4);
+}
+
 // Sweep orphans older than N seconds — called periodically by a background
 // timer. 15 minutes is the default so a slow client still has time to bind.
 export function deleteOrphanAttachments(olderThanSec: number = 900): string[] {

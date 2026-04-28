@@ -3,20 +3,27 @@ import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 
 const ROOT = join(import.meta.dir, '../..');
-const DB_PATH = join(ROOT, 'data', 'bubblebored.sqlite');
+// DATA_DIR overrides where persistent state lives. Required for hosted deploys
+// (Fly volume mounted at /data); falls back to repo-local `main/data` for dev.
+const DATA_DIR = process.env.DATA_DIR || join(ROOT, 'data');
+const DB_PATH = join(DATA_DIR, 'bubblebored.sqlite');
 
 let db: Database;
 
 export function getDb(): Database {
   if (!db) {
-    const dir = join(ROOT, 'data');
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
     db = new Database(DB_PATH);
     db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA foreign_keys = ON');
     runMigrations(db);
   }
   return db;
+}
+
+export function getDataDir(): string {
+  return DATA_DIR;
 }
 
 function runMigrations(db: Database): void {
@@ -682,5 +689,62 @@ function runMigrations(db: Database): void {
       );
     `);
     db.exec('PRAGMA user_version = 26');
+  }
+
+  // v27: third-party identity columns on users. Clerk is the production login
+  // path (Sign in with Apple / Google / email code via the Clerk-hosted UI);
+  // clerk_user_id is the stable subject of the Clerk JWT and email is the
+  // verified address Clerk gives us, surfaced to the admin token-audit view.
+  // Both are nullable so the existing invite-redeem path (admin bootstrap +
+  // legacy iOS keys) keeps working without a Clerk identity attached.
+  if (userVersion < 27) {
+    const cols = db.query(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'clerk_user_id')) {
+      db.exec(`ALTER TABLE users ADD COLUMN clerk_user_id TEXT`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_clerk ON users(clerk_user_id) WHERE clerk_user_id IS NOT NULL`);
+    }
+    if (!cols.some(c => c.name === 'email')) {
+      db.exec(`ALTER TABLE users ADD COLUMN email TEXT`);
+    }
+    db.exec('PRAGMA user_version = 27');
+  }
+
+  // v28: per-user token-cost quota. Plain users get a small monthly USD
+  // budget on the platform-funded OpenRouter key; the orchestrator pre-checks
+  // before each LLM call and the audit hook deducts after. Period rollover
+  // is lazy (computed on read). Users who switch on BYOK skip the quota
+  // entirely — they're spending their own money.
+  if (userVersion < 28) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_quota (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        monthly_budget_usd REAL NOT NULL DEFAULT 0.30,
+        used_usd REAL NOT NULL DEFAULT 0,
+        period_start INTEGER NOT NULL,
+        period_end INTEGER NOT NULL,
+        hard_blocked INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 28');
+  }
+
+  // v29: per-user settings, currently just BYOK credentials. Keys are
+  // AES-256-GCM encrypted at rest with the env-supplied BYOK_ENC_KEY; the
+  // last4 column is what we surface to the UI so users can confirm "yes
+  // that's the key I pasted". A row exists only once a user has saved at
+  // least one BYOK value.
+  if (userVersion < 29) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        openrouter_key_enc BLOB,
+        openrouter_key_last4 TEXT,
+        jina_key_enc BLOB,
+        jina_key_last4 TEXT,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 29');
   }
 }
