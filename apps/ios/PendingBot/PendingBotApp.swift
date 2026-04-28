@@ -1,10 +1,11 @@
 import SwiftUI
+import Clerk
 
 @main
 struct PendingBotApp: App {
     @StateObject private var accountStore = AccountStore.shared
     @StateObject private var unreadStore = UnreadStore.shared
-    @State private var importErrorAlert: String?
+    @State private var clerk = Clerk.shared
 
     init() {
         Haptics.warmUp()
@@ -13,6 +14,7 @@ struct PendingBotApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environment(clerk)
                 .environmentObject(accountStore)
                 .environmentObject(unreadStore)
                 // Two-color brand (#044735 + #fdfcfa) — light theme only.
@@ -24,36 +26,14 @@ struct PendingBotApp: App {
                 .onChange(of: accountStore.current) { _, new in
                     unreadStore.bind(account: new)
                 }
-                .task { unreadStore.bind(account: accountStore.current) }
-                .onOpenURL { url in
-                    Task { await handleIncoming(url: url) }
+                .task {
+                    unreadStore.bind(account: accountStore.current)
+                    // Clerk's load() fetches the JWKs + active session if any.
+                    // We do this even before the user taps "登录" so the
+                    // sign-in view is responsive on first interaction.
+                    clerk.configure(publishableKey: ClerkConfig.publishableKey)
+                    try? await clerk.load()
                 }
-                .alert("导入失败", isPresented: Binding(
-                    get: { importErrorAlert != nil },
-                    set: { if !$0 { importErrorAlert = nil } }
-                )) {
-                    Button("好") { importErrorAlert = nil }
-                } message: {
-                    Text(importErrorAlert ?? "")
-                }
-        }
-    }
-
-    /// Handles both Universal Links (https://server/i/<token>) and the
-    /// custom URL scheme (pendingbot://import?...). Both go through
-    /// ImportFlow and result in a new active account.
-    @MainActor
-    private func handleIncoming(url: URL) async {
-        guard let payload = ImportPayload(url: url) else {
-            importErrorAlert = "无法识别这条链接"
-            Haptics.warning()
-            return
-        }
-        do {
-            _ = try await ImportFlow.importFromPayload(payload, store: accountStore)
-        } catch {
-            importErrorAlert = error.localizedDescription
-            Haptics.error()
         }
     }
 }
@@ -73,4 +53,15 @@ struct RootView: View {
                 .id(store.current?.id)
         }
     }
+}
+
+/// Hosted-build Clerk publishable key. This is the dev/test key for the
+/// `precise-goat-44.clerk.accounts.dev` tenant — public by design (Clerk
+/// publishable keys carry no write authority, only identify the tenant).
+///
+/// Self-host iOS builds will swap this constant to `nil` and gate Clerk
+/// on a runtime probe of `/api/config` instead. Until then, this single
+/// constant is the only thing the hosted build embeds about Clerk.
+enum ClerkConfig {
+    static let publishableKey = "pk_test_cHJlY2lzZS1nb2F0LTQ0LmNsZXJrLmFjY291bnRzLmRldiQ"
 }

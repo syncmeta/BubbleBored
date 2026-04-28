@@ -8,7 +8,6 @@ import {
 import { hashApiKey, base64UrlEncode, requireAdminMiddleware } from './_helpers';
 import { detectServerUrls } from './server-urls';
 import { unlinkAttachmentFiles } from '../core/attachments';
-import { encodeLoginCode } from './login-code';
 
 /**
  * Keys management API. Powers the 钥匙 admin panel in the web UI.
@@ -19,19 +18,10 @@ import { encodeLoginCode } from './login-code';
  * with auth (basic/IP allowlist/SSO/etc).
  *
  * Each key binds to a fresh `users` row with channel='ios' and
- * external_id=<random uuid>. The WS layer keys connections by external_id,
- * so the iOS WebSocket /ws/mobile?key=K resolves to that external_id and
- * existing iosChannel.send paths keep working unchanged.
- *
- * Server URLs are NOT derived from the admin's request host. Each key
- * remembers its own share_base_url (and optional alternates) so a key
- * minted from `localhost:3456` can still ship a working 登录码 — the
- * admin picks the public/LAN address from a dropdown at create time.
- *
- * 登录码 (login code) is a self-contained text string returned at create
- * time that bundles {server, alts, raw key, name}. It's "shown once" along
- * with the raw key — once the admin closes the modal, neither can be
- * retrieved again. To re-issue, mint a new key.
+ * external_id=<random uuid>. Used to be the only path for iOS onboarding
+ * (admin minted a key + login-code, user pasted it). The login-code flow
+ * is gone now; this endpoint is mostly useful for programmatic clients
+ * (curl / scripts / future bots) that need a long-lived bearer token.
  */
 export const keysRoutes = new Hono();
 
@@ -111,14 +101,12 @@ keysRoutes.post('/', async (c) => {
     createdBy: admin?.id ?? null,
   });
 
-  const loginCode = encodeLoginCode({ server: baseURL, alts: altURLs, key, name });
   return c.json({
     id: keyId,
     name,
     user_id: userId,
     key,                      // ⚠ shown ONCE — never returned again
     key_prefix: key.slice(0, KEY_PREFIX_DISPLAY_LEN),
-    login_code: loginCode,    // self-contained text string the admin copies
     share_base_url: baseURL,
     share_alt_urls: altURLs,
   });

@@ -35,6 +35,12 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: 2.4.0
+  Clerk:
+    # Official iOS SDK — handles SIWA, Google OAuth, email-code, JWT
+    # session management. We use it on the hosted target only; self-host
+    # builds skip the dependency by stripping the import sites.
+    url: https://github.com/clerk/clerk-ios
+    from: 0.50.0
 
 targets:
   PendingBot:
@@ -75,6 +81,8 @@ targets:
     dependencies:
       - package: MarkdownUI
         product: MarkdownUI
+      - package: Clerk
+        product: Clerk
     info:
       path: PendingBot/Resources/Info.plist
       properties:

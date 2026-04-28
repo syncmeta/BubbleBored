@@ -7,7 +7,6 @@ struct AccountsView: View {
     @EnvironmentObject private var store: AccountStore
     @Environment(\.dismiss) private var dismiss
     @State private var addingNew = false
-    @State private var sharingCodeFor: Account?
 
     var body: some View {
         NavigationStack {
@@ -50,11 +49,6 @@ struct AccountsView: View {
             }
             .tint(Theme.Palette.accent)
             .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $sharingCodeFor) { account in
-            ShareLoginCodeSheet(account: account)
-                .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -103,11 +97,6 @@ struct AccountsView: View {
                                 store.remove(account)
                                 Haptics.success()
                             } label: { Label("移除", systemImage: "trash") }
-                            Button {
-                                sharingCodeFor = account
-                                Haptics.tap()
-                            } label: { Label("登录码", systemImage: "square.and.arrow.up") }
-                            .tint(Theme.Palette.accent)
                         }
 
                         if account.id != store.accounts.last?.id {
@@ -120,7 +109,7 @@ struct AccountsView: View {
     }
 
     private var addCard: some View {
-        card(title: nil, footer: "通过登录码、二维码或手动输入，接入新的服务器。") {
+        card(title: nil, footer: "用同一个邮箱在多台设备登录，会得到独立的钥匙；想合并请用同一份分享链接。") {
             Button {
                 addingNew = true
                 Haptics.tap()

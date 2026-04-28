@@ -1,14 +1,11 @@
 import SwiftUI
 
-/// First-launch screen. Shown when AccountStore has no current account.
-/// Three import paths: scan QR, paste/open share URL, manual entry.
+/// First-launch screen for the hosted build. Single CTA opens the Clerk
+/// email-code sign-in. Self-host iOS will eventually be a separate target
+/// with its own onboarding (server URL + invite token), but for now this
+/// build hardcodes HostedConfig.serverURL.
 struct WelcomeView: View {
-    @State private var sheet: Sheet?
-
-    enum Sheet: String, Identifiable {
-        case scan, paste, manual
-        var id: String { rawValue }
-    }
+    @State private var showSignIn = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,7 +19,7 @@ struct WelcomeView: View {
                     .shadow(color: .black.opacity(0.05), radius: 14, y: 4)
 
                 VStack(spacing: 4) {
-                    Text("大绿豆")
+                    Text(HostedConfig.displayName)
                         .font(Theme.Fonts.serif(size: 24, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                     Text("主动、自然、不谄媚\n帮人审视自我、探索未知的 AI 们")
@@ -35,27 +32,31 @@ struct WelcomeView: View {
             }
             Spacer()
 
-            VStack(spacing: 10) {
-                welcomeButton(icon: "qrcode.viewfinder", title: "扫码") {
-                    sheet = .scan
+            VStack(spacing: 12) {
+                Button {
+                    Haptics.tap()
+                    showSignIn = true
+                } label: {
+                    Text("登录 / 注册")
+                        .font(Theme.Fonts.rounded(size: 16, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Theme.Palette.accent)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                welcomeButton(icon: "doc.on.clipboard", title: "粘贴登录码") {
-                    sheet = .paste
-                }
-                welcomeButton(icon: "keyboard", title: "手动输入服务器地址和钥匙") {
-                    sheet = .manual
-                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
 
             VStack(spacing: 4) {
-                Text("现在没有上线运营，这只是个客户端\n需要连接到自己电脑的大绿豆才能用\n钥匙用来验证身份，区分你和别人")
+                Text("登录时会发一份验证码到你的邮箱\n第一次登录会自动注册")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.7))
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
-                Link("详情请见 github.com/syncmeta/PendingBot",
+                Link("项目源码：github.com/syncmeta/PendingBot",
                      destination: URL(string: "https://github.com/syncmeta/PendingBot")!)
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.accent.opacity(0.85))
@@ -64,51 +65,10 @@ struct WelcomeView: View {
             .padding(.bottom, 20)
         }
         .background(Theme.Palette.canvas.ignoresSafeArea())
-        .sheet(item: $sheet) { sheet in
-            Group {
-                switch sheet {
-                case .scan:   ScanQRView()
-                case .paste:  PasteLinkView()
-                case .manual: ManualEntryView()
-                }
-            }
-            .tint(Theme.Palette.accent)
-            .presentationDragIndicator(.visible)
+        .sheet(isPresented: $showSignIn) {
+            SignInView()
+                .tint(Theme.Palette.accent)
+                .presentationDragIndicator(.visible)
         }
-    }
-
-    /// Cream card with hairline border + small inkMuted icon. Same weight
-    /// for all three options — no "primary" green-on-cream that would
-    /// fight the warm welcome screen.
-    @ViewBuilder
-    private func welcomeButton(icon: String, title: String,
-                               action: @escaping () -> Void) -> some View {
-        Button {
-            Haptics.tap()
-            action()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Theme.Palette.inkMuted)
-                    .frame(width: 24)
-                Text(title)
-                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.Palette.ink)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.Palette.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
