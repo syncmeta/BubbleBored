@@ -109,7 +109,7 @@ struct AccountsView: View {
     }
 
     private var addCard: some View {
-        card(title: nil, footer: "通过分享链接、二维码或手动输入，接入新的服务器。") {
+        card(title: nil, footer: "通过登录码、二维码或手动输入，接入新的服务器。") {
             Button {
                 addingNew = true
                 Haptics.tap()

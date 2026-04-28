@@ -13,7 +13,7 @@ enum ImportFlow {
         case localNetworkUnreachable
         var errorDescription: String? {
             switch self {
-            case .unrecognized: return "无法识别这条链接"
+            case .unrecognized: return "无法识别这串文本（应为以 pbk1. 开头的登录码）"
             case .redeemFailed(let e): return "导入失败: \(e.localizedDescription)"
             case .localNetworkUnreachable:
                 return "连不上服务器。请确认与服务器在同一局域网，并允许大绿豆的本地网络权限（设置 → 大绿豆 → 本地网络）。"
@@ -21,16 +21,59 @@ enum ImportFlow {
         }
     }
 
-    /// Try to import from any URL string the user gave us. Returns the
-    /// new (now-current) account on success.
+    /// Try to import from any text the user gave us — preferred form is a
+    /// 登录码 (`pbk1.<base64url>`); legacy `https://host/i/<token>` and
+    /// `pendingbot://import?...` URLs still work for old share links in
+    /// flight. Returns the new (now-current) account on success.
+    @discardableResult
+    static func importFromText(_ string: String, store: AccountStore) async throws -> Account {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Preferred path: 登录码. Decoded entirely client-side; no server
+        // call to acquire credentials. Triggering Local Network permission
+        // is still useful so the first request after login doesn't fail.
+        if let code = LoginCode.decode(trimmed) {
+            return try await importFromLoginCode(code, store: store)
+        }
+
+        // Legacy URL paths.
+        if let url = URL(string: trimmed), let payload = ImportPayload(url: url) {
+            return try await importFromPayload(payload, store: store)
+        }
+        throw ImportError.unrecognized
+    }
+
+    /// Legacy alias kept so QR scan / system URL handlers can keep calling
+    /// the URL-only path without going through the text dispatcher.
     @discardableResult
     static func importFromURLString(_ string: String, store: AccountStore) async throws -> Account {
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
-              let payload = ImportPayload(url: url) else {
-            throw ImportError.unrecognized
+        return try await importFromText(string, store: store)
+    }
+
+    private static func importFromLoginCode(_ code: LoginCode, store: AccountStore) async throws -> Account {
+        if Connect.isLANHost(code.server.host) {
+            let granted = await Connect.awaitLocalNetworkPermission(base: code.server)
+            if !granted { throw ImportError.localNetworkUnreachable }
         }
-        return try await importFromPayload(payload, store: store)
+        // Probe primary + alts to pick the URL actually reachable from
+        // here — same logic as the redeem flow, just driven from the
+        // login-code payload instead of a server response.
+        let bestURL = await Connect.pickBestServer(
+            primary: code.server.absoluteString,
+            alternates: code.alts.map(\.absoluteString),
+            fallback: code.server
+        ) ?? code.server
+        let account = Account(
+            id: UUID().uuidString,
+            name: code.name,
+            serverURL: bestURL,
+            key: code.key,
+            createdAt: Date()
+        )
+        try store.add(account)
+        store.switchTo(account)
+        Haptics.success()
+        return account
     }
 
     static func importFromPayload(_ payload: ImportPayload, store: AccountStore) async throws -> Account {
