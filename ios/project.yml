@@ -50,7 +50,7 @@ targets:
         INFOPLIST_FILE: PendingBot/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: 1
+        CURRENT_PROJECT_VERSION: 2
         MARKETING_VERSION: "0.1.0"
         # Make Color.accentColor resolve to our asset-catalog AccentColor
         # (the deep forest green). Without this Xcode-generated setting,
