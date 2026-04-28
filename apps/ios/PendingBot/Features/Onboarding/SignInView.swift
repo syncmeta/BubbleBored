@@ -26,7 +26,12 @@ struct SignInView: View {
     @State private var stage: Stage = .enteringEmail
     @State private var email: String = ""
     @State private var code: String = ""
+    /// Set when the entered email already has a Clerk account — we'll
+    /// verify the code against this resource.
     @State private var signIn: SignIn?
+    /// Set when the email is new (sign-in returned form_identifier_not_found)
+    /// and we fell back to creating a sign-up.
+    @State private var signUp: SignUp?
     @State private var errorText: String?
     @FocusState private var focusedField: Field?
 
@@ -122,6 +127,7 @@ struct SignInView: View {
                             code = ""
                             errorText = nil
                             signIn = nil
+                            signUp = nil
                             focusedField = .email
                         }
                         .buttonStyle(.plain)
@@ -182,18 +188,37 @@ struct SignInView: View {
     @MainActor
     private func sendCode() async {
         let trimmed = email.trimmingCharacters(in: .whitespaces)
+        signIn = nil
+        signUp = nil
+
+        // Try sign-in first (existing user). If Clerk reports the
+        // identifier doesn't exist yet, fall through to sign-up so the
+        // same UI works for both first-time and returning users — that's
+        // what password-less email-code login expects.
         do {
-            // Clerk's identifier-only create automatically prepares the
-            // first factor when there's a single password-less option
-            // (email code in our case).
-            let pending = try await SignIn.create(
-                strategy: .identifier(trimmed)
-            )
-            signIn = pending
-            // Belt-and-braces: explicitly prepare the email-code factor in
-            // case the tenant has multiple first factors and the create call
-            // doesn't auto-prepare.
+            let pending = try await SignIn.create(strategy: .identifier(trimmed))
+            // Belt-and-braces: ensure the email-code factor is prepared
+            // even if create() didn't auto-prepare (multi-factor tenants).
             try await pending.prepareFirstFactor(strategy: .emailCode())
+            signIn = pending
+            stage = .codeSent
+            focusedField = .code
+            Haptics.tap()
+            return
+        } catch {
+            // Clerk surfaces the "no such user" error as
+            // ClerkAPIError.code == "form_identifier_not_found" — when we
+            // see that, branch to sign-up. Anything else is a real error.
+            if !isUserNotFoundError(error) {
+                errorText = friendly(error)
+                return
+            }
+        }
+
+        do {
+            let pending = try await SignUp.create(strategy: .standard(emailAddress: trimmed))
+            try await pending.prepareVerification(strategy: .emailCode)
+            signUp = pending
             stage = .codeSent
             focusedField = .code
             Haptics.tap()
@@ -202,16 +227,46 @@ struct SignInView: View {
         }
     }
 
+    /// Returns true when the underlying Clerk API error is the "user
+    /// doesn't exist" code — that's our cue to attempt sign-up instead.
+    private func isUserNotFoundError(_ error: Error) -> Bool {
+        let mirror = Mirror(reflecting: error)
+        // ClerkAPIError exposes an `errors: [ClerkAPIError.Error]` list,
+        // and each inner error has a stable `code`. We care about
+        // form_identifier_not_found.
+        if let errors = mirror.children.first(where: { $0.label == "errors" })?.value {
+            let errMirror = Mirror(reflecting: errors)
+            for child in errMirror.children {
+                let inner = Mirror(reflecting: child.value)
+                if let code = inner.children.first(where: { $0.label == "code" })?.value as? String,
+                   code == "form_identifier_not_found" {
+                    return true
+                }
+            }
+        }
+        // Fallback: substring match — defensive against SDK changes.
+        let s = String(describing: error)
+        return s.contains("form_identifier_not_found")
+            || s.contains("Couldn't find your account")
+    }
+
     @MainActor
     private func verifyCode() async {
-        guard let signIn else {
+        // Code may apply to either an in-flight sign-in (existing user) or
+        // an in-flight sign-up (first time). Whichever resource we set in
+        // sendCode() drives the verification path.
+        guard signIn != nil || signUp != nil else {
             errorText = "登录会话丢了，回到上一步重发验证码"
             stage = .enteringEmail
             return
         }
         stage = .verifying
         do {
-            try await signIn.attemptFirstFactor(strategy: .emailCode(code: code))
+            if let signIn {
+                try await signIn.attemptFirstFactor(strategy: .emailCode(code: code))
+            } else if let signUp {
+                try await signUp.attemptVerification(strategy: .emailCode(code: code))
+            }
         } catch {
             errorText = friendly(error)
             stage = .codeSent
