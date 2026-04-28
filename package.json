@@ -1,0 +1,22 @@
+{
+  "name": "pendingbot-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter '*' dev",
+    "dev:api": "bun --filter @pendingbot/api dev",
+    "dev:web": "bun --filter @pendingbot/web dev",
+    "dev:site": "bun --filter @pendingbot/site dev",
+    "build": "bun --filter '*' build",
+    "typecheck": "bun --filter '*' typecheck",
+    "test": "bun --filter '*' test"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

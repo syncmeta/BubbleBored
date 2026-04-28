@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pendingname</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    font-family: -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    color: #1f2937;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: linear-gradient(180deg, #0f172a 0%, #111827 100%); color: #e5e7eb; }
+  }
+  .wrap { max-width: 480px; padding: 2rem; text-align: center; }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; letter-spacing: 0.02em; }
+  .tag { color: #64748b; font-size: 0.95rem; margin-bottom: 2rem; }
+  .grid { display: grid; gap: .5rem; }
+  .card {
+    background: rgba(255,255,255,0.6);
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 14px;
+    padding: 1rem 1.25rem;
+    text-align: left;
+  }
+  @media (prefers-color-scheme: dark) {
+    .card { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+    .tag { color: #94a3b8; }
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 .25rem; }
+  .card p { margin: 0; font-size: .9rem; color: #6b7280; }
+  .card a { color: inherit; text-decoration: none; }
+  .card.live h2::after { content: " →"; opacity: .5; }
+  .card.soon { opacity: .55; }
+  footer { margin-top: 2rem; font-size: .8rem; color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pendingname</h1>
+  <p class="tag">一些有主动性的小工具。撰写中。</p>
+
+  <div class="grid">
+    <a class="card live" href="https://bot.pendingname.com">
+      <h2>PendingBot · 大绿豆</h2>
+      <p>主动对话、自己冲浪、不拍马屁的 AI 朋友。</p>
+    </a>
+    <div class="card soon">
+      <h2>更多 Pending* · TBA</h2>
+      <p>还在想。</p>
+    </div>
+  </div>
+
+  <footer>© 2026 Pendingname</footer>
+</div>
+</body>
+</html>
