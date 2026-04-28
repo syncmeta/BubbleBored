@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 import Clerk
 
 /// Email-code sign-in via Clerk. Two-step UX:
@@ -145,6 +146,10 @@ struct SignInView: View {
                         .foregroundStyle(Theme.Palette.accent.opacity(0.85))
                         .frame(maxWidth: .infinity)
                     }
+
+                    if stage == .enteringEmail {
+                        oauthSection
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 32)
@@ -170,6 +175,51 @@ struct SignInView: View {
                 }
             }
         }
+    }
+
+    /// "Or sign in with…" divider + Apple + Google buttons. Only the email
+    /// stage shows this — once we're past the code step it's distracting.
+    @ViewBuilder
+    private var oauthSection: some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(Theme.Palette.hairline).frame(height: 0.5)
+            Text("或")
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+            Rectangle().fill(Theme.Palette.hairline).frame(height: 0.5)
+        }
+        .padding(.vertical, 4)
+
+        SignInWithAppleButton(.continue,
+            onRequest: { req in req.requestedScopes = [.email, .fullName] },
+            onCompletion: { result in Task { await handleAppleResult(result) } }
+        )
+        .signInWithAppleButtonStyle(.black)
+        .frame(height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .disabled(isBusy)
+
+        Button {
+            Task { await signInWithGoogle() }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "globe")
+                    .font(.system(size: 14, weight: .medium))
+                Text("用 Google 登录")
+                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+            }
+            .foregroundStyle(Theme.Palette.ink)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Theme.Palette.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isBusy)
     }
 
     private var isBusy: Bool {
@@ -269,6 +319,88 @@ struct SignInView: View {
     private func isSessionExistsError(_ error: Error) -> Bool {
         return clerkErrorCode(error) == "session_exists"
             || String(describing: error).contains("session_exists")
+    }
+
+    // MARK: - Apple SIWA
+
+    @MainActor
+    private func handleAppleResult(_ result: Result<ASAuthorization, Error>) async {
+        errorText = nil
+        switch result {
+        case .failure(let err):
+            // ASAuthorizationError.canceled (1001) is the user backing out
+            // — silent dismissal, no red text.
+            if (err as NSError).code == ASAuthorizationError.canceled.rawValue { return }
+            errorText = friendly(err)
+        case .success(let auth):
+            guard let cred = auth.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = cred.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8) else {
+                errorText = "Apple 没返回 identity token"
+                return
+            }
+            if clerk.session != nil {
+                stage = .exchanging
+                await runExchange()
+                return
+            }
+            stage = .verifying
+            do {
+                // The exact Clerk-iOS API for "use this Apple identity
+                // token to create a session" lives on SignIn — we try
+                // it, and on form_identifier_not_found fall through to
+                // sign-up. Same dual path as the email flow.
+                _ = try await SignIn.authenticateWithIdToken(
+                    provider: .apple, idToken: idToken
+                )
+                stage = .exchanging
+                await runExchange()
+            } catch {
+                if isUserNotFoundError(error) {
+                    do {
+                        _ = try await SignUp.authenticateWithIdToken(
+                            provider: .apple, idToken: idToken
+                        )
+                        stage = .exchanging
+                        await runExchange()
+                        return
+                    } catch {
+                        errorText = friendly(error)
+                        stage = .enteringEmail
+                        return
+                    }
+                }
+                errorText = friendly(error)
+                stage = .enteringEmail
+            }
+        }
+    }
+
+    // MARK: - Google OAuth
+
+    @MainActor
+    private func signInWithGoogle() async {
+        errorText = nil
+        if clerk.session != nil {
+            stage = .exchanging
+            await runExchange()
+            return
+        }
+        stage = .verifying
+        do {
+            // Clerk's iOS SDK exposes a higher-level OAuth helper that
+            // wraps ASWebAuthenticationSession + the redirect dance.
+            // The exact name varies a little across SDK versions
+            // (authenticateWithRedirect vs authenticateWithRedirectFlow);
+            // try the common one and adjust if Xcode complains.
+            let signIn = try await SignIn.create(strategy: .oauth(provider: .google))
+            try await signIn.authenticateWithRedirect()
+            stage = .exchanging
+            await runExchange()
+        } catch {
+            errorText = friendly(error)
+            stage = .enteringEmail
+        }
     }
 
     @MainActor

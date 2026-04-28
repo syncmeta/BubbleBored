@@ -78,6 +78,7 @@ targets:
         # (the deep forest green). Without this Xcode-generated setting,
         # XcodeGen-built projects fall back to the system blue tint.
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS: PendingBot/Resources/PendingBot.entitlements
     dependencies:
       - package: MarkdownUI
         product: MarkdownUI
@@ -121,14 +122,10 @@ targets:
         # until the user responds; we proactively warm it from ImportFlow so
         # the redeem doesn't time out before they tap "允许".
         NSLocalNetworkUsageDescription: 用于连接你部署在局域网内的大绿豆服务器（公网部署不需要这个权限）。
-        # Custom URL scheme — share-link landing pages redirect to
-        # pendingbot://import?... when Universal Links don't fire.
+        # Custom URL scheme — pendingbot:// reserved for future deep-link
+        # handlers (e.g. notification taps). Currently unused on the
+        # hosted build but kept registered so it won't conflict later.
         CFBundleURLTypes:
           - CFBundleURLName: com.pendingname.bot
             CFBundleURLSchemes:
               - pendingbot
-        # Universal Links — the iOS device fetches AASA from each domain
-        # listed under `applinks`. This is what makes share-link URLs from
-        # the production server open the app instead of Safari.
-        com.apple.developer.associated-domains:
-          - applinks:bot.pendingname.com
