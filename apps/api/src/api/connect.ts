@@ -194,14 +194,25 @@ connectRoutes.post('/api/connect/redeem', async (c) => {
 });
 
 // ── Apple App Site Association (Universal Links) ────────────────────────────
-// Replace TEAMID + bundle id to match the iOS app you sign and ship.
+//
+// Apple expects this exact path served as application/json (no .json
+// suffix, no auth, no redirects) — Cloudflare's "Always use HTTPS" + the
+// full-strict origin chain we set up are fine because Apple does follow
+// HTTPS, but the response body itself must be reachable in one shot.
+//
+// The Team ID prefix has to match the iOS team that signs the binary; it
+// can be set at deploy time via the APPLE_TEAM_ID env var so dev / prod
+// can sign under different teams without rebuilding.
+
+const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID || 'TEAMID';
+const IOS_BUNDLE_ID = 'com.pendingname.bot';
 
 connectRoutes.get('/.well-known/apple-app-site-association', (c) => {
   c.header('Content-Type', 'application/json');
   return c.body(JSON.stringify({
     applinks: {
       details: [{
-        appIDs: ['TEAMID.com.pendingname.pendingbot'],
+        appIDs: [`${APPLE_TEAM_ID}.${IOS_BUNDLE_ID}`],
         components: [{ '/': '/i/*' }],
       }],
     },

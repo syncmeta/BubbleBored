@@ -55,7 +55,7 @@ targets:
       - path: PendingBot/Resources/Assets.xcassets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingbot
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.bot
         INFOPLIST_FILE: PendingBot/Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"           # iPhone + iPad (Catalyst rides on 2)
         SUPPORTS_MACCATALYST: YES
@@ -116,12 +116,11 @@ targets:
         # Custom URL scheme — share-link landing pages redirect to
         # pendingbot://import?... when Universal Links don't fire.
         CFBundleURLTypes:
-          - CFBundleURLName: com.pendingname.pendingbot
+          - CFBundleURLName: com.pendingname.bot
             CFBundleURLSchemes:
               - pendingbot
-        # Universal Links — the iOS device fetches AASA from each domain in
-        # this list. With self-hosted servers on arbitrary IP:port, the
-        # paired domain isn't known at compile time, so we leave this empty
-        # in the template. Add specific domains here once you ship publicly.
-        # com.apple.developer.associated-domains:
-        #   - applinks:your.domain.com
+        # Universal Links — the iOS device fetches AASA from each domain
+        # listed under `applinks`. This is what makes share-link URLs from
+        # the production server open the app instead of Safari.
+        com.apple.developer.associated-domains:
+          - applinks:bot.pendingname.com

@@ -24,7 +24,7 @@ open PendingBot.xcodeproj
 2. (可选) 如果想用 Universal Links,在 **Signing & Capabilities** 里加
    **Associated Domains**,写 `applinks:你的服务器域名`,服务端的
    `/.well-known/apple-app-site-association` 已经返回正确格式 — 把
-   `TEAMID.com.pendingname.pendingbot` 里的 `TEAMID` 替换成你的 Team ID。
+   `TEAMID.com.pendingname.bot` 里的 `TEAMID` 替换成你的 Team ID。
 
 不配 Universal Links 也能用,自定义 scheme `pendingbot://` 兜底,加二维码扫描 + 粘贴链接 + 手动输入。
 

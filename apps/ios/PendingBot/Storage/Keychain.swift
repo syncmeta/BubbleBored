@@ -9,7 +9,7 @@ enum Keychain {
     /// Service name for all our items — distinguishes PendingBot keys from
     /// other apps' keychain entries when sandboxing is loose (it shouldn't
     /// matter on iOS, but it makes Keychain Access on macOS readable too).
-    static let service = "com.pendingname.pendingbot"
+    static let service = "com.pendingname.bot"
 
     static func set(_ value: String, account: String) throws {
         let data = Data(value.utf8)

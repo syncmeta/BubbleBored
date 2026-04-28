@@ -7,7 +7,7 @@ struct ManualEntryView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
 
-    @State private var serverURLText = ""
+    @State private var serverURLText = "https://bot.pendingname.com"
     @State private var keyText = ""
     @State private var nameText = ""
     @State private var probing = false
@@ -22,7 +22,7 @@ struct ManualEntryView: View {
         NavigationStack {
             Form {
                 Section("服务器地址") {
-                    TextField("http://192.168.1.42:3456", text: $serverURLText)
+                    TextField("https://bot.pendingname.com", text: $serverURLText)
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
