@@ -66,6 +66,11 @@ targets:
         # zoomed iPad metrics. Keeps controls tight in landscape on desktop.
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         CODE_SIGN_STYLE: Automatic
+        # Mac Catalyst sandbox blocks Keychain Services without an explicit
+        # keychain-access-groups entitlement (iOS doesn't enforce this).
+        # Without it SecItemAdd fails with errSecMissingEntitlement (-34018)
+        # and the "未能完成操作 KeychainError 错误1" alert pops on Mac login.
+        CODE_SIGN_ENTITLEMENTS: PendingBot/PendingBot.entitlements
         CURRENT_PROJECT_VERSION: 2
         MARKETING_VERSION: "0.1.0"
         # Make Color.accentColor resolve to our asset-catalog AccentColor
