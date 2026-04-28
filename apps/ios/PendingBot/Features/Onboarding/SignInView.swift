@@ -344,6 +344,24 @@ struct SignInView: View {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Pull the payload (middle segment) out of a JWT and decode as JSON
+    /// so we can read its claims for debugging. Not signature-verified —
+    /// don't use this for trust decisions.
+    private func decodeJwtPayload(_ token: String) -> String? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var payload = String(parts[1])
+        // base64url -> base64
+        payload = payload
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let pad = payload.count % 4
+        if pad != 0 { payload += String(repeating: "=", count: 4 - pad) }
+        guard let data = Data(base64Encoded: payload),
+              let s = String(data: data, encoding: .utf8) else { return nil }
+        return s
+    }
+
     // MARK: - Apple SIWA
 
     @MainActor
@@ -361,6 +379,12 @@ struct SignInView: View {
                   let idToken = String(data: tokenData, encoding: .utf8) else {
                 errorText = "Apple 没返回 identity token"
                 return
+            }
+            // Diagnostic: decode the JWT payload so we can see what
+            // audience Apple actually wrote into the token.
+            if let payload = decodeJwtPayload(idToken) {
+                print("🔍 [SIWA] Apple identity token payload:")
+                print(payload)
             }
             if clerk.session != nil {
                 stage = .exchanging
