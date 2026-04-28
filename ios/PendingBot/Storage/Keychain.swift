@@ -58,10 +58,19 @@ enum Keychain {
     }
 }
 
-struct KeychainError: Error, CustomStringConvertible {
+struct KeychainError: LocalizedError, CustomNSError, CustomStringConvertible {
     let status: OSStatus
+
+    static var errorDomain: String { "com.pendingname.pendingbot.keychain" }
+    var errorCode: Int { Int(status) }
+    var errorUserInfo: [String: Any] {
+        [NSLocalizedDescriptionKey: description]
+    }
+
     var description: String {
         let msg = SecCopyErrorMessageString(status, nil) as String? ?? "unknown"
         return "Keychain error \(status): \(msg)"
     }
+
+    var errorDescription: String? { description }
 }
