@@ -2,30 +2,75 @@
   <img src="docs/app-icon.png" width="128" alt="大绿豆 应用图标" />
 </p>
 
-# 大绿豆 · PendingBot
+<h1 align="center">大绿豆 · PendingBot</h1>
 
-[English](README_EN.md)
+<p align="center">
+  一个有主动性的 AI 朋友 — 主动对话、自己冲浪、不拍马屁。
+  <br />
+  <em>An AI companion with initiative — proactive, web-surfing, never sycophantic.</em>
+</p>
 
-两大目标：
+<p align="center">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/syncmeta/PendingBot?color=blue" /></a>
+  <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=black" /></a>
+  <img alt="TypeScript" src="https://img.shields.io/badge/lang-TypeScript-3178c6?logo=typescript&logoColor=white" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Web%20%7C%20iOS%20%7C%20Telegram%20%7C%20飞书-lightgrey" />
+  <a href="https://github.com/syncmeta/PendingBot/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/syncmeta/PendingBot?style=social" /></a>
+  <a href="https://github.com/syncmeta/PendingBot/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/syncmeta/PendingBot" /></a>
+  <img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" />
+</p>
 
-- **和人自然地交流 主动对话 不谄媚** 和微信聊天一样，让它心里有你，不拍你马屁
-- **审视自我 探索未知 做信息的VC** 自己上网冲浪，从使用者的利益出发，寻找他真正需要的东西
+<p align="center">
+  <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
+</p>
 
-我想让它给我推送我认知以外、又真正需要的东西，帮助我意识到自己所忽略的、不足的东西。
-
-它有主动性。不是你问一句它答一句。
-
-它/它们可以由一人养育，也可以和好友一起养育。
+<p align="center">
+  <img src="docs/screenshots/01-onboarding.png" width="280" alt="iOS 启动页" />
+</p>
 
 ---
 
-主要不是想做助手或工具。助手类应用大把人做，没必要重复造轮子。
+## ✨ 这是什么
 
-也不是想做标准的 AI 陪伴，解决的需求不在于缺爱了想找个 AI 陪或者无聊了想找个人聊天。
+两大目标：
 
-我期望它能帮人生活得更好，方式可以是给出靠谱的建议、指出自己意识不到的问题、提供有价值的信息、提供更好的生活方式与计划……虽然这非常难实现，人都很难做到，但要想有一个这样的朋友也许比做一个这样的 AI 更难。不论如何，我先试试，弄来耍一耍。
+- 🗣️ **和人自然地交流 主动对话 不谄媚** — 和微信聊天一样，让它心里有你，不拍你马屁
+- 🌊 **审视自我 探索未知 做信息的 VC** — 自己上网冲浪，从使用者的利益出发，寻找他真正需要的东西
 
-## 准备
+我想让它给我推送我认知以外、又真正需要的东西，帮助我意识到自己所忽略的、不足的东西。它有主动性，不是你问一句它答一句。它/它们可以由一人养育，也可以和好友一起养育。
+
+> 不是助手类工具——助手类应用大把人做，没必要重复造轮子。也不是标准的 AI 陪伴——解决的需求不在于缺爱了想找个 AI 陪或者无聊了想找个人聊天。
+>
+> 我期望它能帮人生活得更好——给出靠谱的建议、指出自己意识不到的问题、提供有价值的信息、提供更好的生活方式与计划。这非常难实现，人都很难做到。不论如何，先试试。
+
+## 🚀 核心特性
+
+| | |
+|---|---|
+| 🧠 **主动对话** | 微信式语气、防抖打断、自我反思（每 N 轮反观一次最近聊天） |
+| 🌊 **网络冲浪** | 主动搜索 + 深挖 + 漫游 + curator 筛选，把真正有价值的东西讲给你听 |
+| 👥 **多 Bot 共存** | 每个 Bot 有自己的性格 / 模型 / 访问权限，可一人一养也可几人共养 |
+| 🌐 **多端接入** | Web、iOS（原生 SwiftUI）、Telegram、飞书，所有能力跨端一致 |
+| 🎯 **OpenRouter 模型路由** | 任意模型组合：主对话 / 防抖 / 反思 / 冲浪 / 标题各自独立配置 |
+| 🛠️ **Agent Skills** | 内置 Anthropic skill-creator 等预设，亦可自写 Markdown 技能 |
+| 🧩 **热重载提示词** | `prompts/` 下任意 `.md` 改完即生效，不必重启 |
+| 🔐 **Honcho 用户记忆** | 可选接入，记住用户长期信息与偏好 |
+
+## 📑 目录
+
+- [快速开始](#-快速开始)
+- [环境变量](#-环境变量)
+- [配置 Bot](#-配置-bot)
+- [编写性格](#-编写性格)
+- [使用](#-使用)
+- [接入 Telegram / 飞书](#-接入-telegram--飞书)
+- [接入 iOS](#-接入-ios)
+- [技能（Skills）](#-技能skills)
+- [技术栈](#-技术栈)
+- [致谢与第三方组件](#-致谢与第三方组件)
+- [License](#-license)
+
+## 🚀 快速开始
 
 需要 [Bun](https://bun.sh) 运行时。后端代码在 `main/` 子目录下，所有 `bun` 命令都在那里跑。
 
@@ -34,7 +79,7 @@ cd main
 bun install
 ```
 
-## 环境变量
+## 🔑 环境变量
 
 在 `main/` 下复制 `.env.example` 为 `.env`，填入以下内容：
 
@@ -47,7 +92,7 @@ bun install
 | `HONCHO_BASE_URL` | 否 | Honcho API 地址，自托管时填写 |
 | `HONCHO_WORKSPACE_ID` | 否 | Honcho 工作区 ID |
 
-## 启动
+## ▶️ 启动
 
 ```bash
 cd main
@@ -57,7 +102,7 @@ bun run start        # 生产模式
 
 打开 `http://localhost:3456`。
 
-## 配置 Bot
+## ⚙️ 配置 Bot
 
 编辑 `main/config.yaml`：
 
@@ -101,7 +146,7 @@ bots:
 
 可以定义多个 Bot，各有各的性格和配置。更多可调参数（`timerMs`、`maxSearchRequests`、`initialIntervalSec`、`maxIntervalSec`、`idleStopSec`、`maxRequests`、`maxWaitMs`、`serendipityEveryN`、`dedupWindowDays` 等）见 [`main/src/config/schema.ts`](main/src/config/schema.ts)。
 
-## 编写性格
+## 🎭 编写性格
 
 在 `main/prompts/bots/` 下创建 `.md` 文件，写你想让 Bot 成为什么样的存在。没有固定格式，随便写。仓库自带 `default.md` 作为示例与兜底。
 
@@ -133,7 +178,7 @@ main/prompts/
 
 冲浪默认走基于向量的深挖（digger），低频会烧一格"漫游 + curator"的 serendipity 槽位保留跨域惊喜（频率由 `serendipityEveryN` 控制）。
 
-## 使用
+## 💬 使用
 
 ### 聊天
 
@@ -153,7 +198,7 @@ main/prompts/
 
 点左下角「使用统计」查看各模型、各任务类型的 token 消耗和费用。
 
-## 接入 Telegram / 飞书
+## 🤖 接入 Telegram / 飞书
 
 除了网页聊天，每一个 Bot 都可以拥有自己的 Telegram 机器人账号和飞书应用——配置里有多少个 Bot，就对应多少个外部账号。防抖、冲浪、自我反思等能力在所有平台上一致工作。
 
@@ -255,7 +300,7 @@ bots:
 
 飞书事件回调必须是公网地址。本地开发可以用 [ngrok](https://ngrok.com/)、[frp](https://github.com/fatedier/frp) 之类做一层内网穿透。
 
-## 接入 iOS
+## 📱 接入 iOS
 
 仓库里附带一个原生 SwiftUI app，位于 `ios/PendingBot/`。覆盖六个 tab：消息 / 议论 / 冲浪 / 回顾 / 画像 / 你。
 
@@ -296,7 +341,7 @@ iOS 上每把 key 对应服务端的一个独立用户——同一个人在 iOS 
 
 iOS 端的更多细节（多账号、Universal Link、APNs 现状等）见 [ios/README.md](ios/README.md)。
 
-## 技能（Skills）
+## 🛠️ 技能（Skills）
 
 「我」标签页里有「技能」区域，可以管理 Anthropic 风格的 [Agent Skills](https://github.com/anthropics/skills) — 一段带 frontmatter 的 Markdown 指令片段，启用后在聊天时会拼进系统提示词。
 
@@ -315,11 +360,22 @@ iOS 端的更多细节（多账号、Universal Link、APNs 现状等）见 [ios/
 
 也可以在「新建技能」里写自己的技能 — 只填名字、一句话描述、Markdown 正文即可。
 
-## 技术栈
+## 🧱 技术栈
 
-Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket
+<p>
+  <img alt="Bun" src="https://img.shields.io/badge/Bun-fbf0df?logo=bun&logoColor=black" />
+  <img alt="Hono" src="https://img.shields.io/badge/Hono-E36002?logo=hono&logoColor=white" />
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white" />
+  <img alt="OpenRouter" src="https://img.shields.io/badge/OpenRouter-000?logoColor=white" />
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-F05138?logo=swift&logoColor=white" />
+  <img alt="WebSocket" src="https://img.shields.io/badge/WebSocket-010101?logo=socketdotio&logoColor=white" />
+</p>
 
-## 致谢与第三方组件
+后端：Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket。
+iOS：Swift + SwiftUI（XcodeGen）。
+
+## 🙏 致谢与第三方组件
 
 本项目除自身代码外使用以下开源组件，所有版权归原作者所有：
 
@@ -347,6 +403,20 @@ Bun + Hono + SQLite + OpenRouter + Jina MCP + WebSocket
 
 如发现遗漏请提 Issue。
 
-## License
+## 🤝 贡献
 
-本仓库代码以 MIT 协议发布。第三方组件遵循各自原协议（见上）。
+欢迎 Issue 和 PR。提交前简单聊一下想法会更顺利——尤其是涉及提示词、冲浪管线、跨端协议这类核心改动。
+
+- Bug / 新特性请走 [Issues](https://github.com/syncmeta/PendingBot/issues)
+- 大改动建议先开 Discussion 或 Draft PR 对齐方向
+- 代码风格跟现有文件保持一致；提示词改动请在 PR 说明改动动机
+
+## 📄 License
+
+本仓库代码以 [MIT](LICENSE) 协议发布。第三方组件遵循各自原协议（见上）。
+
+---
+
+<p align="center">
+  Made with 💚 for people who want a friend that pushes back, not a tool that nods along.
+</p>
