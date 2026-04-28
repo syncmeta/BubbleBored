@@ -1,5 +1,6 @@
 import SwiftUI
 import AuthenticationServices
+import CryptoKit
 import Clerk
 
 /// Email-code sign-in via Clerk. Two-step UX:
@@ -27,6 +28,11 @@ struct SignInView: View {
     @State private var stage: Stage = .enteringEmail
     @State private var email: String = ""
     @State private var code: String = ""
+    /// Random nonce we mix into the SIWA request. Apple bakes its SHA-256
+    /// hash into the identity token; we send the original value to Clerk
+    /// so Clerk can re-hash and confirm replay-protection. Generated once
+    /// per view appearance — the SIWA request must not change it mid-flight.
+    @State private var siwaNonce: String = randomNonce()
     /// Set when the entered email already has a Clerk account — we'll
     /// verify the code against this resource.
     @State private var signIn: SignIn?
@@ -191,7 +197,10 @@ struct SignInView: View {
         .padding(.vertical, 4)
 
         SignInWithAppleButton(.continue,
-            onRequest: { req in req.requestedScopes = [.email, .fullName] },
+            onRequest: { req in
+                req.requestedScopes = [.email, .fullName]
+                req.nonce = sha256Hex(siwaNonce)
+            },
             onCompletion: { result in Task { await handleAppleResult(result) } }
         )
         .signInWithAppleButtonStyle(.black)
@@ -319,6 +328,20 @@ struct SignInView: View {
     private func isSessionExistsError(_ error: Error) -> Bool {
         return clerkErrorCode(error) == "session_exists"
             || String(describing: error).contains("session_exists")
+    }
+
+    // MARK: - SIWA helpers
+
+    /// Random URL-safe nonce. Generated per SignInView appearance so each
+    /// SIWA attempt gets a fresh challenge.
+    private static func randomNonce(length: Int = 32) -> String {
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+        return String((0..<length).map { _ in charset.randomElement()! })
+    }
+
+    private func sha256Hex(_ s: String) -> String {
+        let digest = SHA256.hash(data: Data(s.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Apple SIWA
