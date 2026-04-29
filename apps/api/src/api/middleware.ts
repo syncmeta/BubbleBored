@@ -118,3 +118,57 @@ setInterval(() => {
   const cutoff = Date.now() - WINDOW_MS * 2;
   for (const [k, b] of buckets) if (b.windowStart < cutoff) buckets.delete(k);
 }, WINDOW_MS).unref?.();
+
+// ── Per-IP rate limit (public endpoints) ──────────────────────────────────
+//
+// Used to gate unauthenticated paths like /api/invites/redeem and
+// /api/invites/check/<token> where there's no user_id to key on. Keeps the
+// abuse surface (token enumeration, brute-force on share links) bounded
+// without requiring Cloudflare to know about every public endpoint.
+//
+// Honors x-forwarded-for / cf-connecting-ip when present so we get the real
+// client IP behind Cloudflare → Fly. Falls back to the socket peer otherwise.
+
+const ipBuckets = new Map<string, Bucket>();
+const MAX_IP_BUCKETS = 50_000;
+
+function clientIp(c: Parameters<MiddlewareHandler>[0]): string {
+  const cf = c.req.header('cf-connecting-ip');
+  if (cf) return cf;
+  const xff = c.req.header('x-forwarded-for');
+  if (xff) return xff.split(',')[0].trim();
+  // Bun's request handler stuffs the socket peer onto fetch's second arg
+  // (see index.ts: `app.fetch(req, { ip: server.requestIP(req) })`); Hono
+  // passes that through as c.env. Fall back to a literal in dev.
+  const ip = (c.env as any)?.ip;
+  if (ip && typeof ip === 'object' && typeof ip.address === 'string') return ip.address;
+  return 'unknown';
+}
+
+export function ipRateLimitMiddleware(perMinute: number): MiddlewareHandler {
+  return async (c, next) => {
+    const ip = clientIp(c);
+    const now = Date.now();
+    let b = ipBuckets.get(ip);
+    if (!b || now - b.windowStart >= WINDOW_MS) {
+      if (!b && ipBuckets.size >= MAX_IP_BUCKETS) {
+        const oldest = ipBuckets.keys().next().value;
+        if (oldest !== undefined) ipBuckets.delete(oldest);
+      }
+      b = { windowStart: now, count: 0 };
+      ipBuckets.set(ip, b);
+    }
+    b.count += 1;
+    if (b.count > perMinute) {
+      const retryAfter = Math.ceil((WINDOW_MS - (now - b.windowStart)) / 1000);
+      c.header('Retry-After', String(retryAfter));
+      throw new HTTPException(429, { message: 'rate limit exceeded' });
+    }
+    return next();
+  };
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - WINDOW_MS * 2;
+  for (const [k, b] of ipBuckets) if (b.windowStart < cutoff) ipBuckets.delete(k);
+}, WINDOW_MS).unref?.();
