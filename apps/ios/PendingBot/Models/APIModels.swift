@@ -139,6 +139,14 @@ struct MeProfile: Codable {
     let display_name: String
     let bio: String?
     let avatar_path: String?
+    // Clerk-mirrored identity fields. The server populates these on
+    // /api/auth/clerk/exchange via the Clerk Backend SDK; nullable because
+    // self-host / pre-Clerk accounts may not have an external identity.
+    let email: String?
+    let first_name: String?
+    let last_name: String?
+    let username: String?
+    let image_url: String?
 }
 
 struct AiPick: Codable, Identifiable, Hashable {
