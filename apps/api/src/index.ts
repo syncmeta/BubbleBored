@@ -33,7 +33,7 @@ import {
 import { corsMiddleware, userRateLimitMiddleware } from './api/middleware';
 import {
   countAdmins, createInvite, findApiKeyByHash, findUserById,
-  findConversationById, findLatestBootstrapInvite,
+  findConversationById, findLatestBootstrapInvite, revokeApiKey,
 } from './db/queries';
 import { randomUUID, randomBytes } from 'crypto';
 import { base64UrlEncode } from './api/_helpers';
@@ -239,10 +239,16 @@ app.route('/api/invites', invitesRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/auth', authRoutes);
 
-// Logout — clear the session cookie. The api key itself stays valid (so
-// existing iOS sessions don't blow up if the same user logs out of the web
-// UI); we just stop telling browsers about it.
+// Logout — clear the session cookie AND revoke the underlying api key. The
+// previous implementation only dropped the cookie, leaving the key valid for
+// 30 days; an attacker who'd intercepted it before logout could keep using
+// it. Revocation is scoped to the currently-presented key, so other devices
+// (iOS sessions minted via the same Clerk identity) keep their own keys.
 app.post('/api/logout', (c) => {
+  const key = c.get('authApiKey');
+  if (key) {
+    try { revokeApiKey(key.id); } catch (e) { console.warn('[logout] revoke failed:', e); }
+  }
   clearSessionCookie(c);
   return c.json({ ok: true });
 });
