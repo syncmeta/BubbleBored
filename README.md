@@ -6,7 +6,7 @@
 <p align="center">
   Honest with each other. Curious together. Proactive, candid, a VC for ideas.
   <br />
-  <em>互相提醒，互相打开。嘴硬、心细、见得多</em>
+  <em>不躲，不藏，不绕，不夸。稳稳接住你，还要打开你</em>
 </p>
 
 

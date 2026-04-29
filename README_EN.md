@@ -21,7 +21,7 @@
 ## Aim:
 
 - **Keep each other honest** — so you don't drift, get fooled, or lose the plot mid-conversation with an AI.
-- **Be a VC for ideas** — scouting what's beyond your current bubble
+- **Be a VC for ideas** — scouting what's beyond your current bubble. Extend your mind, without losing it.
 
 **Not** an assistant, **not** a world's first ___ agent — plenty of those already!
 
