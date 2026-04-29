@@ -55,13 +55,13 @@ struct RootView: View {
     }
 }
 
-/// Hosted-build Clerk publishable key. This is the dev/test key for the
-/// `precise-goat-44.clerk.accounts.dev` tenant — public by design (Clerk
-/// publishable keys carry no write authority, only identify the tenant).
+/// Hosted-build Clerk publishable key. This is the production key for the
+/// `clerk.pendingname.com` tenant — public by design (Clerk publishable
+/// keys carry no write authority, only identify the tenant).
 ///
 /// Self-host iOS builds will swap this constant to `nil` and gate Clerk
 /// on a runtime probe of `/api/config` instead. Until then, this single
 /// constant is the only thing the hosted build embeds about Clerk.
 enum ClerkConfig {
-    static let publishableKey = "pk_test_cHJlY2lzZS1nb2F0LTQ0LmNsZXJrLmFjY291bnRzLmRldiQ"
+    static let publishableKey = "pk_live_Y2xlcmsucGVuZGluZ25hbWUuY29tJA"
 }
