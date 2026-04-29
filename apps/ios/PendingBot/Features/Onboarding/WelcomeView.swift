@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 import CryptoKit
 import Clerk
@@ -33,6 +34,7 @@ struct WelcomeView: View {
     @State private var signIn: SignIn?
     @State private var signUp: SignUp?
     @State private var errorText: String?
+    @State private var appleCoordinator: AppleSignInCoordinator?
     @FocusState private var focusedField: Field?
 
     enum Field { case email, code }
@@ -72,7 +74,10 @@ struct WelcomeView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .onAppear {
-            focusedField = stage == .enteringEmail ? .email : .code
+            // Don't grab focus for the email field — let users tap it
+            // explicitly so the keyboard doesn't fly up on launch. The code
+            // step still autofocuses (set when sendCode succeeds).
+            if stage == .codeSent { focusedField = .code }
         }
         .task {
             // Clerk persists sessions across launches. If a stale one is
@@ -89,10 +94,16 @@ struct WelcomeView: View {
 
     @ViewBuilder
     private var methods: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 18) {
             if stage == .enteringEmail {
-                appleButton
-                googleButton
+                HStack(spacing: 28) {
+                    appleCircleButton
+                    googleCircleButton
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(isBusy)
+                .padding(.bottom, 4)
+
                 emailRow
             } else {
                 emailEchoRow
@@ -101,59 +112,62 @@ struct WelcomeView: View {
         }
     }
 
-    private var appleButton: some View {
-        SignInWithAppleButton(.continue,
-            onRequest: { req in
-                req.requestedScopes = [.email, .fullName]
-                req.nonce = sha256Hex(siwaNonce)
-            },
-            onCompletion: { result in Task { await handleAppleResult(result) } }
-        )
-        .signInWithAppleButtonStyle(.black)
-        .frame(height: 50)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .disabled(isBusy)
-    }
-
-    private var googleButton: some View {
-        Button { Task { await signInWithProvider(.google) } } label: {
-            HStack(spacing: 10) {
-                googleGlyph
-                    .frame(width: 18, height: 18)
-                Text("用 Google 继续")
-                    .font(.system(size: 17, weight: .medium))
+    /// HIG-compliant circular Sign in with Apple button: solid black disc,
+    /// official white logo-only artwork, soft shadow. Triggers SIWA via
+    /// `ASAuthorizationController` directly (no SwiftUI wrapper) because
+    /// `SignInWithAppleButton` is a fixed text+logo rectangle and can't be
+    /// reshaped into a circular logo-only variant. HIG explicitly permits
+    /// circular logo-only buttons that use Apple's logo-only artwork.
+    private var appleCircleButton: some View {
+        Button { triggerAppleSignIn() } label: {
+            ZStack {
+                Circle().fill(Color.black)
+                appleLogoImage
             }
-            .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.22))
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-            )
+            .frame(width: 64, height: 64)
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
-        .disabled(isBusy)
+        .accessibilityLabel("Sign in with Apple")
     }
 
-    /// Multi-coloured "G" — drawn as a gradient on the letter to evoke
-    /// Google's brand colours without shipping the actual brand SVG.
-    private var googleGlyph: some View {
-        Text("G")
-            .font(.system(size: 17, weight: .bold, design: .rounded))
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.26, green: 0.52, blue: 0.96),
-                        Color(red: 0.93, green: 0.27, blue: 0.20),
-                        Color(red: 0.99, green: 0.74, blue: 0.18),
-                        Color(red: 0.20, green: 0.66, blue: 0.33),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+    /// Picks the official Apple-supplied logo-only artwork when present,
+    /// falling back to the SF Symbol while the asset hasn't been dropped
+    /// in yet (see Assets.xcassets/AppleSignInLogo.imageset/README.md).
+    @ViewBuilder
+    private var appleLogoImage: some View {
+        if UIImage(named: "AppleSignInLogo") != nil {
+            Image("AppleSignInLogo")
+                .resizable()
+                .renderingMode(.template)
+                .foregroundStyle(.white)
+                .scaledToFit()
+                .frame(width: 28, height: 28)
+        } else {
+            Image(systemName: "applelogo")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(.white)
+                .offset(y: -1)
+        }
+    }
+
+    private var googleCircleButton: some View {
+        Button { Task { await signInWithProvider(.google) } } label: {
+            ZStack {
+                Circle().fill(.regularMaterial)
+                Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                Image("GoogleG")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
+            }
+            .frame(width: 64, height: 64)
+            .shadow(color: .black.opacity(0.10), radius: 12, y: 6)
+            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("用 Google 继续")
     }
 
     private var emailRow: some View {
@@ -214,15 +228,10 @@ struct WelcomeView: View {
             .buttonStyle(.plain)
             .disabled(!canSubmit || isBusy)
         }
-        .frame(height: 50)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Theme.Palette.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-        )
+        .frame(height: 52)
+        .background(Capsule().fill(.regularMaterial))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
     }
 
     private var emailEchoRow: some View {
@@ -468,6 +477,27 @@ struct WelcomeView: View {
 
     // MARK: - Apple SIWA
 
+    /// Custom-button replacement for `SignInWithAppleButton`. Drives the
+    /// same Apple flow (`ASAuthorizationAppleIDProvider`) that the SwiftUI
+    /// wrapper uses; the only thing we lose is Apple's pre-styled button.
+    @MainActor
+    private func triggerAppleSignIn() {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.email, .fullName]
+        request.nonce = sha256Hex(siwaNonce)
+
+        let coordinator = AppleSignInCoordinator { result in
+            Task { await handleAppleResult(result) }
+        }
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = coordinator
+        controller.presentationContextProvider = coordinator
+        // Hold a strong ref — ASAuthorizationController doesn't retain its
+        // delegate, and the coordinator must outlive performRequests().
+        self.appleCoordinator = coordinator
+        controller.performRequests()
+    }
+
     @MainActor
     private func handleAppleResult(_ result: Result<ASAuthorization, Error>) async {
         errorText = nil
@@ -535,5 +565,45 @@ struct WelcomeView: View {
             errorText = friendly(error)
             stage = .enteringEmail
         }
+    }
+}
+
+/// Bridges `ASAuthorizationController`'s Objective-C delegate callbacks
+/// into the SwiftUI-friendly `Result` closure that `WelcomeView` already
+/// understands. One instance per sign-in attempt; the view holds it
+/// strongly until the controller finishes.
+fileprivate final class AppleSignInCoordinator: NSObject,
+    ASAuthorizationControllerDelegate,
+    ASAuthorizationControllerPresentationContextProviding {
+
+    private let completion: (Result<ASAuthorization, Error>) -> Void
+
+    init(completion: @escaping (Result<ASAuthorization, Error>) -> Void) {
+        self.completion = completion
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithAuthorization authorization: ASAuthorization
+    ) {
+        completion(.success(authorization))
+    }
+
+    func authorizationController(
+        controller: ASAuthorizationController,
+        didCompleteWithError error: Error
+    ) {
+        completion(.failure(error))
+    }
+
+    func presentationAnchor(
+        for controller: ASAuthorizationController
+    ) -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes
+        let window = scenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        return window ?? ASPresentationAnchor()
     }
 }
