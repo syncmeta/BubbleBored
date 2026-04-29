@@ -40,22 +40,26 @@ struct WelcomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Top half: brand mark, vertically centered.
-            VStack(spacing: 14) {
-                Image("BrandMark")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 96, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
-                Text("登录 / 注册")
-                    .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Palette.inkMuted)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Image("BrandMark")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Bottom half: three equal-width capsule buttons (or code step).
-            VStack(spacing: 14) {
+            // Bottom half: small "登录 / 注册" heading + three equal-width
+            // capsule buttons (or the code-entry step when applicable).
+            VStack(alignment: .leading, spacing: 12) {
+                if !inEmailCodeStep {
+                    Text("登录 / 注册")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.ink)
+                        .padding(.leading, 4)
+                }
+
                 methods
+
                 if let errorText {
                     errorBlock(text: errorText)
                 }
@@ -128,15 +132,21 @@ struct WelcomeView: View {
         .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
     }
 
+    /// Google sign-in button — follows Google Identity branding guidelines:
+    /// official 4-color "G" mark on the left, locale-appropriate
+    /// "Continue with Google" text on the right ("通过 Google 继续" — the
+    /// translation Google uses on their own properties, and matches the
+    /// "通过 Apple 继续" rendered by SignInWithAppleButton). Font sized to
+    /// match the SIWA button so the two pills read as a pair.
     private var googleButton: some View {
         Button { Task { await signInWithProvider(.google) } } label: {
             HStack(spacing: 10) {
                 Image("GoogleG")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 18, height: 18)
-                Text("用 Google 继续")
-                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 19, height: 19)
+                Text("通过 Google 继续")
+                    .font(.system(size: 19, weight: .medium))
                     .foregroundStyle(Color(red: 0.18, green: 0.18, blue: 0.20))
             }
             .frame(maxWidth: .infinity)
@@ -145,7 +155,7 @@ struct WelcomeView: View {
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("用 Google 继续")
+        .accessibilityLabel("通过 Google 继续")
     }
 
     private var emailRow: some View {
