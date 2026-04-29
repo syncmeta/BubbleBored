@@ -48,20 +48,22 @@ struct WelcomeView: View {
                 .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // Bottom half: small "登录 / 注册" heading + three equal-width
+            // Bottom half: small "登录 / 注册：" heading + three equal-width
             // capsule buttons (or the code-entry step when applicable).
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
                 if !inEmailCodeStep {
-                    Text("登录 / 注册")
+                    Text("登录 / 注册：")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                         .padding(.leading, 4)
+                        .padding(.bottom, 22)
                 }
 
                 methods
 
                 if let errorText {
                     errorBlock(text: errorText)
+                        .padding(.top, 12)
                 }
                 Spacer(minLength: 0)
             }
@@ -138,6 +140,19 @@ struct WelcomeView: View {
     /// translation Google uses on their own properties, and matches the
     /// "通过 Apple 继续" rendered by SignInWithAppleButton). Font sized to
     /// match the SIWA button so the two pills read as a pair.
+    /// Google sign-in button — follows Google Identity branding guidelines:
+    /// official 4-color "G" mark on the left, locale-appropriate
+    /// "Continue with Google" text on the right ("通过 Google 继续" — the
+    /// translation Google uses on their own properties, and matches the
+    /// "通过 Apple 继续" rendered by SignInWithAppleButton). Font sized to
+    /// match the SIWA button so the two pills read as a pair.
+    ///
+    /// `.padding(.leading, 22)` nudges the centered logo+text combo a hair
+    /// to the right so the G mark lines up with Apple's apple glyph above.
+    /// Apple centers its own combo internally, and the Chinese label
+    /// "通过 Google 继续" is wider than "通过 Apple 继续" by roughly one
+    /// Latin character — without this nudge, the G sits ~10pt left of
+    /// the apple glyph above it.
     private var googleButton: some View {
         Button { Task { await signInWithProvider(.google) } } label: {
             HStack(spacing: 10) {
@@ -149,6 +164,7 @@ struct WelcomeView: View {
                     .font(.system(size: 19, weight: .medium))
                     .foregroundStyle(Color(red: 0.18, green: 0.18, blue: 0.20))
             }
+            .padding(.leading, 44)
             .frame(maxWidth: .infinity)
             .frame(height: 52)
             .glassCapsule()
