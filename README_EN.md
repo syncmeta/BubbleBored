@@ -17,20 +17,20 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Web%20%7C%20iOS-lightgrey" />
 </p>
 
-<p align="center">
-  <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
-</p>
 
-## ✨ Two goals
 
-- **Catch and correct, in time** — so a long chat doesn't drift you off course, lull you, or quietly mislead you.
-- **Explore the unknown, be a VC of information** — push back against our narrow field of view and the filter bubble.
+## Aim:
 
-It's not an assistant — plenty of those exist. It's not Agent-first either.
+- **Keep each other honest** — so you don't drift, get fooled, or lose the plot mid-conversation with an AI.
+- **Be a VC for ideas** — scouting what's beyond your current bubble
 
-It's also not standard AI companionship — not an obedient little baby, but a friend who brings you a new perspective.
+**Not** an assistant, **not** a world's first xxx agent — plenty of those exist!
 
-The content below is, for now, written by Claude.
+**Not** your typical AI companion either — not a yes-man, not a therapist-in-a-box, not someone who'll tell you you're brilliant when you're not. 
+
+More like a friend who brings a new perspective. That's what good friends actually do.
+
+The content below is, for now, written by Claude. I'll check it later.
 
 ## 🚀 Highlights
 
