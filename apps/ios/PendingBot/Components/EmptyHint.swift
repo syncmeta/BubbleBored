@@ -18,7 +18,7 @@ struct EmptyHint: View {
             VStack {
                 Spacer(minLength: 0)
                 Text(text)
-                    .font(Theme.Fonts.footnote)
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(Theme.Palette.inkMuted)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
@@ -37,11 +37,12 @@ struct EmptyHint: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            // Anchor under the text (rough center of the view) and curve up
-            // and to the right toward where the tab header's "+" sits.
+            // Anchor under the text and curve up toward the "+" but stop
+            // well short of it — the gap reads as "follow this", not
+            // "I'm pointing at you" cramped against the button.
             let start = CGPoint(x: w * 0.5, y: h * 0.5 - 28)
-            let end = CGPoint(x: w - 26, y: 4)
-            let control = CGPoint(x: w - 60, y: h * 0.32)
+            let end = CGPoint(x: w - 64, y: 44)
+            let control = CGPoint(x: w - 96, y: h * 0.36)
 
             ZStack {
                 Path { path in

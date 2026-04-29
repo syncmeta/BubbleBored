@@ -439,8 +439,35 @@ struct WelcomeView: View {
             Haptics.success()
             dismiss()
         } catch {
-            errorText = friendly(error)
-            stage = signIn != nil || signUp != nil ? .codeSent : .enteringEmail
+            // Swallow connectivity errors silently here. This task only
+            // runs as a "best-effort recover" when Clerk has a session but
+            // we don't have a local account — the most common reason is the
+            // user just signed out, in which case bothering them with a
+            // "cannot find host" alert reads as a regression. They can
+            // re-tap a sign-in method whenever they want.
+            if isTransientNetworkError(error) {
+                stage = .enteringEmail
+            } else {
+                errorText = friendly(error)
+                stage = signIn != nil || signUp != nil ? .codeSent : .enteringEmail
+            }
+        }
+    }
+
+    private func isTransientNetworkError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        switch nsError.code {
+        case NSURLErrorCannotFindHost,
+             NSURLErrorCannotConnectToHost,
+             NSURLErrorNotConnectedToInternet,
+             NSURLErrorNetworkConnectionLost,
+             NSURLErrorTimedOut,
+             NSURLErrorCancelled,
+             NSURLErrorDNSLookupFailed:
+            return true
+        default:
+            return false
         }
     }
 

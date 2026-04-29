@@ -36,8 +36,9 @@ struct TabHeaderBar<Trailing: View>: View {
     }
 }
 
-/// Native translucent circular "+" — system `.bordered` + `.circle` combo,
-/// matches Apple's own "add" buttons on iOS 17+.
+/// Frosted-white circular "+" — Liquid Glass on iOS 26+, falls back to a
+/// `.regularMaterial` capsule on older systems. Matches the brand pills
+/// on `WelcomeView`.
 struct PlusButton: View {
     let action: () -> Void
     var disabled: Bool = false
@@ -45,12 +46,27 @@ struct PlusButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Theme.Palette.ink)
+                .frame(width: 36, height: 36)
+                .glassCircle()
+                .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
-        .tint(Theme.Palette.ink)
+        .buttonStyle(.plain)
+        .opacity(disabled ? 0.4 : 1)
         .disabled(disabled)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func glassCircle() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Circle())
+        } else {
+            self
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.5))
+        }
     }
 }
