@@ -309,12 +309,57 @@ app.get('/api/health', async (c) => {
 // the server runs the same whether cwd is `main/` or the parent.
 const STATIC_DIR = new URL('./web/static', import.meta.url).pathname;
 const STATIC_INDEX = `${STATIC_DIR}/index.html`;
+const STATIC_LOGIN = `${STATIC_DIR}/login.html`;
+
+// Auth gate at the document level: visiting bot.pendingname.com directly
+// resolves to either the app or the login page based on the pb_session
+// cookie — no flash-of-app-then-redirect like the old SPA-side check.
+// Invite redemption (`/?invite=<token>`) is exempt so /i/<token>'s bounce
+// can still render the inline redeem form for self-host installs.
+function hasValidSessionCookie(c: any): boolean {
+  const cookieHeader = c.req.header('cookie') ?? '';
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() !== 'pb_session') continue;
+    const k = decodeURIComponent(part.slice(eq + 1).trim());
+    const row = findApiKeyByHash(hashApiKey(k));
+    if (!row || row.revoked_at) return false;
+    return !!findUserById(row.user_id);
+  }
+  return false;
+}
+
+async function serveHtml(path: string): Promise<Response> {
+  const file = Bun.file(path);
+  return new Response(await file.text(), {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+app.get('/', async (c) => {
+  const url = new URL(c.req.url);
+  if (url.searchParams.has('invite')) return serveHtml(STATIC_INDEX);
+  if (!hasValidSessionCookie(c)) return c.redirect('/login.html', 302);
+  return serveHtml(STATIC_INDEX);
+});
+
+app.get('/index.html', async (c) => {
+  if (!hasValidSessionCookie(c)) return c.redirect('/login.html', 302);
+  return serveHtml(STATIC_INDEX);
+});
+
+app.get('/login.html', async (c) => {
+  if (hasValidSessionCookie(c)) return c.redirect('/', 302);
+  return serveHtml(STATIC_LOGIN);
+});
+
 app.use('/*', serveStatic({ root: STATIC_DIR }));
 
-// Fallback to index.html for SPA
+// Fallback to index.html for SPA — same gate as `/`.
 app.get('/*', async (c) => {
-  const file = Bun.file(STATIC_INDEX);
-  return new Response(await file.text(), { headers: { 'Content-Type': 'text/html' } });
+  if (!hasValidSessionCookie(c)) return c.redirect('/login.html', 302);
+  return serveHtml(STATIC_INDEX);
 });
 
 const port = configManager.get().server.port;

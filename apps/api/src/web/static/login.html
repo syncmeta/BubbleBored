@@ -1,80 +1,125 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>登录 · 大绿豆</title>
 <link rel="icon" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
+<link rel="stylesheet" href="/tokens.css">
 <style>
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box }
-  html, body {
-    margin: 0; padding: 0;
-    min-height: 100%;
-    font-family: -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", sans-serif;
-  }
+  /* Mirrors the iOS WelcomeView / SignInView layout: brand mark over a
+     serif wordmark, single-column form on warm canvas. The Clerk widget
+     is restyled via its `variables` API so its inputs match our jade
+     accent + cream surfaces. */
+  html, body { min-height: 100% }
   body {
+    background: var(--bg);
+    color: var(--fg);
     display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    min-height: 100vh;
-    background: #f8fafc;
-    color: #1f2937;
-    padding: 1.5rem;
+    align-items: center; justify-content: flex-start;
+    padding: 48px 24px 32px;
+    font-family: var(--font-sans);
   }
-  @media (prefers-color-scheme: dark) {
-    body { background: #0f172a; color: #e5e7eb; }
+  .shell {
+    width: 100%; max-width: 28rem;
+    display: flex; flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
-  h1 {
-    font-size: 1.5rem; margin: 0 0 .25rem;
-    letter-spacing: .02em;
+  .brand-mark {
+    width: 76px; height: 76px;
+    border-radius: 18px;
+    box-shadow: 0 4px 14px oklch(0% 0 0 / 0.06);
+    background: var(--bg-elevated);
+    display: grid; place-items: center;
+    overflow: hidden;
   }
-  p.tag {
-    color: #64748b; font-size: 0.95rem;
-    margin: 0 0 2rem; text-align: center;
+  .brand-mark img { width: 100%; height: 100%; object-fit: cover }
+  .wordmark {
+    font-family: "New York", ui-serif, Georgia, "Songti SC", serif;
+    font-weight: 600; font-size: 24px;
+    color: var(--fg);
+    margin-top: 14px; letter-spacing: .01em;
   }
-  @media (prefers-color-scheme: dark) {
-    p.tag { color: #94a3b8 }
+  .tagline {
+    font-size: 13px; line-height: 1.6;
+    color: var(--fg-muted);
+    text-align: center;
+    margin-top: 6px;
+    white-space: pre-line;
   }
-  #clerk-mount { width: 100%; max-width: 28rem; }
+  .subhead {
+    font-size: 13px;
+    color: var(--fg-muted);
+    margin-top: 20px;
+  }
+  #clerk-mount { width: 100%; margin-top: 18px }
+  #status {
+    color: var(--fg-subtle);
+    font-size: 13px; margin-top: 14px;
+    text-align: center;
+  }
+  #status.err { color: var(--red) }
+
   .fallback {
-    max-width: 28rem;
-    border: 1px solid rgba(0,0,0,.08);
-    background: rgba(255,255,255,.7);
-    padding: 1.25rem 1.5rem;
+    margin-top: 18px; width: 100%;
+    background: var(--bg-elevated);
+    border: 0.5px solid var(--line);
     border-radius: 14px;
+    padding: 18px 20px;
     line-height: 1.6;
+    font-size: 14px;
   }
-  @media (prefers-color-scheme: dark) {
-    .fallback { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.08); }
-  }
+  .fallback strong { display: block; margin-bottom: 6px; color: var(--fg) }
+  .fallback p { margin: 0; color: var(--fg-muted) }
   .fallback code {
-    background: rgba(0,0,0,.06);
-    padding: .1rem .35rem; border-radius: 4px;
+    background: var(--bg-muted);
+    padding: .1rem .35rem; border-radius: 6px;
+    font-family: var(--font-mono);
     font-size: .9em;
   }
-  @media (prefers-color-scheme: dark) {
-    .fallback code { background: rgba(255,255,255,.08) }
+
+  .footer {
+    margin-top: 28px;
+    text-align: center;
+    color: color-mix(in oklch, var(--fg-muted) 70%, transparent);
+    font-size: 12px; line-height: 1.6;
+    white-space: pre-line;
   }
-  .err {
-    color: #dc2626; font-size: .9rem;
-    margin-top: 1rem; text-align: center;
+  .footer a {
+    display: inline-block; margin-top: 4px;
+    color: color-mix(in oklch, var(--accent) 85%, transparent);
+    text-decoration: none;
   }
-  .loader { color: #94a3b8; font-size: .9rem; }
+  .footer a:hover { text-decoration: underline }
 </style>
 </head>
 <body>
-  <h1>大绿豆 · PendingBot</h1>
-  <p class="tag">用 Apple / Google / 邮箱登录，去找你的 AI 朋友。</p>
+
+<div class="shell">
+  <div class="brand-mark"><img src="/favicon.svg" alt="大绿豆"></div>
+  <div class="wordmark">大绿豆</div>
+  <div class="tagline">主动、自然、不谄媚
+帮人审视自我、探索未知的 AI 们</div>
+
+  <div class="subhead">登录或注册</div>
 
   <div id="clerk-mount"></div>
-  <div id="status" class="loader">加载中…</div>
+  <div id="status">加载中…</div>
+</div>
+
+<div class="footer">
+  登录时会发一份验证码到你的邮箱
+第一次登录会自动注册
+  <a href="https://github.com/syncmeta/PendingBot" target="_blank" rel="noopener">项目源码：github.com/syncmeta/PendingBot</a>
+</div>
 
 <script>
 (async function () {
   const status = document.getElementById('status');
   const mount = document.getElementById('clerk-mount');
 
-  // Public client config — tells us which auth methods are wired up.
   let cfg;
   try {
     cfg = await (await fetch('/api/config', { credentials: 'include' })).json();
@@ -84,18 +129,15 @@
     return;
   }
 
-  // Already signed in (cookie present) — bounce to app.
-  try {
-    const me = await fetch('/api/me', { credentials: 'include' });
-    if (me.ok) { location.replace('/'); return; }
-  } catch {}
-
   if (!cfg.auth?.clerk) {
-    // Self-host install with no Clerk wired up — show the invite path.
+    // Self-host install — no Clerk wired up. Server-side gate will let
+    // /?invite=<token> through to the SPA's inline redeem form, so all
+    // we need to do here is point the user at that path.
     status.style.display = 'none';
+    document.querySelector('.subhead').style.display = 'none';
     mount.innerHTML = `
       <div class="fallback">
-        <strong>这台服务器还没接入 Clerk 登录。</strong>
+        <strong>这台服务器还没接入 Clerk 登录</strong>
         <p>Admin 在终端日志里能看到一条形如
         <code>https://your-host/i/&lt;token&gt;</code> 的邀请链接，
         把它发给你或在你电脑上用浏览器打开即可创建账号。</p>
@@ -103,9 +145,6 @@
     return;
   }
 
-  // Lazy-load Clerk's browser SDK from their CDN. With the
-  // data-clerk-publishable-key attribute set, the script auto-initialises
-  // window.Clerk as a singleton instance — we don't `new` it ourselves.
   const { issuer, publishableKey } = cfg.auth.clerk;
   const sdkUrl = `${issuer.replace(/\/+$/, '')}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`;
 
@@ -126,26 +165,19 @@
     return;
   }
 
-  await window.Clerk.load({ /* default appearance */ });
+  await window.Clerk.load({});
 
-  // Already signed in via Clerk (e.g. cookie still valid) — exchange
-  // straight to a pbk_live_* and bounce.
   if (window.Clerk.session) {
     await exchangeAndRedirect();
     return;
   }
 
-  // Mount Clerk's hosted SignIn widget. It handles all UI: email code,
-  // Google OAuth, etc.
   status.style.display = 'none';
   window.Clerk.mountSignIn(mount, {
     afterSignInUrl: '/login.html',
     afterSignUpUrl: '/login.html',
   });
 
-  // Poll for session to appear, then exchange. This is the same approach
-  // the Clerk hosted UI uses internally; addListener would be cleaner but
-  // is brittle across SDK versions.
   const tick = setInterval(async () => {
     if (window.Clerk.session) {
       clearInterval(tick);
@@ -157,7 +189,7 @@
 async function exchangeAndRedirect() {
   const status = document.getElementById('status');
   status.style.display = 'block';
-  status.className = 'loader';
+  status.className = '';
   status.textContent = '登录中…';
   try {
     const token = await window.Clerk.session.getToken();

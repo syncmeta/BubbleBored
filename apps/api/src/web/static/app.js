@@ -121,24 +121,9 @@ async function bootAuth() {
     return;
   }
 
-  // Not authenticated. If the host runs Clerk (hosted mode) hand off to
-  // the standalone /login page so users get the SIWA / Google / email
-  // code UI. Self-host installs (no Clerk env) keep using the inline
-  // invite-token form below — that path stays the only way to bootstrap
-  // the first admin and remains useful when running offline.
-  if (!inviteToken) {
-    try {
-      const cfgRes = await fetch('/api/config');
-      if (cfgRes.ok) {
-        const cfg = await cfgRes.json();
-        if (cfg?.auth?.clerk) {
-          location.replace('/login.html');
-          return;
-        }
-      }
-    } catch {}
-  }
-
+  // Reaching here means the server-side gate let us through despite no
+  // session — only happens on `/?invite=<token>` for self-host invite
+  // redemption. Render the inline redeem form with the token pre-filled.
   renderLoginScreen(inviteToken);
 }
 
