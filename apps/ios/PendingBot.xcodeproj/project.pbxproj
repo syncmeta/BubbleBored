@@ -35,7 +35,6 @@
 		73218F689FB323F50181FA6F /* PendingBotApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4230E5DEF138A3DC7320FD18 /* PendingBotApp.swift */; };
 		7441BBB82513354F86E2D12E /* ChatActionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E2067C1C372EB858B6A6DC /* ChatActionSheet.swift */; };
 		756AB114C3C20E0E06623B83 /* MessageTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B229EDD3BD50361009601 /* MessageTabView.swift */; };
-		77509B78804ADEF5256A41EF /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E50E5AF0284B681DA2C377 /* SignInView.swift */; };
 		7EC924CCEF279940B5934910 /* ConversationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99F8DD8956403453040B34E /* ConversationSettingsView.swift */; };
 		83035210F6619E0993F92CEE /* CodeRunnerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A573816C9B62D5FDB2747B1 /* CodeRunnerSheet.swift */; };
 		836B075E7D4B70630FCA593D /* SSEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9034AEB82955054D718A96FC /* SSEClient.swift */; };
@@ -87,7 +86,6 @@
 		9034AEB82955054D718A96FC /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
 		942CC4F48E3DD6424C534120 /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 		A15111FAA33922E228085D64 /* TabTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabTitle.swift; sourceTree = "<group>"; };
-		A3E50E5AF0284B681DA2C377 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		A4CD99E3CADF2990A5EF1A40 /* SurfTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfTabView.swift; sourceTree = "<group>"; };
 		A556C3B2E5456D4E589468E3 /* ColorHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorHash.swift; sourceTree = "<group>"; };
 		C608CB73D14B114D2399FE59 /* HostedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostedConfig.swift; sourceTree = "<group>"; };
@@ -235,7 +233,6 @@
 		A64EF4A1A55D8F31CC3F2244 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
-				A3E50E5AF0284B681DA2C377 /* SignInView.swift */,
 				E688431D1768A5D1A6F573EA /* WelcomeView.swift */,
 			);
 			path = Onboarding;
@@ -424,7 +421,6 @@
 				3AA49E1DEB947D1B011567D2 /* ReviewTabView.swift in Sources */,
 				836B075E7D4B70630FCA593D /* SSEClient.swift in Sources */,
 				11DFAF56423D11C5DDBE2C34 /* ServerImage.swift in Sources */,
-				77509B78804ADEF5256A41EF /* SignInView.swift in Sources */,
 				94657E0860679B913AE1A78D /* SkillsView.swift in Sources */,
 				B3417CC338433628B03B7B1D /* SplitNav.swift in Sources */,
 				0805B09651FBC60ED2B1F2CD /* SurfRunView.swift in Sources */,
