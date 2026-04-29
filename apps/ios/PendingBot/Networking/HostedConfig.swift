@@ -9,7 +9,7 @@ enum HostedConfig {
 }
 
 /// Network glue for the Clerk JWT → pbk_live_* exchange. Called from the
-/// SignInView after Clerk completes the email-code / OAuth dance and we
+/// WelcomeView after Clerk completes the email-code / OAuth dance and we
 /// have a session token.
 enum AuthExchange {
     struct Response: Decodable {
