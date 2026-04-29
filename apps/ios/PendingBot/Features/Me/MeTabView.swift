@@ -27,7 +27,6 @@ struct MeTabView: View {
                     ScrollView {
                         VStack(spacing: 14) {
                             profileCard
-                            modeCard
                             if isByokMode { auditCard }
                             skillsCard
                             botsCard
@@ -78,7 +77,7 @@ struct MeTabView: View {
     private var profileCard: some View {
         card(title: nil, footer: nil) {
             NavigationLink {
-                ProfileView(profile: profile, onChange: { Task { await load() } })
+                ProfileView(profile: profile, keys: keys, onChange: { Task { await load() } })
                     .toolbar(.hidden, for: .tabBar)
             } label: {
                 HStack(spacing: 14) {
@@ -88,7 +87,7 @@ struct MeTabView: View {
                             .font(Theme.Fonts.serif(size: 18, weight: .semibold))
                             .foregroundStyle(Theme.Palette.ink)
                             .lineLimit(1)
-                        if let email = profile?.email, !email.isEmpty {
+                        if let email = profileEmail {
                             Text(email)
                                 .font(Theme.Fonts.monoSmall)
                                 .foregroundStyle(Theme.Palette.inkMuted)
@@ -106,23 +105,6 @@ struct MeTabView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
-            }
-            .contentShape(Rectangle())
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var modeCard: some View {
-        card(title: nil, footer: nil) {
-            NavigationLink {
-                ModeView(keys: keys, onChange: { Task { await load() } })
-                    .toolbar(.hidden, for: .tabBar)
-            } label: {
-                meRow(
-                    icon: "switch.2",
-                    label: "模式",
-                    trailing: isByokMode ? "自带钥匙" : "平台"
-                )
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -149,6 +131,17 @@ struct MeTabView: View {
         } else {
             BotAvatar(seed: seed, size: 56)
         }
+    }
+
+    /// Server's `email` mirror lags behind Clerk for accounts that signed in
+    /// before the mirror columns existed (or whose session JWT omitted the
+    /// email claim). Fall back to the live SDK's primary email so the Me tab
+    /// always has something to show.
+    private var profileEmail: String? {
+        if let server = profile?.email, !server.isEmpty { return server }
+        if let local = Clerk.shared.user?.primaryEmailAddress?.emailAddress,
+           !local.isEmpty { return local }
+        return nil
     }
 
     // The server's display_name is the canonical handle (PATCH /me/profile
@@ -188,7 +181,7 @@ struct MeTabView: View {
             NavigationLink {
                 SkillsView().toolbar(.hidden, for: .tabBar)
             } label: {
-                meRow(icon: "puzzlepiece.extension", label: "技能管理")
+                meRow(icon: "puzzlepiece.extension", label: "技能(Skills)管理")
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -200,7 +193,7 @@ struct MeTabView: View {
             NavigationLink {
                 BotManagementView().toolbar(.hidden, for: .tabBar)
             } label: {
-                meRow(icon: "person.crop.square.stack", label: "机器人管理")
+                meRow(icon: "cpu", label: "机器人管理")
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -491,6 +484,7 @@ struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AccountStore
     let profile: MeProfile?
+    let keys: KeysSummary?
     var onChange: () -> Void
 
     @State private var editing: EditField?
@@ -559,8 +553,7 @@ struct ProfileView: View {
 
     private var fieldsCard: some View {
         VStack(spacing: 0) {
-            readOnlyRow(label: "登录邮箱",
-                        value: profile?.email?.isEmpty == false ? profile!.email! : "—")
+            readOnlyRow(label: "登录邮箱", value: emailDisplay)
             divider
             readOnlyRow(label: "登录方式", value: signInMethod)
             divider
@@ -573,6 +566,8 @@ struct ProfileView: View {
                         value: profile?.bio?.isEmpty == false ? profile!.bio! : "未设置") {
                 editing = .bio
             }
+            divider
+            byokRow
         }
         .background(
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
@@ -584,30 +579,62 @@ struct ProfileView: View {
         )
     }
 
+    private var byokRow: some View {
+        NavigationLink {
+            ByokView(keys: keys, onChange: onChange)
+                .toolbar(.hidden, for: .tabBar)
+        } label: {
+            HStack(spacing: 12) {
+                Text("BYOK")
+                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
+                Spacer(minLength: 8)
+                Text(keys?.openrouter.configured == true
+                     ? (keys?.openrouter.last4.map { "已绑定 · \($0)" } ?? "已绑定")
+                     : "未绑定")
+                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 56)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var deleteCard: some View {
-        VStack(spacing: 0) {
-            Button(role: .destructive) {
-                confirmingDelete = true
-                Haptics.tap()
-            } label: {
-                HStack(spacing: 10) {
-                    if deleting {
-                        ProgressView().scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "trash")
-                            .font(.system(size: 14, weight: .medium))
-                    }
+        Button(role: .destructive) {
+            confirmingDelete = true
+            Haptics.tap()
+        } label: {
+            HStack(spacing: 12) {
+                if deleting {
+                    ProgressView().scaleEffect(0.8)
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color(hex: 0xB14B3C))
+                }
+                VStack(alignment: .leading, spacing: 2) {
                     Text("注销账号")
                         .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                    Spacer(minLength: 0)
+                        .foregroundStyle(Color(hex: 0xB14B3C))
+                    Text("此操作没有回头路。")
+                        .font(Theme.Fonts.caption.weight(.semibold))
+                        .foregroundStyle(Color(hex: 0xB14B3C))
                 }
-                .foregroundStyle(Color(hex: 0xB14B3C))
-                .padding(14)
+                Spacer(minLength: 0)
             }
-            .contentShape(Rectangle())
-            .buttonStyle(.plain)
-            .disabled(store.current == nil || deleting)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 64)
         }
+        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .disabled(store.current == nil || deleting)
         .background(
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .fill(Theme.Palette.surface)
@@ -616,16 +643,6 @@ struct ProfileView: View {
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
         )
-        .overlay(
-            Text("此操作没有回头路。")
-                .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Palette.inkMuted)
-                .padding(.horizontal, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .offset(y: 50),
-            alignment: .bottomLeading
-        )
-        .padding(.bottom, 24)
     }
 
     private var divider: some View {
@@ -645,7 +662,8 @@ struct ProfileView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 56)
     }
 
     @ViewBuilder
@@ -665,10 +683,22 @@ struct ProfileView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
             }
-            .padding(14)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 56)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// Email is mirrored from Clerk on the server during /clerk/exchange,
+    /// but a stale account row from before the mirror columns existed (or
+    /// a Clerk session that omits the email claim) can leave it null. Fall
+    /// back to whatever Clerk's local `user.primaryEmailAddress` knows.
+    private var emailDisplay: String {
+        if let server = profile?.email, !server.isEmpty { return server }
+        if let local = Clerk.shared.user?.primaryEmailAddress?.emailAddress,
+           !local.isEmpty { return local }
+        return "—"
     }
 
     /// Pulled from the live Clerk SDK rather than the server mirror so we
@@ -813,117 +843,88 @@ private struct FieldEditSheet: View {
     }
 }
 
-// ── Mode (BYOK toggle) ─────────────────────────────────────────────────────
+// ── BYOK ───────────────────────────────────────────────────────────────────
 
-/// Push page reached from the 模式 row on the Me tab. Lets the user switch
-/// between "platform-funded" mode (no key, default) and "bring your own key"
-/// — the latter unlocks Token 审计 and routes upstream calls through the
-/// user's OpenRouter key. Persists to PUT /api/me/keys.
-struct ModeView: View {
+/// Push page reached from the BYOK row inside ProfileView. One-line pitch
+/// ("支持OpenAI兼容API") followed by two text fields: Base URL + API Key.
+/// Routes upstream calls through whatever endpoint the user named — works
+/// for OpenAI directly, a self-hosted gateway, OpenRouter, etc. Token 审计
+/// turns on automatically once a key is bound. Persists via PUT /api/me/keys.
+struct ByokView: View {
     @Environment(\.api) private var api
     let keys: KeysSummary?
     var onChange: () -> Void
 
-    @State private var openrouterKey: String = ""
+    @State private var baseUrl: String = ""
+    @State private var apiKey: String = ""
     @State private var saving = false
     @State private var error: String?
     @State private var localKeys: KeysSummary?
 
     private var current: KeysSummary? { localKeys ?? keys }
-    private var isByok: Bool { current?.openrouter.configured == true }
+    private var isBound: Bool { current?.openrouter.configured == true }
 
     var body: some View {
         ZStack {
             Theme.Palette.canvas.ignoresSafeArea()
             ScrollView {
-                VStack(spacing: 14) {
-                    modeRow(label: "平台",
-                            note: "由平台代付,日常额度内随便用。",
-                            picked: !isByok) {
-                        Task { await disableByok() }
-                    }
-                    modeRow(label: "自带钥匙",
-                            note: "用你自己的 OpenRouter 钥匙直接走上游 — 解锁 Token 审计。",
-                            picked: isByok) {}
-                        .opacity(isByok ? 1 : 0.85)
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("支持 OpenAI 兼容 API。")
+                        .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .padding(.horizontal, 4)
 
-                    if isByok, let last4 = current?.openrouter.last4 {
-                        statusCard(text: "已绑定 OpenRouter 钥匙(尾号 \(last4))",
-                                   action: "解绑") {
-                            Task { await disableByok() }
-                        }
-                    } else {
-                        keyEntryCard
-                    }
+                    formCard
+                    if isBound { unbindCard }
                 }
                 .padding(.horizontal, Theme.Metrics.gutter)
                 .padding(.top, 12)
                 .padding(.bottom, 32)
             }
         }
-        .navigationTitle("模式")
+        .navigationTitle("BYOK")
         .navigationBarTitleDisplayMode(.inline)
         .alert("出错", isPresented: .constant(error != nil)) {
             Button("好") { error = nil }
         } message: { Text(error ?? "") }
-    }
-
-    @ViewBuilder
-    private func modeRow(label: String, note: String, picked: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: { Haptics.tap(); action() }) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: picked ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 18, weight: .regular))
-                    .foregroundStyle(picked ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.6))
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(label)
-                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.Palette.ink)
-                    Text(note)
-                        .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Palette.inkMuted)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
+        .onAppear {
+            // Pre-fill the base URL so the user can edit instead of retype.
+            // The key column never round-trips (only last4 does).
+            if baseUrl.isEmpty, let existing = current?.openrouter.baseUrl {
+                baseUrl = existing
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .fill(Theme.Palette.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
-                    .strokeBorder(picked ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
-                                  lineWidth: picked ? 1 : 0.5)
-            )
         }
-        .buttonStyle(.plain)
     }
 
-    private var keyEntryCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("OpenRouter 钥匙")
-                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
-                .foregroundStyle(Theme.Palette.inkMuted)
-            SecureField("sk-or-v1-…", text: $openrouterKey)
-                .font(.system(size: 15, design: .monospaced))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.canvas))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                )
+    private var formCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            field(label: "Base URL", placeholder: "https://api.openai.com/v1") {
+                TextField("https://api.openai.com/v1", text: $baseUrl)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .font(.system(size: 15, design: .monospaced))
+                    .foregroundStyle(Theme.Palette.ink)
+            }
+            field(label: "API Key", placeholder: isBound
+                  ? "已绑定 · 输入新值以替换"
+                  : "sk-…") {
+                SecureField(isBound
+                            ? (current?.openrouter.last4.map { "已绑定 · 尾号 \($0)" } ?? "已绑定")
+                            : "sk-…",
+                            text: $apiKey)
+                    .font(.system(size: 15, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .foregroundStyle(Theme.Palette.ink)
+            }
+
             Button {
-                Task { await enableByok() }
+                Task { await save() }
             } label: {
                 HStack {
                     if saving { ProgressView().scaleEffect(0.8).tint(.white) }
-                    Text(saving ? "保存中…" : "保存并切换")
+                    Text(saving ? "保存中…" : "保存")
                         .font(Theme.Fonts.rounded(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                 }
@@ -949,26 +950,40 @@ struct ModeView: View {
         )
     }
 
-    private var canSave: Bool {
-        openrouterKey.trimmingCharacters(in: .whitespaces).count > 8
+    @ViewBuilder
+    private func field<Input: View>(label: String, placeholder: String,
+                                    @ViewBuilder input: () -> Input) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 12, weight: .medium))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            input()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.canvas))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                )
+        }
     }
 
-    private func statusCard(text: String, action: String, onTap: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.Palette.accent)
-            Text(text)
-                .font(Theme.Fonts.rounded(size: 14, weight: .regular))
-                .foregroundStyle(Theme.Palette.ink)
-            Spacer()
-            Button(action) { Haptics.tap(); onTap() }
-                .buttonStyle(.plain)
-                .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
-                .foregroundStyle(Color(hex: 0xB14B3C))
+    private var unbindCard: some View {
+        Button(role: .destructive) {
+            Task { await unbind() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "key.slash")
+                    .font(.system(size: 14, weight: .medium))
+                Text("解绑当前 API Key")
+                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Color(hex: 0xB14B3C))
+            .padding(14)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
                 .fill(Theme.Palette.surface)
@@ -979,28 +994,49 @@ struct ModeView: View {
         )
     }
 
-    private func enableByok() async {
+    /// Need either: a fresh API key, OR (when already bound) a base-URL edit.
+    /// Empty key + same base URL = nothing to save.
+    private var canSave: Bool {
+        let key = apiKey.trimmingCharacters(in: .whitespaces)
+        let url = baseUrl.trimmingCharacters(in: .whitespaces)
+        if key.count > 8 { return true }
+        if isBound && url != (current?.openrouter.baseUrl ?? "") { return true }
+        return false
+    }
+
+    private func save() async {
         guard let api else { return }
         saving = true; defer { saving = false }
-        struct Body: Encodable { let openrouter: String? }
+        struct Body: Encodable {
+            let openrouter: String?
+            let openrouterBaseUrl: String?
+        }
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+        let trimmedBase = baseUrl.trimmingCharacters(in: .whitespaces)
+        // Pass a non-nil openrouter only when the user typed something — sending
+        // null would clear the existing key on a base-URL-only edit.
+        let keyForBody: String? = trimmedKey.isEmpty ? nil : trimmedKey
         do {
             let resp: KeysSummary = try await api.put("api/me/keys",
-                body: Body(openrouter: openrouterKey.trimmingCharacters(in: .whitespaces)))
+                body: Body(openrouter: keyForBody,
+                           openrouterBaseUrl: trimmedBase.isEmpty ? nil : trimmedBase))
             self.localKeys = resp
-            self.openrouterKey = ""
+            self.apiKey = ""
             Haptics.success()
             onChange()
         } catch { self.error = error.localizedDescription }
     }
 
-    private func disableByok() async {
+    private func unbind() async {
         guard let api else { return }
         do {
             try await api.deleteVoid("api/me/keys")
             self.localKeys = KeysSummary(
-                openrouter: KeysSummary.Slot(configured: false, last4: nil),
+                openrouter: KeysSummary.OpenRouterSlot(configured: false, last4: nil, baseUrl: nil),
                 jina: current?.jina ?? KeysSummary.Slot(configured: false, last4: nil)
             )
+            self.baseUrl = ""
+            self.apiKey = ""
             Haptics.success()
             onChange()
         } catch { self.error = error.localizedDescription }

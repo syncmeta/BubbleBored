@@ -2,9 +2,11 @@ import SwiftUI
 
 /// Per-conversation settings sheet — opened from the gear icon in the chat
 /// header. Houses the controls that used to live as chips/+-panel tiles:
-/// tone, streaming, skills, model. Tone↔streaming are paired: switching
-/// tone snaps the streaming default (normal=on, wechat=off), but the user
-/// can override after.
+/// bubble-split, skills, model. The split toggle picks between the two
+/// pre-existing render modes — when on, the bot replies as multiple short
+/// bubbles (legacy "wechat" tone, no per-token streaming because each
+/// segment lands as a chunk); when off, one single message that streams
+/// token-by-token (legacy "normal" tone).
 struct ConversationSettingsView: View {
     @Binding var chatTone: String
     @Binding var streaming: Bool
@@ -27,19 +29,17 @@ struct ConversationSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("语气") {
-                    Picker("语气", selection: $chatTone) {
-                        Text("微信").tag("wechat")
-                        Text("普通AI").tag("normal")
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: chatTone) { _, newTone in
-                        // Tone flips the streaming default — normal AI feels
-                        // wrong without token streaming, wechat feels wrong
-                        // with it (each segment is meant to land as a chunk).
-                        streaming = (newTone == "normal")
-                    }
-                    Toggle("流式输出", isOn: $streaming)
+                Section {
+                    Toggle("分隔消息气泡输出", isOn: Binding(
+                        get: { chatTone == "wechat" },
+                        set: { split in
+                            chatTone = split ? "wechat" : "normal"
+                            // Split-bubbles mode delivers each segment as a
+                            // chunk; per-token streaming would interleave
+                            // confusingly. Single-bubble mode wants streaming.
+                            streaming = !split
+                        }
+                    ))
                 }
 
                 Section("技能") {

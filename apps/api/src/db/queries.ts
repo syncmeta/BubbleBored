@@ -1122,6 +1122,10 @@ export interface UserSettingsRow {
   user_id: string;
   openrouter_key_enc: Uint8Array | null;
   openrouter_key_last4: string | null;
+  /// Custom base URL for the OpenAI-compatible endpoint. null falls through
+  /// to OpenRouter's URL; set this when the user is BYOK'ing their own
+  /// gateway / OpenAI directly / self-hosted Anthropic proxy.
+  openrouter_base_url: string | null;
   jina_key_enc: Uint8Array | null;
   jina_key_last4: string | null;
   updated_at: number;
@@ -1134,16 +1138,20 @@ export function getUserSettings(userId: string): UserSettingsRow | null {
 }
 
 export function setOpenrouterByok(
-  userId: string, enc: Uint8Array | null, last4: string | null,
+  userId: string,
+  enc: Uint8Array | null,
+  last4: string | null,
+  baseUrl: string | null = null,
 ) {
   getDb().query(
-    `INSERT INTO user_settings (user_id, openrouter_key_enc, openrouter_key_last4, updated_at)
-     VALUES (?, ?, ?, unixepoch())
+    `INSERT INTO user_settings (user_id, openrouter_key_enc, openrouter_key_last4, openrouter_base_url, updated_at)
+     VALUES (?, ?, ?, ?, unixepoch())
      ON CONFLICT(user_id) DO UPDATE SET
        openrouter_key_enc = excluded.openrouter_key_enc,
        openrouter_key_last4 = excluded.openrouter_key_last4,
+       openrouter_base_url = excluded.openrouter_base_url,
        updated_at = unixepoch()`
-  ).run(userId, enc, last4);
+  ).run(userId, enc, last4, baseUrl);
 }
 
 export function setJinaByok(

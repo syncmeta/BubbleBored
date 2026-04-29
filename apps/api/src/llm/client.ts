@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParamsStreaming, ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import { currentUserId } from '../core/request-context';
-import { readOpenrouterByok } from '../core/byok';
+import { readOpenrouterByok, readOpenrouterBaseUrl } from '../core/byok';
 import { assertQuota } from '../core/quota';
 
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
@@ -18,25 +18,32 @@ const SHARED_HEADERS = {
 
 let platformClient: OpenAI;
 
-function buildClient(apiKey: string | undefined): OpenAI {
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+
+function buildClient(apiKey: string | undefined, baseURL: string = OPENROUTER_BASE): OpenAI {
   return new OpenAI({
-    baseURL: 'https://openrouter.ai/api/v1',
+    baseURL,
     apiKey,
     defaultHeaders: SHARED_HEADERS,
     fetch: proxyUrl ? proxyFetch : undefined,
   });
 }
 
-// Resolve which OpenRouter client this call should use. BYOK takes priority
-// when the request has a user in context and that user has stored a key;
-// otherwise fall through to the platform-funded singleton. When BYOK is
+// Resolve which OpenAI-compatible client this call should use. BYOK takes
+// priority when the request has a user in context and that user has stored
+// a key; users may also have stored a custom base URL (OpenAI directly,
+// self-hosted gateway, etc.) — null means "fall back to OpenRouter".
+// Otherwise fall through to the platform-funded singleton. When BYOK is
 // active we DO NOT cache the per-user client — it's cheap to build and
 // per-user instances would balloon memory linearly with active users.
 export function getLlm(): OpenAI {
   const userId = currentUserId();
   if (userId) {
     const byok = readOpenrouterByok(userId);
-    if (byok) return buildClient(byok);
+    if (byok) {
+      const customBase = readOpenrouterBaseUrl(userId) ?? OPENROUTER_BASE;
+      return buildClient(byok, customBase);
+    }
   }
   if (!platformClient) platformClient = buildClient(process.env.OPENROUTER_API_KEY);
   return platformClient;

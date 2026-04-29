@@ -149,11 +149,18 @@ struct MeProfile: Codable {
     let image_url: String?
 }
 
-/// Mirror of `summarizeByok()` on the server. Drives the BYOK / 平台 mode
-/// toggle in the Me tab: `openrouter.configured == true` ⇒ BYOK mode.
+/// Mirror of `summarizeByok()` on the server. Drives the BYOK row in
+/// ProfileView: `openrouter.configured == true` ⇒ user has bound an
+/// OpenAI-compatible API; `openrouter.baseUrl` is the custom endpoint
+/// (null for stock OpenRouter).
 struct KeysSummary: Codable, Hashable {
-    let openrouter: Slot
+    let openrouter: OpenRouterSlot
     let jina: Slot
+    struct OpenRouterSlot: Codable, Hashable {
+        let configured: Bool
+        let last4: String?
+        let baseUrl: String?
+    }
     struct Slot: Codable, Hashable {
         let configured: Bool
         let last4: String?

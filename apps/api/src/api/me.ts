@@ -132,10 +132,17 @@ meRoutes.get('/keys', (c) => {
 meRoutes.put('/keys', async (c) => {
   const body = await c.req.json<{
     openrouter?: string | null;
+    openrouterBaseUrl?: string | null;
     jina?: string | null;
-  }>().catch(() => ({} as { openrouter?: string | null; jina?: string | null }));
+  }>().catch(() => ({} as {
+    openrouter?: string | null;
+    openrouterBaseUrl?: string | null;
+    jina?: string | null;
+  }));
   const user = getOrCreateUser(c);
-  if (body.openrouter !== undefined) saveOpenrouterByok(user.id, body.openrouter ?? null);
+  if (body.openrouter !== undefined) {
+    saveOpenrouterByok(user.id, body.openrouter ?? null, body.openrouterBaseUrl ?? null);
+  }
   if (body.jina !== undefined) saveJinaByok(user.id, body.jina ?? null);
   return c.json(summarizeByok(user.id));
 });

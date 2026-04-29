@@ -97,17 +97,22 @@ export function verifyKekFingerprint(): void {
 
 // ── public ─────────────────────────────────────────────────────────────────
 
-export function saveOpenrouterByok(userId: string, raw: string | null): void {
+export function saveOpenrouterByok(
+  userId: string,
+  raw: string | null,
+  baseUrl: string | null = null,
+): void {
   if (!raw) {
-    setOpenrouterByok(userId, null, null);
+    setOpenrouterByok(userId, null, null, null);
     return;
   }
   const trimmed = raw.trim();
   if (!trimmed) {
-    setOpenrouterByok(userId, null, null);
+    setOpenrouterByok(userId, null, null, null);
     return;
   }
-  setOpenrouterByok(userId, encrypt(trimmed), last4(trimmed));
+  const normalizedBase = baseUrl?.trim() ? baseUrl.trim() : null;
+  setOpenrouterByok(userId, encrypt(trimmed), last4(trimmed), normalizedBase);
 }
 
 export function saveJinaByok(userId: string, raw: string | null): void {
@@ -133,6 +138,13 @@ export function readOpenrouterByok(userId: string): string | null {
   return decrypt(row.openrouter_key_enc as any);
 }
 
+/// Companion to `readOpenrouterByok` — returns the user's chosen base URL
+/// (e.g. https://api.openai.com/v1) or null when they're using OpenRouter.
+export function readOpenrouterBaseUrl(userId: string): string | null {
+  const row = getUserSettings(userId);
+  return row?.openrouter_base_url ?? null;
+}
+
 export function readJinaByok(userId: string): string | null {
   const row = getUserSettings(userId);
   if (!row || !row.jina_key_enc) return null;
@@ -140,7 +152,7 @@ export function readJinaByok(userId: string): string | null {
 }
 
 export function summarizeByok(userId: string): {
-  openrouter: { configured: boolean; last4: string | null };
+  openrouter: { configured: boolean; last4: string | null; baseUrl: string | null };
   jina: { configured: boolean; last4: string | null };
 } {
   const row: UserSettingsRow | null = getUserSettings(userId);
@@ -148,6 +160,7 @@ export function summarizeByok(userId: string): {
     openrouter: {
       configured: !!row?.openrouter_key_enc,
       last4: row?.openrouter_key_last4 ?? null,
+      baseUrl: row?.openrouter_base_url ?? null,
     },
     jina: {
       configured: !!row?.jina_key_enc,

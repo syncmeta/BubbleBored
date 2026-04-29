@@ -825,4 +825,17 @@ function runMigrations(db: Database): void {
     }
     db.exec('PRAGMA user_version = 31');
   }
+
+  // v32: BYOK is no longer OpenRouter-only — users can now point at any
+  // OpenAI-compatible endpoint (their own Anthropic proxy, a self-hosted
+  // gateway, OpenAI directly, etc.). Stores the base URL alongside the
+  // existing key columns; null means "use the OpenRouter default" so
+  // pre-v32 rows keep working without re-saving.
+  if (userVersion < 32) {
+    const cols = db.query(`PRAGMA table_info(user_settings)`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'openrouter_base_url')) {
+      db.exec(`ALTER TABLE user_settings ADD COLUMN openrouter_base_url TEXT`);
+    }
+    db.exec('PRAGMA user_version = 32');
+  }
 }
