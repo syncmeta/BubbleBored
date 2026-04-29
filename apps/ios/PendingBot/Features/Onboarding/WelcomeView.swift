@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import AuthenticationServices
 import CryptoKit
 import Clerk
@@ -34,44 +33,39 @@ struct WelcomeView: View {
     @State private var signIn: SignIn?
     @State private var signUp: SignUp?
     @State private var errorText: String?
-    @State private var appleCoordinator: AppleSignInCoordinator?
     @FocusState private var focusedField: Field?
 
     enum Field { case email, code }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                Spacer(minLength: 24)
-
+        VStack(spacing: 0) {
+            // Top half: brand mark, vertically centered.
+            VStack(spacing: 14) {
                 Image("BrandMark")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 88, height: 88)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.05), radius: 14, y: 4)
-                    .padding(.bottom, 14)
-
+                    .frame(width: 96, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .shadow(color: .black.opacity(0.05), radius: 16, y: 5)
                 Text("登录 / 注册")
                     .font(Theme.Fonts.caption)
                     .foregroundStyle(Theme.Palette.inkMuted)
-                    .padding(.bottom, 20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            // Bottom half: three equal-width capsule buttons (or code step).
+            VStack(spacing: 14) {
                 methods
-                    .padding(.bottom, 12)
-
                 if let errorText {
                     errorBlock(text: errorText)
-                        .padding(.top, 4)
                 }
-
-                Spacer(minLength: 24)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: 360)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 28)
+            .frame(maxWidth: 300)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 8)
         }
-        .scrollDismissesKeyboard(.interactively)
+        .padding(.horizontal, 28)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .onAppear {
             // Don't grab focus for the email field — let users tap it
@@ -92,79 +86,63 @@ struct WelcomeView: View {
 
     // MARK: - Sections
 
+    /// True only after the email-code path has put a `SignIn`/`SignUp` in
+    /// flight. Gating on this (rather than on `stage`) keeps the buttons
+    /// screen visible while Google/Apple OAuth flips `stage` to .verifying
+    /// — otherwise the view would briefly swap to the code-entry layout.
+    private var inEmailCodeStep: Bool {
+        signIn != nil || signUp != nil
+    }
+
     @ViewBuilder
     private var methods: some View {
-        VStack(spacing: 18) {
-            if stage == .enteringEmail {
-                HStack(spacing: 28) {
-                    appleCircleButton
-                    googleCircleButton
-                }
-                .frame(maxWidth: .infinity)
-                .disabled(isBusy)
-                .padding(.bottom, 4)
-
-                emailRow
-            } else {
+        if inEmailCodeStep {
+            VStack(spacing: 14) {
                 emailEchoRow
                 codeRow
             }
-        }
-    }
-
-    /// HIG-compliant circular Sign in with Apple button: solid black disc,
-    /// official white logo-only artwork, soft shadow. Triggers SIWA via
-    /// `ASAuthorizationController` directly (no SwiftUI wrapper) because
-    /// `SignInWithAppleButton` is a fixed text+logo rectangle and can't be
-    /// reshaped into a circular logo-only variant. HIG explicitly permits
-    /// circular logo-only buttons that use Apple's logo-only artwork.
-    private var appleCircleButton: some View {
-        Button { triggerAppleSignIn() } label: {
-            ZStack {
-                Circle().fill(Color.black)
-                appleLogoImage
-            }
-            .frame(width: 64, height: 64)
-            .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
-            .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Sign in with Apple")
-    }
-
-    /// Picks the official Apple-supplied logo-only artwork when present,
-    /// falling back to the SF Symbol while the asset hasn't been dropped
-    /// in yet (see Assets.xcassets/AppleSignInLogo.imageset/README.md).
-    @ViewBuilder
-    private var appleLogoImage: some View {
-        if UIImage(named: "AppleSignInLogo") != nil {
-            Image("AppleSignInLogo")
-                .resizable()
-                .renderingMode(.template)
-                .foregroundStyle(.white)
-                .scaledToFit()
-                .frame(width: 28, height: 28)
         } else {
-            Image(systemName: "applelogo")
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(.white)
-                .offset(y: -1)
+            VStack(spacing: 14) {
+                appleButton
+                googleButton
+                emailRow
+            }
+            .disabled(isBusy)
         }
     }
 
-    private var googleCircleButton: some View {
+    /// Native SwiftUI `SignInWithAppleButton`, clipped to a capsule. HIG
+    /// explicitly allows a corner radius that matches the surrounding
+    /// buttons in the UI, so a fully-rounded pill is fine.
+    private var appleButton: some View {
+        SignInWithAppleButton(.continue,
+            onRequest: { req in
+                req.requestedScopes = [.email, .fullName]
+                req.nonce = sha256Hex(siwaNonce)
+            },
+            onCompletion: { result in Task { await handleAppleResult(result) } }
+        )
+        .signInWithAppleButtonStyle(.black)
+        .frame(height: 52)
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+    }
+
+    private var googleButton: some View {
         Button { Task { await signInWithProvider(.google) } } label: {
-            ZStack {
-                Circle().fill(.regularMaterial)
-                Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+            HStack(spacing: 10) {
                 Image("GoogleG")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 28, height: 28)
+                    .frame(width: 18, height: 18)
+                Text("用 Google 继续")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Color(red: 0.18, green: 0.18, blue: 0.20))
             }
-            .frame(width: 64, height: 64)
-            .shadow(color: .black.opacity(0.10), radius: 12, y: 6)
-            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .glassCapsule()
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("用 Google 继续")
@@ -194,8 +172,9 @@ struct WelcomeView: View {
         }
     }
 
-    /// One row: a text input on the left, a trailing action button on the
-    /// right. The action button is the arrow when idle, a spinner when busy.
+    /// One row: a text input on the left, a green circular submit button
+    /// on the right. The button shows the arrow when idle, a spinner when
+    /// busy, and dims when the input is empty/invalid.
     @ViewBuilder
     private func inputRow<Content: View>(
         @ViewBuilder field: () -> Content
@@ -203,35 +182,38 @@ struct WelcomeView: View {
         HStack(spacing: 0) {
             field()
                 .font(.system(size: 17))
-                .padding(.leading, 14)
+                .padding(.leading, 20)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button { Task { await primaryAction() } } label: {
-                Group {
-                    if isBusy {
-                        ProgressView()
-                            .tint(Theme.Palette.accent)
-                    } else {
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(
-                                canSubmit
-                                    ? Theme.Palette.accent
-                                    : Theme.Palette.inkMuted.opacity(0.4)
-                            )
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .padding(.trailing, 4)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSubmit || isBusy)
+            submitArrowButton
+                .padding(.trailing, 7)
         }
         .frame(height: 52)
-        .background(Capsule().fill(.regularMaterial))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+        .glassCapsule()
+        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+    }
+
+    private var submitArrowButton: some View {
+        Button { Task { await primaryAction() } } label: {
+            Group {
+                if isBusy {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 38, height: 38)
+            .background(
+                Circle().fill(canSubmit ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.28))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSubmit || isBusy)
+        .animation(.easeInOut(duration: 0.15), value: canSubmit)
     }
 
     private var emailEchoRow: some View {
@@ -477,27 +459,6 @@ struct WelcomeView: View {
 
     // MARK: - Apple SIWA
 
-    /// Custom-button replacement for `SignInWithAppleButton`. Drives the
-    /// same Apple flow (`ASAuthorizationAppleIDProvider`) that the SwiftUI
-    /// wrapper uses; the only thing we lose is Apple's pre-styled button.
-    @MainActor
-    private func triggerAppleSignIn() {
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        request.requestedScopes = [.email, .fullName]
-        request.nonce = sha256Hex(siwaNonce)
-
-        let coordinator = AppleSignInCoordinator { result in
-            Task { await handleAppleResult(result) }
-        }
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = coordinator
-        controller.presentationContextProvider = coordinator
-        // Hold a strong ref — ASAuthorizationController doesn't retain its
-        // delegate, and the coordinator must outlive performRequests().
-        self.appleCoordinator = coordinator
-        controller.performRequests()
-    }
-
     @MainActor
     private func handleAppleResult(_ result: Result<ASAuthorization, Error>) async {
         errorText = nil
@@ -568,42 +529,19 @@ struct WelcomeView: View {
     }
 }
 
-/// Bridges `ASAuthorizationController`'s Objective-C delegate callbacks
-/// into the SwiftUI-friendly `Result` closure that `WelcomeView` already
-/// understands. One instance per sign-in attempt; the view holds it
-/// strongly until the controller finishes.
-fileprivate final class AppleSignInCoordinator: NSObject,
-    ASAuthorizationControllerDelegate,
-    ASAuthorizationControllerPresentationContextProviding {
-
-    private let completion: (Result<ASAuthorization, Error>) -> Void
-
-    init(completion: @escaping (Result<ASAuthorization, Error>) -> Void) {
-        self.completion = completion
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithAuthorization authorization: ASAuthorization
-    ) {
-        completion(.success(authorization))
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithError error: Error
-    ) {
-        completion(.failure(error))
-    }
-
-    func presentationAnchor(
-        for controller: ASAuthorizationController
-    ) -> ASPresentationAnchor {
-        let scenes = UIApplication.shared.connectedScenes
-        let window = scenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)
-        return window ?? ASPresentationAnchor()
+/// iOS 26+ uses the new Liquid Glass material via `.glassEffect`; older
+/// systems fall back to the standard system material in a capsule. Both
+/// produce a frosted-glass capsule background; the iOS 26 path additionally
+/// reacts to motion / what's underneath in true Liquid Glass fashion.
+private extension View {
+    @ViewBuilder
+    func glassCapsule() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        }
     }
 }
