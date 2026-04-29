@@ -62,6 +62,20 @@ export function resolveApiKeyAuth(authHeader: string | undefined) {
 
 const SESSION_COOKIE = 'pb_session';
 
+// In hosted deploys we always serve over HTTPS (Cloudflare → Fly), so add
+// the Secure flag — without it the cookie is sent in cleartext if anyone
+// ever lands on http://. Self-host on bare HTTP would have to set
+// COOKIE_INSECURE=1 to allow the cookie to flow on plaintext (otherwise
+// browsers refuse the Set-Cookie). Default-on for production.
+const SECURE_COOKIE = (() => {
+  const raw = process.env.COOKIE_INSECURE;
+  if (raw === '1' || raw === 'true') return false;
+  if (process.env.NODE_ENV === 'production') return true;
+  if (process.env.FLY_APP_NAME) return true;
+  return false;
+})();
+const COOKIE_FLAGS = `Path=/; HttpOnly; SameSite=Lax${SECURE_COOKIE ? '; Secure' : ''}`;
+
 function readSessionCookie(c: Context): string | null {
   const raw = c.req.header('cookie');
   if (!raw) return null;
@@ -78,9 +92,10 @@ function readSessionCookie(c: Context): string | null {
 export function setSessionCookie(c: Context, key: string): void {
   // 30-day rolling session. SameSite=Lax keeps it on top-level navigation
   // but blocks cross-site POSTs — fine for our case (no cross-site flows).
+  // Secure flag is added automatically in production (see SECURE_COOKIE).
   c.header(
     'Set-Cookie',
-    `${SESSION_COOKIE}=${encodeURIComponent(key)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`,
+    `${SESSION_COOKIE}=${encodeURIComponent(key)}; ${COOKIE_FLAGS}; Max-Age=${60 * 60 * 24 * 30}`,
     { append: true },
   );
 }
@@ -88,7 +103,7 @@ export function setSessionCookie(c: Context, key: string): void {
 export function clearSessionCookie(c: Context): void {
   c.header(
     'Set-Cookie',
-    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+    `${SESSION_COOKIE}=; ${COOKIE_FLAGS}; Max-Age=0`,
     { append: true },
   );
 }

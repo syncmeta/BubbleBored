@@ -1,6 +1,44 @@
 import type { ServerWebSocket } from 'bun';
+import { z } from 'zod';
 import type { Channel, InboundMessage, OutboundMessage } from '../types';
 import { noteTypingTick } from '../../core/typing';
+
+// Wire-protocol bounds. These are deliberately tight — a chat message is
+// a short string + small attachment list; a typing tick has no payload at
+// all. The Bun WS layer already caps raw bytes (see index.ts maxPayloadLength)
+// — these caps are the additional schema-level shape check.
+const MAX_CONTENT_LEN = 16_000;
+const MAX_ATTACHMENTS = 10;
+const MAX_BOT_ID_LEN = 128;
+const MAX_CONV_ID_LEN = 128;
+const ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+const ChatMessageSchema = z.object({
+  type: z.literal('chat'),
+  botId: z.string().min(1).max(MAX_BOT_ID_LEN).regex(ID_RE),
+  conversationId: z.string().min(1).max(MAX_CONV_ID_LEN).regex(ID_RE),
+  content: z.string().max(MAX_CONTENT_LEN).optional().default(''),
+  attachmentIds: z.array(z.string().regex(ATTACHMENT_ID_RE)).max(MAX_ATTACHMENTS).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const SurfMessageSchema = z.object({
+  type: z.literal('surf'),
+  botId: z.string().min(1).max(MAX_BOT_ID_LEN).regex(ID_RE),
+  conversationId: z.string().min(1).max(MAX_CONV_ID_LEN).regex(ID_RE),
+});
+
+const TypingTickSchema = z.object({
+  type: z.literal('typing_tick'),
+  conversationId: z.string().min(1).max(MAX_CONV_ID_LEN).regex(ID_RE),
+});
+
+const InboundWsMessageSchema = z.discriminatedUnion('type', [
+  ChatMessageSchema,
+  SurfMessageSchema,
+  TypingTickSchema,
+]);
 
 export interface WsChannelData {
   userId: string;
@@ -40,38 +78,51 @@ export abstract class BaseWebSocketChannel<Data extends WsChannelData> implement
   }
 
   handleMessage(userId: string, raw: string): void {
+    let parsed: unknown;
     try {
-      const data = JSON.parse(raw);
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.error(`[${this.logLabel}] invalid JSON from ${userId}`);
+      return;
+    }
+
+    const result = InboundWsMessageSchema.safeParse(parsed);
+    if (!result.success) {
+      // Don't log full issues — attacker-controlled payload could spam
+      // logs with crafted error messages. Just count and drop.
+      console.warn(`[${this.logLabel}] schema rejected message from ${userId}`);
+      return;
+    }
+    const data = result.data;
+
+    if (data.type === 'chat') {
+      const content = data.content ?? '';
+      const atts = data.attachmentIds ?? [];
       // Allow image-only messages: content may be empty if attachmentIds
       // carries at least one id.
-      const hasContent = typeof data.content === 'string' && data.content.length > 0;
-      const hasAttachments = Array.isArray(data.attachmentIds) && data.attachmentIds.length > 0;
-      if (data.type === 'chat' && data.botId && (hasContent || hasAttachments)) {
-        this.onMessage?.({
-          channel: this.name,
-          channelUserId: userId,
-          botId: data.botId,
-          conversationId: data.conversationId,
-          content: typeof data.content === 'string' ? data.content : '',
-          attachmentIds: hasAttachments ? data.attachmentIds.filter((x: any) => typeof x === 'string') : undefined,
-          timestamp: Date.now(),
-          metadata: data.metadata,
-        });
-      } else if (data.type === 'surf' && data.botId) {
-        this.onMessage?.({
-          channel: this.name,
-          channelUserId: userId,
-          botId: data.botId,
-          conversationId: data.conversationId,
-          content: '/surf',
-          timestamp: Date.now(),
-        });
-      } else if (data.type === 'typing_tick' && typeof data.conversationId === 'string') {
-        // Cheap side-channel — doesn't go through the message bus/handler.
-        noteTypingTick(data.conversationId);
-      }
-    } catch (e) {
-      console.error(`[${this.logLabel}] invalid message:`, e);
+      if (!content && atts.length === 0) return;
+      this.onMessage?.({
+        channel: this.name,
+        channelUserId: userId,
+        botId: data.botId,
+        conversationId: data.conversationId,
+        content,
+        attachmentIds: atts.length > 0 ? atts : undefined,
+        timestamp: Date.now(),
+        metadata: data.metadata,
+      });
+    } else if (data.type === 'surf') {
+      this.onMessage?.({
+        channel: this.name,
+        channelUserId: userId,
+        botId: data.botId,
+        conversationId: data.conversationId,
+        content: '/surf',
+        timestamp: Date.now(),
+      });
+    } else if (data.type === 'typing_tick') {
+      // Cheap side-channel — doesn't go through the message bus/handler.
+      noteTypingTick(data.conversationId);
     }
   }
 

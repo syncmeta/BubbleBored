@@ -8,6 +8,7 @@ import {
 import {
   base64UrlEncode, hashApiKey, requireAdminMiddleware, setSessionCookie,
 } from './_helpers';
+import { ipRateLimitMiddleware } from './middleware';
 
 /**
  * Invites: admin-issued onboarding tokens.
@@ -103,7 +104,11 @@ invitesRoutes.delete('/:id', requireAdminMiddleware, (c) => {
 // Whitelisted in apiKeyAuthMiddleware so a brand-new visitor can call this
 // without a cookie. Mints fresh user + api key in one go, sets cookie.
 
-invitesRoutes.post('/redeem', async (c) => {
+// 10 redeems / minute / IP — generous for a legitimate user retrying after
+// a failed display-name validation, tight enough that scripted enumeration
+// across IPs would have to commit serious infra. Cloudflare WAF is the real
+// line of defense; this is the application-side belt-and-braces.
+invitesRoutes.post('/redeem', ipRateLimitMiddleware(10), async (c) => {
   const body = await c.req.json<{ token?: string; displayName?: string }>().catch(() => ({} as any));
   const token = body.token?.trim();
   const displayName = body.displayName?.trim();
@@ -158,7 +163,7 @@ invitesRoutes.post('/redeem', async (c) => {
 // "claim this account" form. Returns 404 for unknown / used / expired so the
 // page can show a helpful error instead of a redeem form.
 
-invitesRoutes.get('/check/:token', (c) => {
+invitesRoutes.get('/check/:token', ipRateLimitMiddleware(30), (c) => {
   const inv = findInviteByToken(c.req.param('token'));
   if (!inv) return c.json({ error: 'unknown' }, 404);
   if (inv.redeemed_at && !isBootstrapInvite(inv)) return c.json({ error: 'used' }, 410);

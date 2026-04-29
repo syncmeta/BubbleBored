@@ -1,16 +1,33 @@
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash, createHmac } from 'crypto';
 import {
   getUserSettings, setOpenrouterByok, setJinaByok,
-  type UserSettingsRow,
+  getMeta, setMeta,
 } from '../db/queries';
+import type { UserSettingsRow } from '../db/queries';
 
 // AES-256-GCM at-rest encryption for user-supplied API keys (OpenRouter, Jina).
 // The KEK is derived from BYOK_ENC_KEY; if unset we fall back to a process-
 // scoped random key, which means BYOK values won't survive a restart — fine
 // in dev, broken in prod. Production deploys MUST set BYOK_ENC_KEY to a
 // stable 32+ byte secret.
+//
+// KEK stability check (v30+): the first time we see a real BYOK_ENC_KEY we
+// store HMAC-SHA256(kek, "byok-kek-fingerprint-v1") in the meta table. On
+// every later boot we recompute and compare. Mismatch = silent key rotation
+// would corrupt every encrypted column → we throw and refuse to start. The
+// stored value reveals nothing about the key (HMAC of a fixed string with a
+// 32-byte PRF input is not feasibly invertible), so it's safe at rest.
+//
+// To intentionally rotate: re-encrypt user_settings with the new key, then
+// DELETE FROM meta WHERE k='byok_kek_fp' before starting under the new key.
 
 const ALG = 'aes-256-gcm';
+const KEK_FP_KEY = 'byok_kek_fp';
+const KEK_FP_DOMAIN = 'byok-kek-fingerprint-v1';
+
+function fingerprint(kek: Buffer): string {
+  return createHmac('sha256', kek).update(KEK_FP_DOMAIN, 'utf8').digest('hex');
+}
 
 let cachedKey: Buffer | null = null;
 function getKek(): Buffer {
@@ -19,9 +36,26 @@ function getKek(): Buffer {
   if (!raw) {
     console.warn('[byok] BYOK_ENC_KEY not set — using ephemeral key, BYOK values will not survive restart');
     cachedKey = randomBytes(32);
-  } else {
-    // Hash the secret so any length input becomes a valid 32-byte key.
-    cachedKey = createHash('sha256').update(raw, 'utf8').digest();
+    // Ephemeral key intentionally skips the fingerprint check — every restart
+    // is a "rotation" and there's no persisted ciphertext that matters anyway.
+    return cachedKey;
+  }
+  // Hash the secret so any length input becomes a valid 32-byte key.
+  cachedKey = createHash('sha256').update(raw, 'utf8').digest();
+  const fp = fingerprint(cachedKey);
+  const stored = getMeta(KEK_FP_KEY);
+  if (stored === null) {
+    setMeta(KEK_FP_KEY, fp);
+    console.log('[byok] KEK fingerprint recorded');
+  } else if (stored !== fp) {
+    // Wipe the cache so a caller catching this error can't accidentally
+    // proceed with the wrong key on a subsequent call.
+    cachedKey = null;
+    throw new Error(
+      '[byok] BYOK_ENC_KEY changed since last boot — every encrypted user_settings.* column would become unrecoverable. ' +
+      'Restart with the original key, or (only if you have already re-encrypted user_settings under the new key) ' +
+      "run: DELETE FROM meta WHERE k='byok_kek_fp';"
+    );
   }
   return cachedKey;
 }
@@ -52,6 +86,13 @@ function decrypt(blob: Uint8Array | Buffer): string | null {
 
 function last4(s: string): string {
   return s.length <= 4 ? s : s.slice(-4);
+}
+
+// Eager startup check — call from index.ts after the DB is ready so
+// fingerprint mismatch surfaces as a startup crash rather than a deferred
+// failure on the first BYOK request.
+export function verifyKekFingerprint(): void {
+  getKek();
 }
 
 // ── public ─────────────────────────────────────────────────────────────────

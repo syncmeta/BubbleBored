@@ -747,4 +747,19 @@ function runMigrations(db: Database): void {
     `);
     db.exec('PRAGMA user_version = 29');
   }
+
+  // v30: generic key/value store for boot-time invariants. First use is the
+  // BYOK_ENC_KEY fingerprint — see core/byok.ts. If we silently re-init with
+  // a different KEK, every encrypted column becomes garbage; the fingerprint
+  // lets startup refuse to continue instead of corrupting data.
+  if (userVersion < 30) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS meta (
+        k TEXT PRIMARY KEY,
+        v TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+    db.exec('PRAGMA user_version = 30');
+  }
 }

@@ -5,6 +5,7 @@ import { streamWithSplit, type StreamMeta } from '../llm/stream';
 import { logAudit } from '../llm/audit';
 import { buildPrompt, type ChatTone } from './prompt-builder';
 import { checkSilent } from './silent';
+import { logContent } from './log';
 import { SEARCH_WEB_TOOL, runSearchToolCall } from './search/tool';
 import {
   LOAD_SKILL_TOOL, runLoadSkillToolCall, makeSkillBodyCache,
@@ -154,7 +155,7 @@ export async function handleUserMessage(params: {
 
   const totalAtt = userMessages.reduce((n, e) => n + (e.attachmentIds?.length ?? 0), 0);
   const previewJoined = userMessages.map(e => e.content).filter(Boolean).join(' ‖ ');
-  console.log(`\n[chat] ${regenerate ? '↻ regen' : '←'} user(${userId.slice(0, 8)}) → bot(${botId}): ${previewJoined}${totalAtt ? ` [+${totalAtt} attachment(s)]` : ''}`);
+  console.log(`\n[chat] ${regenerate ? '↻ regen' : '←'} user(${userId.slice(0, 8)}) → bot(${botId}): ${logContent(previewJoined, 200)}${totalAtt ? ` [+${totalAtt} attachment(s)]` : ''}`);
 
   // Start the typing indicator as early as possible — it covers prompt
   // building + LLM call + segment streaming. The counter in end/beginTyping

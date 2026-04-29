@@ -1171,6 +1171,22 @@ export function setJinaByok(
   ).run(userId, enc, last4);
 }
 
+// ── meta (v30) — boot-time invariants ────────────────────────────────────
+
+export function getMeta(k: string): string | null {
+  const row = getDb().query<{ v: string }, [string]>(
+    'SELECT v FROM meta WHERE k = ?'
+  ).get(k);
+  return row?.v ?? null;
+}
+
+export function setMeta(k: string, v: string): void {
+  getDb().query(
+    `INSERT INTO meta (k, v, updated_at) VALUES (?, ?, unixepoch())
+     ON CONFLICT(k) DO UPDATE SET v = excluded.v, updated_at = unixepoch()`
+  ).run(k, v);
+}
+
 // Sweep orphans older than N seconds — called periodically by a background
 // timer. 15 minutes is the default so a slow client still has time to bind.
 export function deleteOrphanAttachments(olderThanSec: number = 900): string[] {
