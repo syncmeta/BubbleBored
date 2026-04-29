@@ -96,15 +96,23 @@ struct AccountsView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 let wasCurrent = store.current?.id == account.id
-                                store.remove(account)
-                                // If that was the active account and no
-                                // other account is left, the user has
-                                // signed out — clear the Clerk session
-                                // too so re-login starts clean.
-                                if wasCurrent && store.current == nil {
-                                    Task { try? await Clerk.shared.signOut() }
+                                let willBeLast = wasCurrent && store.accounts.count == 1
+                                if willBeLast {
+                                    // Removing the active *and only* account =
+                                    // sign-out. Kill Clerk first so WelcomeView
+                                    // doesn't auto-re-exchange the still-live
+                                    // session and put us right back here.
+                                    Task {
+                                        try? await Clerk.shared.signOut()
+                                        await MainActor.run {
+                                            store.remove(account)
+                                            Haptics.success()
+                                        }
+                                    }
+                                } else {
+                                    store.remove(account)
+                                    Haptics.success()
                                 }
-                                Haptics.success()
                             } label: { Label("移除", systemImage: "trash") }
                         }
 
