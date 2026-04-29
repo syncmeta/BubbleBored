@@ -98,10 +98,9 @@ struct MeTabView: View {
                 Haptics.tap()
             } label: {
                 HStack(spacing: 14) {
-                    BotAvatar(seed: profile?.user_id ?? store.current?.id ?? "?",
-                              size: 56)
+                    profileAvatar
                     VStack(alignment: .leading, spacing: 4) {
-                        Text((profile?.display_name).flatMap { $0.isEmpty ? nil : $0 } ?? "未命名")
+                        Text(displayLabel)
                             .font(Theme.Fonts.serif(size: 18, weight: .semibold))
                             .foregroundStyle(Theme.Palette.ink)
                             .lineLimit(1)
@@ -120,6 +119,48 @@ struct MeTabView: View {
             .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
+    }
+
+    // Prefer Clerk's hosted avatar; fall back to the deterministic BotAvatar
+    // (svg pattern keyed off user_id) so an unset image_url still renders
+    // something coherent instead of a generic placeholder.
+    @ViewBuilder
+    private var profileAvatar: some View {
+        let seed = profile?.user_id ?? store.current?.id ?? "?"
+        if let raw = profile?.image_url, let url = URL(string: raw) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    BotAvatar(seed: seed, size: 56)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(Circle())
+        } else {
+            BotAvatar(seed: seed, size: 56)
+        }
+    }
+
+    // The server's display_name is the canonical handle (PATCH /me/profile
+    // edits it directly). When that's empty, fall back through the Clerk
+    // mirror columns Clerk gave us at last login before resorting to "未命名".
+    private var displayLabel: String {
+        let ws = CharacterSet.whitespacesAndNewlines
+        let dn = profile?.display_name.trimmingCharacters(in: ws) ?? ""
+        if !dn.isEmpty { return dn }
+        let full = [profile?.first_name, profile?.last_name]
+            .compactMap { $0?.trimmingCharacters(in: ws) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if !full.isEmpty { return full }
+        let un = profile?.username?.trimmingCharacters(in: ws) ?? ""
+        if !un.isEmpty { return un }
+        if let local = profile?.email?.split(separator: "@").first, !local.isEmpty {
+            return String(local)
+        }
+        return "未命名"
     }
 
     private var serverCard: some View {

@@ -874,9 +874,6 @@ export function deletePortrait(id: string): void {
 }
 
 // API keys (iOS thin client). Raw key is never persisted — only SHA-256 hash.
-// `share_token` is a separate handle used by /i/<token> so the raw key stays
-// out of share URLs; rotating it invalidates outstanding share links without
-// touching the key itself.
 
 export interface ApiKeyRow {
   id: string;
@@ -884,9 +881,6 @@ export interface ApiKeyRow {
   key_hash: string;
   user_id: string;
   name: string;
-  share_token: string | null;
-  share_base_url: string | null;
-  share_alt_urls_json: string | null;
   created_by: string | null;
   created_at: number;
   last_used_at: number | null;
@@ -899,38 +893,15 @@ export function createApiKey(params: {
   keyHash: string;
   userId: string;
   name: string;
-  shareToken: string | null;
-  shareBaseUrl: string | null;
-  shareAltUrls: string[] | null;
   createdBy: string | null;
 }): void {
   getDb().query(
     `INSERT INTO api_keys
-       (id, key_prefix, key_hash, user_id, name, share_token,
-        share_base_url, share_alt_urls_json, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, key_prefix, key_hash, user_id, name, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`
   ).run(
     params.id, params.keyPrefix, params.keyHash, params.userId,
-    params.name, params.shareToken,
-    params.shareBaseUrl,
-    params.shareAltUrls && params.shareAltUrls.length > 0
-      ? JSON.stringify(params.shareAltUrls)
-      : null,
-    params.createdBy,
-  );
-}
-
-export function updateApiKeyShareUrls(
-  id: string,
-  shareBaseUrl: string | null,
-  shareAltUrls: string[] | null,
-): void {
-  getDb().query(
-    `UPDATE api_keys SET share_base_url = ?, share_alt_urls_json = ? WHERE id = ?`
-  ).run(
-    shareBaseUrl,
-    shareAltUrls && shareAltUrls.length > 0 ? JSON.stringify(shareAltUrls) : null,
-    id,
+    params.name, params.createdBy,
   );
 }
 
@@ -946,12 +917,6 @@ export function findApiKeyById(id: string): ApiKeyRow | null {
   ).get(id) ?? null;
 }
 
-export function findApiKeyByShareToken(shareToken: string): ApiKeyRow | null {
-  return getDb().query<ApiKeyRow, [string]>(
-    'SELECT * FROM api_keys WHERE share_token = ?'
-  ).get(shareToken) ?? null;
-}
-
 export function listApiKeys(): ApiKeyRow[] {
   return getDb().query<ApiKeyRow, []>(
     'SELECT * FROM api_keys ORDER BY created_at DESC'
@@ -960,19 +925,7 @@ export function listApiKeys(): ApiKeyRow[] {
 
 export function revokeApiKey(id: string): void {
   getDb().query(
-    'UPDATE api_keys SET revoked_at = unixepoch(), share_token = NULL WHERE id = ? AND revoked_at IS NULL'
-  ).run(id);
-}
-
-export function rotateApiKeyShareToken(id: string, newShareToken: string): void {
-  getDb().query(
-    'UPDATE api_keys SET share_token = ? WHERE id = ?'
-  ).run(newShareToken, id);
-}
-
-export function clearApiKeyShareToken(id: string): void {
-  getDb().query(
-    'UPDATE api_keys SET share_token = NULL WHERE id = ?'
+    'UPDATE api_keys SET revoked_at = unixepoch() WHERE id = ? AND revoked_at IS NULL'
   ).run(id);
 }
 
@@ -1062,12 +1015,38 @@ export function findUserByClerkId(clerkUserId: string) {
   ).get(clerkUserId);
 }
 
-export function setUserClerkIdentity(
-  userId: string, clerkUserId: string, email: string | null,
-) {
+export interface ClerkIdentityFields {
+  clerkUserId: string;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  username?: string | null;
+  imageUrl?: string | null;
+}
+
+// These columns mirror Clerk's view of the user. We always overwrite to
+// reflect Clerk truth — `display_name` is the user-editable handle that
+// PATCH /me/profile owns and which we do *not* touch here.
+export function setUserClerkIdentity(userId: string, f: ClerkIdentityFields) {
   getDb().query(
-    `UPDATE users SET clerk_user_id = ?, email = ?, updated_at = unixepoch() WHERE id = ?`
-  ).run(clerkUserId, email, userId);
+    `UPDATE users SET
+       clerk_user_id = ?,
+       email = ?,
+       first_name = ?,
+       last_name = ?,
+       username = ?,
+       image_url = ?,
+       updated_at = unixepoch()
+     WHERE id = ?`
+  ).run(
+    f.clerkUserId,
+    f.email ?? null,
+    f.firstName ?? null,
+    f.lastName ?? null,
+    f.username ?? null,
+    f.imageUrl ?? null,
+    userId,
+  );
 }
 
 // ── Quota ──────────────────────────────────────────────────────────────────

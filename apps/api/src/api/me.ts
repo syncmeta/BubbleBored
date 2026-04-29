@@ -17,6 +17,11 @@ meRoutes.get('/', (c) => {
   return c.json({
     user_id: user.id,
     display_name: user.display_name,
+    email: user.email ?? null,
+    first_name: user.first_name ?? null,
+    last_name: user.last_name ?? null,
+    username: user.username ?? null,
+    image_url: user.image_url ?? null,
     is_admin: !!user.is_admin,
   });
 });
@@ -29,6 +34,11 @@ meRoutes.get('/profile', (c) => {
   return c.json({
     user_id: user.id,
     display_name: user.display_name,
+    email: user.email ?? null,
+    first_name: user.first_name ?? null,
+    last_name: user.last_name ?? null,
+    username: user.username ?? null,
+    image_url: user.image_url ?? null,
     is_admin: !!user.is_admin,
     bio: dash?.bio ?? '',
     avatar_path: dash?.avatar_path ?? null,

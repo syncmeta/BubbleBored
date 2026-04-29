@@ -44,7 +44,12 @@ enum AuthExchange {
         var req = URLRequest(url: base.appendingPathComponent("api/auth/clerk/exchange"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(["token": clerkJwt])
+        // clientHint lets the server tag fresh accounts with channel='ios'
+        // so iOS users aren't bucketed alongside web logins for analytics.
+        req.httpBody = try JSONEncoder().encode([
+            "token": clerkJwt,
+            "clientHint": "ios",
+        ])
 
         let (data, response) = try await URLSession.shared.data(for: req)
         let http = response as? HTTPURLResponse
