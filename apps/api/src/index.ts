@@ -291,8 +291,13 @@ app.get('/uploads/:id', async (c) => {
   return entry.response;
 });
 
-// Health check
-app.get('/api/health', (c) => c.json({ status: 'ok' }));
+// Health check. Includes upstream-dependency status so an operator (or a
+// monitoring scrape) can tell whether the LLM/memory plane is degraded
+// without needing access to logs.
+app.get('/api/health', async (c) => {
+  const { honchoBreakerStatus } = await import('./honcho/memory');
+  return c.json({ status: 'ok', honcho: honchoBreakerStatus() });
+});
 
 // Static files. Resolved relative to this source file (../web/static) so
 // the server runs the same whether cwd is `main/` or the parent.
