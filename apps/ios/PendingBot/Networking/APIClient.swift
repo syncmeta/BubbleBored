@@ -32,6 +32,11 @@ struct APIClient {
         return try await send(req)
     }
 
+    func put<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
+        let req = try makeRequest(method: "PUT", path: path, query: [], body: body)
+        return try await send(req)
+    }
+
     func delete<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         let req = try makeRequest(method: "DELETE", path: path, query: query, body: nil as Empty?)
         return try await send(req)

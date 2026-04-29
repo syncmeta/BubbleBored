@@ -12,12 +12,10 @@ struct MeTabView: View {
     @State private var profile: MeProfile?
     @State private var portraitConvs: [PortraitConversation] = []
     @State private var portraitSources: [Conversation] = []
+    @State private var keys: KeysSummary?
 
-    @State private var showProfileEdit = false
     @State private var creatingPortrait = false
     @State private var confirmingSignOut = false
-    @State private var confirmingDelete = false
-    @State private var deleting = false
     @State private var error: String?
 
     var body: some View {
@@ -27,14 +25,14 @@ struct MeTabView: View {
                 ZStack {
                     Theme.Palette.canvas.ignoresSafeArea()
                     ScrollView {
-                        VStack(spacing: 22) {
+                        VStack(spacing: 14) {
                             profileCard
-                            auditCard
+                            modeCard
+                            if isByokMode { auditCard }
                             skillsCard
                             botsCard
                             portraitCard
                             signOutCard
-                            deleteAccountCard
                         }
                         .padding(.horizontal, Theme.Metrics.gutter)
                         .padding(.top, 4)
@@ -48,11 +46,6 @@ struct MeTabView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .task { await load() }
-        .sheet(isPresented: $showProfileEdit) {
-            ProfileEditView(profile: profile) { Task { await load() } }
-                .tint(Theme.Palette.accent)
-                .presentationDragIndicator(.visible)
-        }
         .sheet(isPresented: $creatingPortrait) {
             NewPortraitFromMeSheet(sources: portraitSources) { didCreate in
                 creatingPortrait = false
@@ -74,25 +67,19 @@ struct MeTabView: View {
         } message: {
             Text("这台设备会清掉登录态,服务端的会话和数据不受影响 — 之后用同一个账号还能再登录回来。")
         }
-        .confirmationDialog(
-            "注销账号?",
-            isPresented: $confirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button("注销", role: .destructive) { Task { await deleteAccount() } }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("此操作不可恢复 — 服务器与 Clerk 上的所有数据将一并删除。")
-        }
+    }
+
+    private var isByokMode: Bool {
+        keys?.openrouter.configured == true
     }
 
     // ── Cards ───────────────────────────────────────────────────────────────
 
     private var profileCard: some View {
         card(title: nil, footer: nil) {
-            Button {
-                showProfileEdit = true
-                Haptics.tap()
+            NavigationLink {
+                ProfileView(profile: profile, onChange: { Task { await load() } })
+                    .toolbar(.hidden, for: .tabBar)
             } label: {
                 HStack(spacing: 14) {
                     profileAvatar
@@ -119,6 +106,23 @@ struct MeTabView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
                 }
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var modeCard: some View {
+        card(title: nil, footer: nil) {
+            NavigationLink {
+                ModeView(keys: keys, onChange: { Task { await load() } })
+                    .toolbar(.hidden, for: .tabBar)
+            } label: {
+                meRow(
+                    icon: "switch.2",
+                    label: "模式",
+                    trailing: isByokMode ? "自带钥匙" : "平台"
+                )
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -168,32 +172,11 @@ struct MeTabView: View {
     }
 
     private var auditCard: some View {
-        card(title: "用量",
-             footer: "30 天内服务器累计的 token 用量与上游费用。点开看按任务 / 模型分布,以及最近调用。")
-        {
+        card(title: nil, footer: nil) {
             NavigationLink {
-                AuditView()
-                    .toolbar(.hidden, for: .tabBar)
+                AuditView().toolbar(.hidden, for: .tabBar)
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "chart.bar")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Token 审计")
-                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("用量、费用、最近调用")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                }
+                meRow(icon: "chart.bar", label: "Token 审计")
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -201,32 +184,11 @@ struct MeTabView: View {
     }
 
     private var skillsCard: some View {
-        card(title: "技能",
-             footer: "启用的技能会拼进系统提示词，机器人按需调用。预设来自 anthropic/skills（Apache-2.0）。")
-        {
+        card(title: nil, footer: nil) {
             NavigationLink {
-                SkillsView()
-                    .toolbar(.hidden, for: .tabBar)
+                SkillsView().toolbar(.hidden, for: .tabBar)
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "puzzlepiece.extension")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("技能管理")
-                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("列表 · 启用 · 编辑")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                }
+                meRow(icon: "puzzlepiece.extension", label: "技能管理")
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
@@ -234,44 +196,42 @@ struct MeTabView: View {
     }
 
     private var botsCard: some View {
-        card(title: "机器人",
-             footer: "为每个机器人单独挑模型，只对你这台号生效，不会改动配置文件，也不影响别的用户。")
-        {
+        card(title: nil, footer: nil) {
             NavigationLink {
-                BotManagementView()
-                    .toolbar(.hidden, for: .tabBar)
+                BotManagementView().toolbar(.hidden, for: .tabBar)
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.crop.square.stack")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.Palette.accent)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Theme.Palette.accentBg))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("机器人管理")
-                            .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                            .foregroundStyle(Theme.Palette.ink)
-                        Text("为每个机器人指定模型")
-                            .font(Theme.Fonts.caption)
-                            .foregroundStyle(Theme.Palette.inkMuted)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
-                }
+                meRow(icon: "person.crop.square.stack", label: "机器人管理")
             }
             .contentShape(Rectangle())
             .buttonStyle(.plain)
         }
     }
 
+    @ViewBuilder
+    private func meRow(icon: String, label: String, trailing: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.Palette.accent)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Theme.Palette.accentBg))
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                .foregroundStyle(Theme.Palette.ink)
+            Spacer(minLength: 0)
+            if let trailing {
+                Text(trailing)
+                    .font(Theme.Fonts.caption)
+                    .foregroundStyle(Theme.Palette.inkMuted)
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+        }
+    }
+
     private var portraitCard: some View {
-        card(title: "画像",
-             footer: portraitSources.isEmpty
-             ? "先在「消息」里发起一段对话，才能基于它生成画像。"
-             : "基于一段消息会话，生成便签 / 日程 / 提醒 / 账单 / 瞬间。")
-        {
+        card(title: nil, footer: nil) {
             VStack(spacing: 0) {
                 if portraitConvs.isEmpty {
                     Text("还没有画像")
@@ -371,32 +331,6 @@ struct MeTabView: View {
         }
     }
 
-    private var deleteAccountCard: some View {
-        card(title: nil, footer: "注销后无法恢复 — 服务器与 Clerk 上的所有数据将一并删除。") {
-            Button(role: .destructive) {
-                confirmingDelete = true
-                Haptics.tap()
-            } label: {
-                HStack(spacing: 10) {
-                    if deleting {
-                        ProgressView().scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "trash")
-                            .font(.system(size: 14, weight: .medium))
-                    }
-                    Text("注销账号")
-                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(Color(hex: 0xB14B3C))
-                .padding(.vertical, 4)
-            }
-            .contentShape(Rectangle())
-            .buttonStyle(.plain)
-            .disabled(store.current == nil || deleting)
-        }
-    }
-
     // ── Card chrome (mirrors PendingBot SettingsView.card) ─────────────────
 
     @ViewBuilder
@@ -438,9 +372,11 @@ struct MeTabView: View {
             async let p: MeProfile = api.get("api/me/profile")
             async let portraits: [PortraitConversation] = api.get("api/portrait/conversations")
             async let sources: [Conversation] = api.get("api/portrait/sources")
+            async let k: KeysSummary = api.get("api/me/keys")
             self.profile = try await p
             self.portraitConvs = (try await portraits).sorted { $0.last_activity_at > $1.last_activity_at }
             self.portraitSources = try await sources
+            self.keys = try await k
             await ClerkAvatarSync.pushDefaultIfNeeded(profile: self.profile)
         } catch { self.error = error.localizedDescription }
     }
@@ -468,17 +404,6 @@ struct MeTabView: View {
         }
     }
 
-    private func deleteAccount() async {
-        guard let api, let current = store.current else { return }
-        deleting = true
-        defer { deleting = false }
-        do {
-            try await api.deleteVoid("api/auth/account")
-            try? await Clerk.shared.signOut()
-            store.remove(current)
-            Haptics.success()
-        } catch { self.error = error.localizedDescription }
-    }
 }
 
 // ── Sub-sheets ──────────────────────────────────────────────────────────────
@@ -555,57 +480,310 @@ private func styledField(placeholder: String, text: Binding<String>,
         )
 }
 
-// ── Profile edit ───────────────────────────────────────────────────────────
+// ── Profile (个人资料) ─────────────────────────────────────────────────────
 
-private struct ProfileEditView: View {
+/// Push page that lives behind the profile card on Me. Each editable field
+/// is a tappable row that opens a single-purpose sheet — read-only fields
+/// (邮箱, 登录方式) just display their current value. The 注销账号 button
+/// lives here too so it doesn't crowd the Me tab top-level.
+struct ProfileView: View {
     @Environment(\.api) private var api
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AccountStore
     let profile: MeProfile?
-    var onSaved: () -> Void
-    @State private var name = ""
-    @State private var bio = ""
+    var onChange: () -> Void
+
+    @State private var editing: EditField?
+    @State private var confirmingDelete = false
+    @State private var deleting = false
+    @State private var error: String?
+
+    enum EditField: Identifiable {
+        case displayName, bio
+        var id: Int { switch self { case .displayName: 0; case .bio: 1 } }
+    }
+
+    var body: some View {
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 14) {
+                    fieldsCard
+                    deleteCard
+                }
+                .padding(.horizontal, Theme.Metrics.gutter)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+        }
+        .navigationTitle("个人资料")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editing) { field in
+            switch field {
+            case .displayName:
+                FieldEditSheet(
+                    title: "用户名",
+                    placeholder: "你叫什么",
+                    initial: profile?.display_name ?? "",
+                    multiline: false
+                ) { value in
+                    await save(displayName: value, bio: nil)
+                }
+                .presentationDragIndicator(.visible)
+            case .bio:
+                FieldEditSheet(
+                    title: "简介",
+                    placeholder: "AI 会读到这些 — 写得越具体，Ta 越懂你",
+                    initial: profile?.bio ?? "",
+                    multiline: true
+                ) { value in
+                    await save(displayName: nil, bio: value)
+                }
+                .presentationDragIndicator(.visible)
+            }
+        }
+        .confirmationDialog(
+            "注销账号？",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("注销", role: .destructive) { Task { await deleteAccount() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("此操作没有回头路。")
+        }
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+    }
+
+    private var fieldsCard: some View {
+        VStack(spacing: 0) {
+            readOnlyRow(label: "登录邮箱",
+                        value: profile?.email?.isEmpty == false ? profile!.email! : "—")
+            divider
+            readOnlyRow(label: "登录方式", value: signInMethod)
+            divider
+            editableRow(label: "用户名",
+                        value: profile?.display_name.isEmpty == false ? profile!.display_name : "未设置") {
+                editing = .displayName
+            }
+            divider
+            editableRow(label: "简介",
+                        value: profile?.bio?.isEmpty == false ? profile!.bio! : "未设置") {
+                editing = .bio
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+    }
+
+    private var deleteCard: some View {
+        VStack(spacing: 0) {
+            Button(role: .destructive) {
+                confirmingDelete = true
+                Haptics.tap()
+            } label: {
+                HStack(spacing: 10) {
+                    if deleting {
+                        ProgressView().scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    Text("注销账号")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color(hex: 0xB14B3C))
+                .padding(14)
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(store.current == nil || deleting)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+        .overlay(
+            Text("此操作没有回头路。")
+                .font(Theme.Fonts.caption)
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .offset(y: 50),
+            alignment: .bottomLeading
+        )
+        .padding(.bottom, 24)
+    }
+
+    private var divider: some View {
+        Divider().background(Theme.Palette.hairline).padding(.leading, 14)
+    }
+
+    @ViewBuilder
+    private func readOnlyRow(label: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                .foregroundStyle(Theme.Palette.ink)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                .foregroundStyle(Theme.Palette.inkMuted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(14)
+    }
+
+    @ViewBuilder
+    private func editableRow(label: String, value: String, action: @escaping () -> Void) -> some View {
+        Button(action: { Haptics.tap(); action() }) {
+            HStack(spacing: 12) {
+                Text(label)
+                    .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.Palette.ink)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                    .foregroundStyle(Theme.Palette.inkMuted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.6))
+            }
+            .padding(14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Pulled from the live Clerk SDK rather than the server mirror so we
+    /// catch *all* sign-in paths (Apple, Google, email-code, …) without
+    /// adding more columns to MeProfile.
+    private var signInMethod: String {
+        let externals = Clerk.shared.user?.externalAccounts ?? []
+        if externals.isEmpty {
+            return "邮箱验证码"
+        }
+        let names = externals.map { providerLabel($0.provider) }
+        // De-dup while keeping order.
+        var seen = Set<String>()
+        let unique = names.filter { seen.insert($0).inserted }
+        return unique.joined(separator: " · ")
+    }
+
+    private func providerLabel(_ provider: String) -> String {
+        let p = provider.lowercased().replacingOccurrences(of: "oauth_", with: "")
+        switch p {
+        case "apple": return "Apple"
+        case "google": return "Google"
+        case "github": return "GitHub"
+        case "microsoft": return "Microsoft"
+        default: return provider
+        }
+    }
+
+    private func save(displayName: String?, bio: String?) async {
+        guard let api else { return }
+        struct Body: Encodable {
+            let displayName: String?
+            let bio: String?
+        }
+        do {
+            _ = try await api.patch("api/me/profile",
+                                    body: Body(displayName: displayName, bio: bio)) as EmptyResponse
+            Haptics.success()
+            onChange()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func deleteAccount() async {
+        guard let api, let current = store.current else { return }
+        deleting = true
+        defer { deleting = false }
+        do {
+            try await api.deleteVoid("api/auth/account")
+            try? await Clerk.shared.signOut()
+            store.remove(current)
+            Haptics.success()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Single-field editor sheet shared by every editable row on `ProfileView`.
+private struct FieldEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let placeholder: String
+    let initial: String
+    let multiline: Bool
+    var save: (String) async -> Void
+
+    @State private var value: String = ""
     @State private var saving = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 Theme.Palette.canvas.ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 22) {
-                        CardChrome(title: "基本资料", footer: "AI 会读到这些 — 写得越具体，Ta 越懂你。") {
-                            VStack(alignment: .leading, spacing: 14) {
-                                LabeledField(title: "昵称") {
-                                    styledField(placeholder: "你叫什么", text: $name)
-                                }
-                                LabeledField(title: "简介") {
-                                    TextEditor(text: $bio)
-                                        .textInputAutocapitalization(.sentences)
-                                        .font(Theme.Fonts.rounded(size: 15, weight: .regular))
-                                        .foregroundStyle(Theme.Palette.ink)
-                                        .scrollContentBackground(.hidden)
-                                        .padding(10)
-                                        .frame(minHeight: 120)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .fill(Theme.Palette.canvas)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
-                                        )
-                                }
-                            }
-                        }
+                VStack(alignment: .leading, spacing: 14) {
+                    if multiline {
+                        TextEditor(text: $value)
+                            .textInputAutocapitalization(.sentences)
+                            .font(Theme.Fonts.rounded(size: 15, weight: .regular))
+                            .foregroundStyle(Theme.Palette.ink)
+                            .scrollContentBackground(.hidden)
+                            .padding(10)
+                            .frame(minHeight: 160)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.surface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                            )
+                        Text(placeholder)
+                            .font(Theme.Fonts.caption)
+                            .foregroundStyle(Theme.Palette.inkMuted)
+                    } else {
+                        TextField(placeholder, text: $value)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .font(Theme.Fonts.rounded(size: 17, weight: .regular))
+                            .foregroundStyle(Theme.Palette.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.surface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                            )
                     }
-                    .padding(.horizontal, Theme.Metrics.gutter)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
+                    Spacer()
                 }
+                .padding(.horizontal, Theme.Metrics.gutter)
+                .padding(.top, 16)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("编辑资料")
+                    Text(title)
                         .font(Theme.Fonts.serif(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.Palette.ink)
                 }
@@ -617,30 +795,215 @@ private struct ProfileEditView: View {
                     if saving {
                         ProgressView().tint(Theme.Palette.accent)
                     } else {
-                        Button("保存") { Task { await save() } }
-                            .foregroundStyle(Theme.Palette.accent)
-                            .fontWeight(.semibold)
+                        Button("保存") {
+                            Task {
+                                saving = true
+                                await save(value)
+                                saving = false
+                                dismiss()
+                            }
+                        }
+                        .foregroundStyle(Theme.Palette.accent)
+                        .fontWeight(.semibold)
                     }
                 }
             }
-            .onAppear {
-                name = profile?.display_name ?? ""
-                bio = profile?.bio ?? ""
-            }
+            .onAppear { value = initial }
         }
     }
+}
 
-    private func save() async {
+// ── Mode (BYOK toggle) ─────────────────────────────────────────────────────
+
+/// Push page reached from the 模式 row on the Me tab. Lets the user switch
+/// between "platform-funded" mode (no key, default) and "bring your own key"
+/// — the latter unlocks Token 审计 and routes upstream calls through the
+/// user's OpenRouter key. Persists to PUT /api/me/keys.
+struct ModeView: View {
+    @Environment(\.api) private var api
+    let keys: KeysSummary?
+    var onChange: () -> Void
+
+    @State private var openrouterKey: String = ""
+    @State private var saving = false
+    @State private var error: String?
+    @State private var localKeys: KeysSummary?
+
+    private var current: KeysSummary? { localKeys ?? keys }
+    private var isByok: Bool { current?.openrouter.configured == true }
+
+    var body: some View {
+        ZStack {
+            Theme.Palette.canvas.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 14) {
+                    modeRow(label: "平台",
+                            note: "由平台代付,日常额度内随便用。",
+                            picked: !isByok) {
+                        Task { await disableByok() }
+                    }
+                    modeRow(label: "自带钥匙",
+                            note: "用你自己的 OpenRouter 钥匙直接走上游 — 解锁 Token 审计。",
+                            picked: isByok) {}
+                        .opacity(isByok ? 1 : 0.85)
+
+                    if isByok, let last4 = current?.openrouter.last4 {
+                        statusCard(text: "已绑定 OpenRouter 钥匙(尾号 \(last4))",
+                                   action: "解绑") {
+                            Task { await disableByok() }
+                        }
+                    } else {
+                        keyEntryCard
+                    }
+                }
+                .padding(.horizontal, Theme.Metrics.gutter)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+        }
+        .navigationTitle("模式")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("出错", isPresented: .constant(error != nil)) {
+            Button("好") { error = nil }
+        } message: { Text(error ?? "") }
+    }
+
+    @ViewBuilder
+    private func modeRow(label: String, note: String, picked: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: { Haptics.tap(); action() }) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: picked ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(picked ? Theme.Palette.accent : Theme.Palette.inkMuted.opacity(0.6))
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(label)
+                        .font(Theme.Fonts.rounded(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.Palette.ink)
+                    Text(note)
+                        .font(Theme.Fonts.caption)
+                        .foregroundStyle(Theme.Palette.inkMuted)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .fill(Theme.Palette.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(picked ? Theme.Palette.accent.opacity(0.5) : Theme.Palette.hairline,
+                                  lineWidth: picked ? 1 : 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var keyEntryCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("OpenRouter 钥匙")
+                .font(Theme.Fonts.rounded(size: 14, weight: .medium))
+                .foregroundStyle(Theme.Palette.inkMuted)
+            SecureField("sk-or-v1-…", text: $openrouterKey)
+                .font(.system(size: 15, design: .monospaced))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.Palette.canvas))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+                )
+            Button {
+                Task { await enableByok() }
+            } label: {
+                HStack {
+                    if saving { ProgressView().scaleEffect(0.8).tint(.white) }
+                    Text(saving ? "保存中…" : "保存并切换")
+                        .font(Theme.Fonts.rounded(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(canSave ? Theme.Palette.accent : Theme.Palette.accent.opacity(0.4))
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSave || saving)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+    }
+
+    private var canSave: Bool {
+        openrouterKey.trimmingCharacters(in: .whitespaces).count > 8
+    }
+
+    private func statusCard(text: String, action: String, onTap: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.Palette.accent)
+            Text(text)
+                .font(Theme.Fonts.rounded(size: 14, weight: .regular))
+                .foregroundStyle(Theme.Palette.ink)
+            Spacer()
+            Button(action) { Haptics.tap(); onTap() }
+                .buttonStyle(.plain)
+                .font(Theme.Fonts.rounded(size: 14, weight: .semibold))
+                .foregroundStyle(Color(hex: 0xB14B3C))
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .fill(Theme.Palette.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Theme.Palette.hairline, lineWidth: 0.5)
+        )
+    }
+
+    private func enableByok() async {
         guard let api else { return }
         saving = true; defer { saving = false }
-        struct Body: Encodable { let displayName: String; let bio: String }
+        struct Body: Encodable { let openrouter: String? }
         do {
-            _ = try await api.patch("api/me/profile",
-                                    body: Body(displayName: name, bio: bio)) as EmptyResponse
+            let resp: KeysSummary = try await api.put("api/me/keys",
+                body: Body(openrouter: openrouterKey.trimmingCharacters(in: .whitespaces)))
+            self.localKeys = resp
+            self.openrouterKey = ""
             Haptics.success()
-            onSaved()
-            dismiss()
-        } catch {}
+            onChange()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func disableByok() async {
+        guard let api else { return }
+        do {
+            try await api.deleteVoid("api/me/keys")
+            self.localKeys = KeysSummary(
+                openrouter: KeysSummary.Slot(configured: false, last4: nil),
+                jina: current?.jina ?? KeysSummary.Slot(configured: false, last4: nil)
+            )
+            Haptics.success()
+            onChange()
+        } catch { self.error = error.localizedDescription }
     }
 }
 
@@ -827,14 +1190,10 @@ struct BotManagementView: View {
                                 .font(Theme.Fonts.caption)
                                 .foregroundStyle(Theme.Palette.inkMuted)
                         } else {
-                            Text("跟随机器人默认")
+                            let def = (bot.default_model?.isEmpty == false) ? shortSlug(bot.default_model!) : "—"
+                            Text("默认(\(def))")
                                 .font(Theme.Fonts.caption)
                                 .foregroundStyle(Theme.Palette.inkMuted)
-                            if let def = bot.default_model, !def.isEmpty {
-                                Text("· \(shortSlug(def))")
-                                    .font(Theme.Fonts.monoSmall)
-                                    .foregroundStyle(Theme.Palette.inkMuted.opacity(0.8))
-                            }
                         }
                     }
                     .lineLimit(1)

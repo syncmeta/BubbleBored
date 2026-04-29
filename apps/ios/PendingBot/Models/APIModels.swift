@@ -149,6 +149,17 @@ struct MeProfile: Codable {
     let image_url: String?
 }
 
+/// Mirror of `summarizeByok()` on the server. Drives the BYOK / 平台 mode
+/// toggle in the Me tab: `openrouter.configured == true` ⇒ BYOK mode.
+struct KeysSummary: Codable, Hashable {
+    let openrouter: Slot
+    let jina: Slot
+    struct Slot: Codable, Hashable {
+        let configured: Bool
+        let last4: String?
+    }
+}
+
 struct AiPick: Codable, Identifiable, Hashable {
     let id: String
     let user_id: String
