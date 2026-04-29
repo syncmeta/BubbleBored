@@ -45,6 +45,17 @@ export const corsMiddleware: MiddlewareHandler = async (c, next) => {
 // behind apiKeyAuthMiddleware so we always have an id to key on. Cloudflare
 // is the first line of defense for unauthenticated abuse — this is the
 // "stop a buggy authenticated client from looping forever" backstop.
+//
+// Bound: the map is capped at MAX_BUCKETS with insertion-order eviction
+// (oldest entry dropped when full). Combined with the periodic GC below,
+// this gives a hard memory ceiling regardless of unique user volume — useful
+// against pathological scenarios (e.g. abusive client cycling identities,
+// or a sudden burst of new users mid-window before GC runs).
+//
+// NOTE: per-process state. With multiple machines the effective limit is
+// RATE_LIMIT_PER_MIN × N. The plan calls out moving this to Redis / Workers
+// KV before horizontal scaling — this implementation is the single-instance
+// backstop only.
 
 interface Bucket { windowStart: number; count: number }
 const buckets = new Map<string, Bucket>();
@@ -55,6 +66,11 @@ const RATE_LIMIT_PER_MIN = (() => {
   return Number.isFinite(v) && v > 0 ? v : 60;
 })();
 const WINDOW_MS = 60_000;
+const MAX_BUCKETS = (() => {
+  const raw = process.env.RATE_LIMIT_MAX_BUCKETS;
+  const v = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : 50_000;
+})();
 
 export const userRateLimitMiddleware: MiddlewareHandler = async (c, next) => {
   const user = c.get('authUser');
@@ -65,6 +81,12 @@ export const userRateLimitMiddleware: MiddlewareHandler = async (c, next) => {
   const now = Date.now();
   let b = buckets.get(user.id);
   if (!b || now - b.windowStart >= WINDOW_MS) {
+    // Evict oldest if we're about to exceed the cap. Maps preserve insertion
+    // order, so the first-iter key is the oldest. Cheap O(1) per overflow.
+    if (!b && buckets.size >= MAX_BUCKETS) {
+      const oldest = buckets.keys().next().value;
+      if (oldest !== undefined) buckets.delete(oldest);
+    }
     b = { windowStart: now, count: 0 };
     buckets.set(user.id, b);
   }
@@ -77,7 +99,7 @@ export const userRateLimitMiddleware: MiddlewareHandler = async (c, next) => {
   return next();
 };
 
-// Periodic GC so the map doesn't grow without bound.
+// Periodic GC so the map doesn't grow without bound between requests.
 setInterval(() => {
   const cutoff = Date.now() - WINDOW_MS * 2;
   for (const [k, b] of buckets) if (b.windowStart < cutoff) buckets.delete(k);
