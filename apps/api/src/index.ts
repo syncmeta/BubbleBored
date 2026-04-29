@@ -43,6 +43,7 @@ import { cancelPendingReview } from './core/review';
 import { startSurfingScheduler } from './core/surfing/trigger';
 import { startOrphanSweeper, getAttachmentForServing } from './core/attachments';
 import { initHoncho } from './honcho/client';
+import { verifyKekFingerprint } from './core/byok';
 import { runSurf, createSurfConversation } from './core/surfing/searcher';
 import { runWithUser } from './core/request-context';
 import { QuotaExceededError } from './core/quota';
@@ -53,6 +54,11 @@ console.log('[init] config loaded');
 
 getDb();
 console.log('[init] database ready');
+
+// Verify BYOK_ENC_KEY hasn't silently changed since the last boot. A mismatch
+// means every encrypted user_settings.* column would be unrecoverable — we
+// throw and refuse to start instead of silently corrupting reads later.
+verifyKekFingerprint();
 
 // Bootstrap admin: mint (or recover) a reusable invite link. The token is
 // printed on every startup so a self-host operator who lost the URL can
@@ -305,10 +311,22 @@ const port = configManager.get().server.port;
 // Shared WS data shape: tag discriminates which channel owns the socket.
 type WsData = (WebSocketData & { channel: 'web' }) | (IOSWebSocketData & { channel: 'ios' });
 
-// Bun server with WebSocket
+// Bun server with WebSocket.
+//
+// maxRequestBodySize is the hard ceiling enforced by Bun before any handler
+// runs — protects against streaming-upload DOS even if a route forgets to
+// check Content-Length. We allow MAX_UPLOAD_BYTES (10MB) + headroom for
+// multipart framing. JSON endpoints are far below this; large bodies that
+// aren't /api/upload still get rejected by route handlers.
+const MAX_BODY_BYTES = 12 * 1024 * 1024; // 10MB upload + multipart overhead
+// WS payload cap — chat messages are tiny; the largest legitimate frame
+// is a typing-tick or a chat with a handful of attachmentId strings.
+const MAX_WS_PAYLOAD_BYTES = 64 * 1024;
+
 const server = Bun.serve({
   port,
   hostname: configManager.get().server.host,
+  maxRequestBodySize: MAX_BODY_BYTES,
   fetch(req, server) {
     const url = new URL(req.url);
 
@@ -363,6 +381,7 @@ const server = Bun.serve({
     return app.fetch(req, { ip: server.requestIP(req) });
   },
   websocket: {
+    maxPayloadLength: MAX_WS_PAYLOAD_BYTES,
     open(ws: import('bun').ServerWebSocket<WsData>) {
       if (ws.data.channel === 'ios') iosChannel.addConnection(ws.data.userId, ws as any);
       else webChannel.addConnection(ws.data.userId, ws as any);
