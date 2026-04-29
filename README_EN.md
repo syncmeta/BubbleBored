@@ -1,14 +1,13 @@
 <p align="center">
   <img src="docs/app-icon.png" width="128" alt="PendingBot app icon" />
 </p>
-
-<h1 align="center">大绿豆 · PendingBot</h1>
+<h1 align="center">PendingBot</h1>
 
 <p align="center">
-  Proactively, naturally, without sycophancy — correcting each other, exploring the unknown.
+  Honest with each other. Curious together. Proactive, candid, a VC for ideas.
   <br />
-  <em>主动、自然、不谄媚地校正彼此、探索未知。</em>
 </p>
+
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/syncmeta/PendingBot?color=blue" /></a>
@@ -24,7 +23,7 @@
 - **Keep each other honest** — so you don't drift, get fooled, or lose the plot mid-conversation with an AI.
 - **Be a VC for ideas** — scouting what's beyond your current bubble
 
-**Not** an assistant, **not** a world's first xxx agent — plenty of those exist!
+**Not** an assistant, **not** a world's first ___ agent — plenty of those already!
 
 **Not** your typical AI companion either — not a yes-man, not a therapist-in-a-box, not someone who'll tell you you're brilliant when you're not. 
 

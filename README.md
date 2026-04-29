@@ -1,14 +1,14 @@
 <p align="center">
   <img src="docs/app-icon.png" width="128" alt="大绿豆 应用图标" />
 </p>
-
-<h1 align="center">大绿豆 · PendingBot</h1>
+<h1 align="center">PendingBot · 大绿豆</h1>
 
 <p align="center">
-  主动、自然、不谄媚地校正彼此、探索未知。
+  Honest with each other. Curious together. Proactive, candid, a VC for ideas.
   <br />
-  <em>Proactively, naturally, without sycophancy — correcting each other, exploring the unknown.</em>
+  <em>互相提醒，互相打开。嘴硬、心细、见得多</em>
 </p>
+
 
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/syncmeta/PendingBot?color=blue" /></a>
