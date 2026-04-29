@@ -5,9 +5,9 @@
 <h1 align="center">大绿豆 · PendingBot</h1>
 
 <p align="center">
-  一个有主动性的 AI 朋友 — 主动对话、自己冲浪、不拍马屁。
+  主动、自然、不谄媚地校正彼此、探索未知。
   <br />
-  <em>An AI companion with initiative — proactive, web-surfing, never sycophantic.</em>
+  <em>Proactively, naturally, without sycophancy — correcting each other, exploring the unknown.</em>
 </p>
 
 <p align="center">
@@ -20,8 +20,6 @@
 <p align="center">
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
-
----
 
 ## ✨ 这是什么
 
