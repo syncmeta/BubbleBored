@@ -3,9 +3,9 @@ import AuthenticationServices
 import CryptoKit
 import Clerk
 
-/// Sign-in for the hosted build. Three OAuth one-taps up top (Apple, Google,
-/// GitHub) and email-code as the universal fallback below. After whichever
-/// path completes, we hand the resulting Clerk session JWT to the backend's
+/// Sign-in for the hosted build. Two OAuth one-taps up top (Apple, Google)
+/// and email-code as the universal fallback below. After whichever path
+/// completes, we hand the resulting Clerk session JWT to the backend's
 /// /api/auth/clerk/exchange and persist a pbk_live_* in AccountStore.
 struct SignInView: View {
     enum Stage {
@@ -143,14 +143,6 @@ struct SignInView: View {
                 bordered: true,
                 icon: { googleGlyph }
             ) { Task { await signInWithProvider(.google) } }
-
-            oauthButton(
-                title: "用 GitHub 继续",
-                background: Color(red: 0.13, green: 0.16, blue: 0.21),
-                foreground: .white,
-                bordered: false,
-                icon: { githubGlyph }
-            ) { Task { await signInWithProvider(.github) } }
         }
     }
 
@@ -206,13 +198,6 @@ struct SignInView: View {
                     endPoint: .bottomTrailing
                 )
             )
-    }
-
-    /// SF Symbol approximation of the GitHub octocat. Not exact, but
-    /// recognisable and free of any brand-asset licensing.
-    private var githubGlyph: some View {
-        Image(systemName: "chevron.left.forwardslash.chevron.right")
-            .font(.system(size: 13, weight: .semibold))
     }
 
     private var emailForm: some View {
