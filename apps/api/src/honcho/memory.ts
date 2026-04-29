@@ -170,6 +170,43 @@ export function recordBotMessage(params: {
   });
 }
 
+/// Best-effort scrub of every Honcho row tied to this user — called from
+/// the account-deletion cascade. Wipes each session (per conversation) and
+/// then attempts to drop the user's peer record so their representation /
+/// peer card don't linger in the workspace. The session deletes alone are
+/// enough to scrub the messages we wrote; the peer delete is belt-and-
+/// suspenders for the derived state Honcho keeps on the peer itself.
+export async function deleteUserMemory(params: {
+  userId: string;
+  conversationIds: string[];
+}): Promise<void> {
+  const client = getHonchoClient();
+  if (!client) return;
+
+  for (const convId of params.conversationIds) {
+    try {
+      const session = await client.session(sessionIdFor(convId));
+      await session.delete();
+    } catch (err: any) {
+      console.warn(`[honcho] session.delete(${convId}) failed:`, err?.message ?? err);
+    }
+  }
+
+  // Workspace-scoped peer delete — best-effort, since not every Honcho
+  // deployment ships the endpoint and the SDK doesn't surface it as a
+  // first-class method. A 404/405 here is fine: we already nuked the
+  // sessions, which is where the actual chat content lived.
+  try {
+    const httpClient = (client as any)._http;
+    const workspaceId = (client as any).workspaceId;
+    if (httpClient && workspaceId) {
+      await httpClient.delete(`/v2/workspaces/${workspaceId}/peers/${userPeerId(params.userId)}`);
+    }
+  } catch (err: any) {
+    console.warn('[honcho] peer delete failed (non-fatal):', err?.message ?? err);
+  }
+}
+
 export async function getUserProfile(userId: string): Promise<{
   card: string[];
   representation: string;

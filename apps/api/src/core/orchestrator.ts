@@ -143,8 +143,14 @@ export async function handleUserMessage(params: {
   // binding attachments, or bumping the round counter. The caller is
   // responsible for having already deleted the stale bot reply(ies) from DB.
   regenerate?: boolean;
+  // Silent system-driven kickoff: never persist the user message to the DB,
+  // never write it to Honcho. The content is fed to the LLM as a one-off
+  // system note (so the bot can choose to greet the user or stay quiet).
+  // Used by `POST /api/mobile/conversations` to seed each new chat with the
+  // "用户刚刚新建了一个与你的会话…" hint.
+  silent?: boolean;
 }): Promise<void> {
-  const { conversationId, botId, userId, userMessages, replyFn, extraContext: extraContextIn, tone, webSearch, streaming, regenerate } = params;
+  const { conversationId, botId, userId, userMessages, replyFn, extraContext: extraContextIn, tone, webSearch, streaming, regenerate, silent } = params;
   const useStreaming = streaming === true && tone === 'normal';
   let extraContext = extraContextIn;
   // Per-gen start timestamp — isInterrupted/hasFreshInterrupt ignore signals
@@ -164,7 +170,7 @@ export async function handleUserMessage(params: {
   beginTyping(conversationId, replyFn);
   try {
 
-  if (!regenerate) {
+  if (!regenerate && !silent) {
     // One DB row per entry — preserves the user's message granularity across
     // refresh and keeps each bubble addressable for edit/regenerate/delete.
     for (const entry of userMessages) {
@@ -223,6 +229,17 @@ export async function handleUserMessage(params: {
     extraContext,
     tone,
   });
+  // Silent kickoff has nothing in DB to chain off of, so append the silent
+  // note as a synthetic user-role message. The LLM treats it as the latest
+  // turn and can either reply (a greeting) or stay quiet — the empty-segment
+  // path below already drops the reply if the model returns nothing useful.
+  if (silent) {
+    for (const entry of userMessages) {
+      if (entry.content.trim()) {
+        promptMessages.push({ role: 'user', content: entry.content });
+      }
+    }
+  }
   // When the conversation carries any inline image in the recent window,
   // route to the vision-capable model regardless of which model the bot
   // (or per-conv override) usually uses for chat. Text-only stays on the

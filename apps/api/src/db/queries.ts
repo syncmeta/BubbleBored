@@ -313,6 +313,15 @@ export function resetConversation(conversationId: string): string[] {
 // type for each conversation row. Powers the chat list "preview" line in
 // every IM-style frontend (web + iOS) without an N+1 query per row. Costs
 // one index seek per conv on (conversation_id, created_at DESC).
+/// Light helper for cleanup paths that need IDs but not the full join (e.g.
+/// the Honcho cascade in DELETE /api/auth/account). Cheap enough that it's
+/// fine to call right before `deleteUserCascade` wipes the rows.
+export function listConversationIdsByUser(userId: string): string[] {
+  return getDb().query<{ id: string }, [string]>(
+    'SELECT id FROM conversations WHERE user_id = ?'
+  ).all(userId).map(r => r.id);
+}
+
 export function listConversationsByUser(userId: string, featureType?: string) {
   const cols = `
     c.*,

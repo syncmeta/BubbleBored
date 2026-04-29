@@ -5,7 +5,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { createClerkClient, type User as ClerkUser } from '@clerk/backend';
 import {
   createUser, createApiKey, findUserByClerkId, setUserClerkIdentity,
-  findUserById, deleteUserCascade, listApiKeys,
+  findUserById, deleteUserCascade, listApiKeys, listConversationIdsByUser,
   revokeApiKey, setUserDisplayName,
   type ClerkIdentityFields,
 } from '../db/queries';
@@ -13,6 +13,7 @@ import {
   hashApiKey, base64UrlEncode, setSessionCookie, clearSessionCookie,
 } from './_helpers';
 import { unlinkAttachmentFiles } from '../core/attachments';
+import { deleteUserMemory } from '../honcho/memory';
 
 // Clerk-backed auth bridge. The web/iOS clients perform login against Clerk
 // directly (Sign in with Apple / Google / email code). They then POST the
@@ -274,12 +275,21 @@ authRoutes.delete('/account', async (c) => {
   if (auth.is_admin) {
     return c.json({ error: 'admins must demote before deleting account' }, 403);
   }
-  // Capture clerk_user_id before the local cascade wipes it.
+  // Capture clerk_user_id and the conversation list before the local cascade
+  // wipes them — both are needed for the third-party scrubs below.
   const fullUser = findUserById(auth.id) as { clerk_user_id?: string | null } | null;
   const clerkUserId = fullUser?.clerk_user_id ?? null;
+  const convIds = listConversationIdsByUser(auth.id);
 
   const paths = deleteUserCascade(auth.id);
   await unlinkAttachmentFiles(paths).catch(() => {});
+
+  // Honcho memory cascade: wipe per-conversation sessions and attempt to
+  // drop the peer record. Best-effort — a Honcho outage shouldn't strand
+  // the local cleanup the user just successfully completed.
+  await deleteUserMemory({ userId: auth.id, conversationIds: convIds }).catch(e =>
+    console.warn('[honcho] deleteUserMemory failed:', e)
+  );
 
   if (clerkUserId) {
     const client = getClerkClient();

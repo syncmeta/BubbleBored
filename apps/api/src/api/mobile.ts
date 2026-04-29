@@ -15,6 +15,8 @@ import { regenerateConversation } from '../core/regenerate';
 import { iosChannel } from '../bus/channels/ios';
 import type { OutboundMessage } from '../bus/types';
 import { requireAuthMiddleware } from './_helpers';
+import { handleUserMessage } from '../core/orchestrator';
+import { runWithUser } from '../core/request-context';
 
 /**
  * Mobile-only REST surface. Auth is enforced by `requireAuthMiddleware` —
@@ -115,6 +117,29 @@ mobileApiRoutes.post('/conversations', async (c) => {
 
   const id = randomUUID();
   createConversation(id, botId, user.id, title ?? null);
+
+  // Fire-and-forget silent kickoff so the bot has a chance to greet the
+  // brand-new conversation. The note is delivered to the model as a one-off
+  // user-role message; orchestrator's `silent: true` skips DB persistence
+  // and Honcho writes for the prompt itself, while the bot's reply (if any)
+  // goes through the normal segment-insertion path. If no client is on the
+  // ws yet, replyFn is a no-op — the reply still lands in DB and shows up
+  // when the user opens the conversation.
+  const replyFn = (msg: OutboundMessage) => {
+    iosChannel.send(user.id, msg).catch(() => {});
+  };
+  const KICKOFF = '用户刚刚新建了一个与你的会话。此消息为系统发送，用户不可见。你可说些什么，也可以什么都不说。';
+  runWithUser(user.id, () =>
+    handleUserMessage({
+      conversationId: id,
+      botId,
+      userId: user.id,
+      userMessages: [{ content: KICKOFF }],
+      replyFn,
+      silent: true,
+    })
+  ).catch(e => console.warn('[mobile] kickoff failed:', e));
+
   return c.json(findConversationById(id));
 });
 
