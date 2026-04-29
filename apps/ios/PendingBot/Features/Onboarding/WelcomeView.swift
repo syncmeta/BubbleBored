@@ -111,8 +111,10 @@ struct WelcomeView: View {
             }
         } else {
             VStack(spacing: 14) {
-                appleButton
-                googleButton
+                HStack(spacing: 12) {
+                    appleButton
+                    googleButton
+                }
                 emailRow
             }
             .disabled(isBusy)
