@@ -1,0 +1,74 @@
+server:
+  port: 3456
+  host: "0.0.0.0"
+  # 当本服务部署到公网/有固定域名时填这里。iOS 客户端的「钥匙」分享链接会
+  # 默认用这个地址 — 不填的话默认用本机检测到的 LAN IP。
+  publicURL: "https://bot.pendingname.com"
+
+openrouter:
+  # Per-task model assignment.
+  #   chat          — fallback for bots without their own `model`
+  #   humanAnalysis — anything reading the user (画像/总结/日记/finding 价值判断)
+  #   agentDecision — agent loop drivers (冲浪 lead 等)
+  #   skim          — long-page compression behind read_url
+  #   vision        — chat calls when the user attaches images, regardless of bot
+  models:
+    chat: "x-ai/grok-4.20"
+    humanAnalysis: "anthropic/claude-opus-4.7"
+    agentDecision: "z-ai/glm-5.1"
+    skim: "deepseek/deepseek-v4-pro"
+    vision: "anthropic/claude-opus-4.7"
+
+defaults:
+  accessMode: "open"
+  review:
+    enabled: true
+    roundInterval: 8
+    timerMs: 10000
+    maxSearchRequests: 10
+  surfing:
+    enabled: true
+    autoTrigger: false
+    initialIntervalSec: 1800
+    multiplier: 1.5
+    maxIntervalSec: 86400
+    idleStopSec: 172800
+    costBudgetUsd: 0.30
+    journalEntriesInChat: 5
+  debounce:
+    enabled: true
+    maxWaitMs: 15000
+
+# 预设机器人 — 名字用 01/02/03… 这种短编号。它们用的模型在 UI
+# 里以标签形式接在编号后面(见 Bot.nameWithModel,例如 「01 · glm-5.1」)。
+# 「议论」里也是这套机器人在吵。想要同模型不同人格,新增一个 key
+# 改 promptFile 即可。
+bots:
+  "claude-opus-4.7":
+    displayName: "01"
+    promptFile: "default.md"
+    model: "anthropic/claude-opus-4.7"
+  "gpt-5.4":
+    displayName: "02"
+    promptFile: "default.md"
+    model: "openai/gpt-5.4"
+  "kimi-k2.6":
+    displayName: "03"
+    promptFile: "default.md"
+    model: "moonshotai/kimi-k2.6"
+  "grok-4.20":
+    displayName: "04"
+    promptFile: "default.md"
+    model: "x-ai/grok-4.20"
+  "glm-5.1":
+    displayName: "05"
+    promptFile: "default.md"
+    model: "z-ai/glm-5.1"
+  "gemini-3-flash-preview":
+    displayName: "06"
+    promptFile: "default.md"
+    model: "google/gemini-3-flash-preview"
+  "seed-2.0-lite":
+    displayName: "07"
+    promptFile: "default.md"
+    model: "bytedance-seed/seed-2.0-lite"

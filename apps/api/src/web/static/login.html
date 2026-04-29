@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 大绿豆</title>
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box }
+  html, body {
+    margin: 0; padding: 0;
+    min-height: 100%;
+    font-family: -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  body {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100vh;
+    background: #f8fafc;
+    color: #1f2937;
+    padding: 1.5rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0f172a; color: #e5e7eb; }
+  }
+  h1 {
+    font-size: 1.5rem; margin: 0 0 .25rem;
+    letter-spacing: .02em;
+  }
+  p.tag {
+    color: #64748b; font-size: 0.95rem;
+    margin: 0 0 2rem; text-align: center;
+  }
+  @media (prefers-color-scheme: dark) {
+    p.tag { color: #94a3b8 }
+  }
+  #clerk-mount { width: 100%; max-width: 28rem; }
+  .fallback {
+    max-width: 28rem;
+    border: 1px solid rgba(0,0,0,.08);
+    background: rgba(255,255,255,.7);
+    padding: 1.25rem 1.5rem;
+    border-radius: 14px;
+    line-height: 1.6;
+  }
+  @media (prefers-color-scheme: dark) {
+    .fallback { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.08); }
+  }
+  .fallback code {
+    background: rgba(0,0,0,.06);
+    padding: .1rem .35rem; border-radius: 4px;
+    font-size: .9em;
+  }
+  @media (prefers-color-scheme: dark) {
+    .fallback code { background: rgba(255,255,255,.08) }
+  }
+  .err {
+    color: #dc2626; font-size: .9rem;
+    margin-top: 1rem; text-align: center;
+  }
+  .loader { color: #94a3b8; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>大绿豆 · PendingBot</h1>
+  <p class="tag">用 Apple / Google / 邮箱登录，去找你的 AI 朋友。</p>
+
+  <div id="clerk-mount"></div>
+  <div id="status" class="loader">加载中…</div>
+
+<script>
+(async function () {
+  const status = document.getElementById('status');
+  const mount = document.getElementById('clerk-mount');
+
+  // Public client config — tells us which auth methods are wired up.
+  let cfg;
+  try {
+    cfg = await (await fetch('/api/config', { credentials: 'include' })).json();
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = '加载配置失败：' + (e?.message ?? e);
+    return;
+  }
+
+  // Already signed in (cookie present) — bounce to app.
+  try {
+    const me = await fetch('/api/me', { credentials: 'include' });
+    if (me.ok) { location.replace('/'); return; }
+  } catch {}
+
+  if (!cfg.auth?.clerk) {
+    // Self-host install with no Clerk wired up — show the invite path.
+    status.style.display = 'none';
+    mount.innerHTML = `
+      <div class="fallback">
+        <strong>这台服务器还没接入 Clerk 登录。</strong>
+        <p>Admin 在终端日志里能看到一条形如
+        <code>https://your-host/i/&lt;token&gt;</code> 的邀请链接，
+        把它发给你或在你电脑上用浏览器打开即可创建账号。</p>
+      </div>`;
+    return;
+  }
+
+  // Lazy-load Clerk's browser SDK from their CDN. With the
+  // data-clerk-publishable-key attribute set, the script auto-initialises
+  // window.Clerk as a singleton instance — we don't `new` it ourselves.
+  const { issuer, publishableKey } = cfg.auth.clerk;
+  const sdkUrl = `${issuer.replace(/\/+$/, '')}/npm/@clerk/clerk-js@5/dist/clerk.browser.js`;
+
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.async = true;
+    s.crossOrigin = 'anonymous';
+    s.dataset.clerkPublishableKey = publishableKey;
+    s.src = sdkUrl;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('failed to load Clerk SDK'));
+    document.head.appendChild(s);
+  });
+
+  if (!window.Clerk) {
+    status.className = 'err';
+    status.textContent = 'Clerk SDK 加载完成但未挂上 window.Clerk — 检查 publishable key';
+    return;
+  }
+
+  await window.Clerk.load({ /* default appearance */ });
+
+  // Already signed in via Clerk (e.g. cookie still valid) — exchange
+  // straight to a pbk_live_* and bounce.
+  if (window.Clerk.session) {
+    await exchangeAndRedirect();
+    return;
+  }
+
+  // Mount Clerk's hosted SignIn widget. It handles all UI: email code,
+  // Google OAuth, etc.
+  status.style.display = 'none';
+  window.Clerk.mountSignIn(mount, {
+    afterSignInUrl: '/login.html',
+    afterSignUpUrl: '/login.html',
+  });
+
+  // Poll for session to appear, then exchange. This is the same approach
+  // the Clerk hosted UI uses internally; addListener would be cleaner but
+  // is brittle across SDK versions.
+  const tick = setInterval(async () => {
+    if (window.Clerk.session) {
+      clearInterval(tick);
+      await exchangeAndRedirect();
+    }
+  }, 800);
+})();
+
+async function exchangeAndRedirect() {
+  const status = document.getElementById('status');
+  status.style.display = 'block';
+  status.className = 'loader';
+  status.textContent = '登录中…';
+  try {
+    const token = await window.Clerk.session.getToken();
+    const res = await fetch('/api/auth/clerk/exchange', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err || `exchange failed (${res.status})`);
+    }
+    location.replace('/');
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = '换 token 失败：' + (e?.message ?? e);
+  }
+}
+</script>
+</body>
+</html>

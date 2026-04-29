@@ -1,16 +1,33 @@
 # Dependencies
-main/node_modules/
+node_modules/
+**/node_modules/
 
 # Build output
-main/dist/
+**/dist/
+**/.vite/
+**/.next/
+**/.vercel/
+**/.turbo/
+**/next-env.d.ts
+**/tsconfig.tsbuildinfo
 
-# SQLite database files
-main/data/*.sqlite
-main/data/*.sqlite-shm
-main/data/*.sqlite-wal
+# SQLite database files (only matter for self-host dev runs)
+**/data/*.sqlite
+**/data/*.sqlite-shm
+**/data/*.sqlite-wal
+**/data/uploads/
 
-# Environment variables
-main/.env
+# Bun
+bun.lock
+**/bun.lock
+
+# Environment files
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 
 # macOS
 .DS_Store
@@ -18,9 +35,6 @@ main/.env
 # Xcode user-specific state
 **/xcuserdata/
 *.xcuserstate
-
-# Bun
-main/bun.lock
 
 # Claude Code
 .claude/
