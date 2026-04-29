@@ -8,12 +8,26 @@ import { HTTPException } from 'hono/http-exception';
 // preflight. Empty / unset → wildcard for dev convenience (matches the prior
 // "no CORS at all" behavior, just with the headers explicit).
 //
+// In production (NODE_ENV=production or FLY_APP_NAME set) the wildcard is a
+// real CSRF risk — any origin with `credentials: include` could exercise the
+// authenticated API on behalf of a logged-in user. We refuse to start in that
+// case so a forgotten env var becomes a noisy boot failure, not a quiet
+// security hole.
+//
 // Native iOS clients send no Origin header (URLSession + WS), so they bypass
 // this entirely — they just don't get gated.
 
 const allowed = (() => {
   const raw = process.env.CORS_ALLOWED_ORIGINS;
-  if (!raw) return null;
+  if (!raw) {
+    if (process.env.NODE_ENV === 'production' || process.env.FLY_APP_NAME) {
+      throw new Error(
+        'CORS_ALLOWED_ORIGINS must be set in production. ' +
+        'Set it to a comma-separated list of allowed origins (e.g. "https://bot.pendingname.com").'
+      );
+    }
+    return null;
+  }
   return new Set(raw.split(',').map(s => s.trim()).filter(Boolean));
 })();
 
