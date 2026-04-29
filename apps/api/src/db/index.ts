@@ -762,4 +762,67 @@ function runMigrations(db: Database): void {
     `);
     db.exec('PRAGMA user_version = 30');
   }
+
+  // v31: richer Clerk identity columns on users + retire the share-token /
+  // share-base-url machinery on api_keys. Clerk-derived first/last/username/
+  // imageUrl populate the dashboard ("我" tab) directly, so iOS no longer
+  // shows the literal string "user" when Clerk's session JWT omits an email
+  // claim. The share_* columns powered the v1 "scan a QR / tap a link to
+  // log iPhones in" flow that the Clerk-hosted login replaced — no in-flight
+  // share links exist anymore (no production users on the old flow), so we
+  // drop the columns + index outright instead of carrying them as dead
+  // weight forever.
+  if (userVersion < 31) {
+    const userCols = db.query(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+    if (!userCols.some(c => c.name === 'first_name')) {
+      db.exec(`ALTER TABLE users ADD COLUMN first_name TEXT`);
+    }
+    if (!userCols.some(c => c.name === 'last_name')) {
+      db.exec(`ALTER TABLE users ADD COLUMN last_name TEXT`);
+    }
+    if (!userCols.some(c => c.name === 'username')) {
+      db.exec(`ALTER TABLE users ADD COLUMN username TEXT`);
+    }
+    if (!userCols.some(c => c.name === 'image_url')) {
+      db.exec(`ALTER TABLE users ADD COLUMN image_url TEXT`);
+    }
+
+    // share_token had a UNIQUE constraint, which SQLite can't drop via
+    // ALTER TABLE DROP COLUMN. Standard workaround: rebuild the table.
+    const apiKeyCols = db.query(`PRAGMA table_info(api_keys)`).all() as Array<{ name: string }>;
+    const hasShareCols = apiKeyCols.some(c =>
+      c.name === 'share_token' || c.name === 'share_base_url' || c.name === 'share_alt_urls_json'
+    );
+    if (hasShareCols) {
+      db.exec(`DROP INDEX IF EXISTS idx_api_keys_share`);
+      db.exec(`DROP INDEX IF EXISTS idx_api_keys_user`);
+      db.exec(`DROP INDEX IF EXISTS idx_api_keys_hash`);
+      db.exec(`
+        CREATE TABLE api_keys_new (
+          id TEXT PRIMARY KEY,
+          key_prefix TEXT NOT NULL,
+          key_hash TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          name TEXT NOT NULL,
+          created_by TEXT REFERENCES users(id),
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          last_used_at INTEGER,
+          revoked_at INTEGER
+        );
+      `);
+      db.exec(`
+        INSERT INTO api_keys_new
+          (id, key_prefix, key_hash, user_id, name, created_by,
+           created_at, last_used_at, revoked_at)
+        SELECT id, key_prefix, key_hash, user_id, name, created_by,
+               created_at, last_used_at, revoked_at
+        FROM api_keys;
+      `);
+      db.exec(`DROP TABLE api_keys;`);
+      db.exec(`ALTER TABLE api_keys_new RENAME TO api_keys;`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);`);
+    }
+    db.exec('PRAGMA user_version = 31');
+  }
 }

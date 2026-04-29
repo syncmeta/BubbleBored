@@ -85,14 +85,6 @@
           </svg>
           <span>我</span>
         </button>
-        <button class="rail-tab" data-tab="keys" role="tab" title="钥匙">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="7.5" cy="15.5" r="4.5"/>
-            <path d="M10.7 12.3 21 2"/>
-            <path d="M16 7l4 4"/>
-          </svg>
-          <span>钥匙</span>
-        </button>
       </nav>
       <div class="rail-bottom">
         <button id="rail-admin-btn" class="rail-btn" hidden onclick="showAdminPanel()" title="管理后台">
@@ -411,58 +403,6 @@
               </div>
             </details>
           </section>
-        </div>
-      </div>
-
-      <!-- 钥匙 tab — iOS API key management -->
-      <div id="keys-view" class="view">
-        <div class="me-scroll">
-          <section class="me-section">
-            <h3>iOS 客户端钥匙
-              <span class="me-section-hint">为每位 iPhone 使用者签发一把钥匙；钥匙持有者通过大绿豆 iOS app 访问本服务，数据相互隔离</span>
-            </h3>
-            <div class="me-form">
-              <label>名称（给谁用？）
-                <input type="text" id="keys-new-name" maxlength="40" placeholder="例如：朋友的 iPhone">
-              </label>
-              <label>登录码里的服务器地址
-                <select id="keys-new-baseurl"></select>
-              </label>
-              <div id="keys-baseurl-warning" class="me-section-status" style="display:none"></div>
-              <label>
-                <input type="checkbox" id="keys-include-alts" checked>
-                包含其他可达地址作为备用（iOS 会自动探活,LAN 和 WAN 都能用）
-              </label>
-              <button class="btn-primary" onclick="createNewKey()" style="align-self:flex-start">创建新钥匙</button>
-            </div>
-            <div id="keys-list" class="keys-list" style="margin-top:16px"></div>
-          </section>
-        </div>
-      </div>
-
-      <!-- Modal: show fresh key (one-shot) -->
-      <div id="keys-show-modal" class="modal-overlay" style="display:none" onclick="closeModal('keys-show-modal', event)">
-        <div class="modal-card" onclick="event.stopPropagation()" style="max-width:520px">
-          <div class="modal-head">
-            <span>钥匙已创建 — 仅显示一次</span>
-            <button class="modal-close" onclick="closeModal('keys-show-modal')" aria-label="关闭">×</button>
-          </div>
-          <div class="modal-body">
-            <p style="margin-top:0;color:var(--muted)">关闭此对话框后将无法再次查看完整钥匙或登录码。请立即复制保存。</p>
-
-            <label class="modal-label">完整钥匙</label>
-            <div class="keys-copy-row">
-              <input type="text" id="keys-show-key" readonly>
-              <button class="btn-soft" onclick="copyToClipboard('keys-show-key', this)">复制</button>
-            </div>
-
-            <label class="modal-label" style="margin-top:16px">登录码（一串文本，可直接发微信）</label>
-            <div class="keys-copy-row">
-              <textarea id="keys-show-logincode" readonly rows="3" style="resize:none;font-family:ui-monospace,monospace;font-size:12px"></textarea>
-              <button class="btn-soft" onclick="copyToClipboard('keys-show-logincode', this)">复制</button>
-            </div>
-            <p style="font-size:12px;color:var(--muted);margin:6px 0 0">登录码包含服务器地址和钥匙。使用者在大绿豆 iOS app 里粘贴一次即可登录。建议一次性使用，用完丢弃。</p>
-          </div>
         </div>
       </div>
 

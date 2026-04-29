@@ -2,10 +2,12 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { randomUUID, randomBytes } from 'crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { createClerkClient, type User as ClerkUser } from '@clerk/backend';
 import {
   createUser, createApiKey, findUserByClerkId, setUserClerkIdentity,
   findUserById, deleteUserCascade, listApiKeys,
-  revokeApiKey,
+  revokeApiKey, setUserDisplayName,
+  type ClerkIdentityFields,
 } from '../db/queries';
 import {
   hashApiKey, base64UrlEncode, setSessionCookie, clearSessionCookie,
@@ -45,9 +47,17 @@ function getJwks() {
 
 interface ClerkClaims extends JWTPayload {
   sub: string;
+  // Default Clerk session JWTs do NOT include user fields like email or
+  // first_name — only sub/iat/exp/nbf/azp. We accept these optional claims
+  // anyway in case a custom JWT template was configured server-side; if
+  // they're missing we fall back to the Clerk Backend SDK below.
   email?: string;
   primary_email_address?: string;
   email_address?: string;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  image_url?: string;
 }
 
 async function verifyClerkJwt(token: string): Promise<ClerkClaims> {
@@ -62,21 +72,108 @@ async function verifyClerkJwt(token: string): Promise<ClerkClaims> {
   return payload as ClerkClaims;
 }
 
-function extractEmail(claims: ClerkClaims): string | null {
-  return (
-    claims.email
-    || claims.primary_email_address
-    || claims.email_address
-    || null
-  );
+// ── Clerk Backend SDK (server-to-Clerk) ────────────────────────────────────
+//
+// The default Clerk session JWT only contains sub/iat/exp — no email, no
+// first_name, no image_url. Rather than asking every deployment to set up a
+// custom JWT template just to populate the dashboard "我" tab, we hit the
+// Clerk Backend API once per /clerk/exchange to fetch the full user record.
+// Exchange isn't a hot path (runs on login), so the extra round-trip is
+// fine. Falls back to JWT claims if CLERK_SECRET_KEY isn't configured (lets
+// dev / self-host run with just the publishable key + JWKS).
+
+let clerkClient: ReturnType<typeof createClerkClient> | null = null;
+function getClerkClient() {
+  if (clerkClient) return clerkClient;
+  const secretKey = process.env.CLERK_SECRET_KEY;
+  if (!secretKey) return null;
+  clerkClient = createClerkClient({ secretKey });
+  return clerkClient;
+}
+
+interface ClerkIdentitySnapshot {
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  username: string | null;
+  imageUrl: string | null;
+}
+
+function emptySnapshot(): ClerkIdentitySnapshot {
+  return { email: null, firstName: null, lastName: null, username: null, imageUrl: null };
+}
+
+function snapshotFromClerkUser(u: ClerkUser): ClerkIdentitySnapshot {
+  // primaryEmailAddressId points at the verified primary; fall back to the
+  // first listed address if the primary is somehow unset.
+  const primary = u.emailAddresses.find(e => e.id === u.primaryEmailAddressId)
+    ?? u.emailAddresses[0];
+  return {
+    email: primary?.emailAddress ?? null,
+    firstName: u.firstName ?? null,
+    lastName: u.lastName ?? null,
+    username: u.username ?? null,
+    imageUrl: u.imageUrl ?? null,
+  };
+}
+
+function snapshotFromClaims(c: ClerkClaims): ClerkIdentitySnapshot {
+  return {
+    email: c.email || c.primary_email_address || c.email_address || null,
+    firstName: c.first_name || null,
+    lastName: c.last_name || null,
+    username: c.username || null,
+    imageUrl: c.image_url || null,
+  };
+}
+
+async function fetchClerkIdentity(
+  claims: ClerkClaims,
+): Promise<ClerkIdentitySnapshot> {
+  const client = getClerkClient();
+  if (client) {
+    try {
+      const u = await client.users.getUser(claims.sub);
+      return snapshotFromClerkUser(u);
+    } catch (e) {
+      // Network blip / wrong secret key shouldn't block login — fall back
+      // to whatever the JWT carried. The user gets a degraded display name
+      // but still gets a usable session.
+      console.warn('[clerk] users.getUser failed, falling back to JWT claims:', e);
+    }
+  }
+  return snapshotFromClaims(claims);
+}
+
+// Pick the most human-friendly handle Clerk has for this user.
+//   firstName + lastName   →   "Yi Zhang"
+//   firstName              →   "Yi"
+//   username               →   "yzhang"
+//   email local part       →   "yzhang"   (from yzhang@example.com)
+//   "用户"                 →   absolute last resort
+function deriveDisplayName(snap: ClerkIdentitySnapshot): string {
+  const full = [snap.firstName, snap.lastName]
+    .map(s => s?.trim()).filter(Boolean).join(' ');
+  if (full) return full;
+  if (snap.username?.trim()) return snap.username.trim();
+  const localPart = snap.email?.split('@')[0]?.trim();
+  if (localPart) return localPart;
+  return '用户';
 }
 
 // ── /api/auth/clerk/exchange ───────────────────────────────────────────────
 
 authRoutes.post('/clerk/exchange', async (c) => {
-  const body = await c.req.json<{ token?: string }>().catch(() => ({} as { token?: string }));
+  const body = await c.req.json<{ token?: string; clientHint?: string }>().catch(
+    () => ({} as { token?: string; clientHint?: string }),
+  );
   const token = (body.token ?? '').trim();
   if (!token) return c.json({ error: 'token required' }, 400);
+
+  // The web SPA runs in a browser; iOS sends `clientHint: "ios"` so we can
+  // tag new accounts with the right channel. Anything we don't recognise
+  // falls back to 'web' (the original behaviour).
+  const channel = body.clientHint === 'ios' ? 'ios' : 'web';
 
   let claims: ClerkClaims;
   try {
@@ -87,21 +184,45 @@ authRoutes.post('/clerk/exchange', async (c) => {
   }
 
   const clerkUserId = claims.sub;
-  const email = extractEmail(claims);
+  const snap = await fetchClerkIdentity(claims);
+  const identityFields: ClerkIdentityFields = {
+    clerkUserId,
+    email: snap.email,
+    firstName: snap.firstName,
+    lastName: snap.lastName,
+    username: snap.username,
+    imageUrl: snap.imageUrl,
+  };
 
   // Upsert: existing user keyed by clerk_user_id, otherwise create a fresh
-  // users row. New rows go onto channel='web' since this is the same surface
-  // a web/iOS user would land on after Clerk login.
+  // users row. We always re-sync the Clerk-mirror columns so name / avatar
+  // changes in Clerk propagate on the next login.
   let user = findUserByClerkId(clerkUserId);
   if (!user) {
     const id = randomUUID();
     const externalId = randomUUID();
-    const display = email?.split('@')[0] || 'user';
-    createUser(id, 'web', externalId, display);
-    setUserClerkIdentity(id, clerkUserId, email);
+    const display = deriveDisplayName(snap);
+    createUser(id, channel, externalId, display);
+    setUserClerkIdentity(id, identityFields);
     user = findUserById(id);
-  } else if (email && user.email !== email) {
-    setUserClerkIdentity(user.id, clerkUserId, email);
+  } else {
+    setUserClerkIdentity(user.id, identityFields);
+    // If the user has never customised their handle (display_name still
+    // matches whatever we wrote at signup), keep it tracking Clerk. If
+    // they've edited it via PATCH /me/profile, leave it alone.
+    const currentDisplay = user.display_name as string | null;
+    const previousDerived = deriveDisplayName({
+      email: user.email ?? null,
+      firstName: user.first_name ?? null,
+      lastName: user.last_name ?? null,
+      username: user.username ?? null,
+      imageUrl: null,
+    });
+    if (currentDisplay === previousDerived) {
+      const next = deriveDisplayName(snap);
+      if (next !== currentDisplay) setUserDisplayName(user.id, next);
+    }
+    user = findUserById(user.id);
   }
   if (!user) return c.json({ error: 'user upsert failed' }, 500);
 
@@ -115,10 +236,7 @@ authRoutes.post('/clerk/exchange', async (c) => {
     keyPrefix: key.slice(0, KEY_PREFIX_DISPLAY_LEN),
     keyHash: hashApiKey(key),
     userId: user.id,
-    name: 'web-session',
-    shareToken: null,
-    shareBaseUrl: null,
-    shareAltUrls: null,
+    name: channel === 'ios' ? 'ios-session' : 'web-session',
     createdBy: null,
   });
 
@@ -129,7 +247,11 @@ authRoutes.post('/clerk/exchange', async (c) => {
     user: {
       id: user.id,
       display_name: user.display_name,
-      email: email ?? user.email ?? null,
+      email: user.email ?? null,
+      first_name: user.first_name ?? null,
+      last_name: user.last_name ?? null,
+      username: user.username ?? null,
+      image_url: user.image_url ?? null,
       is_admin: user.is_admin === 1,
     },
   });

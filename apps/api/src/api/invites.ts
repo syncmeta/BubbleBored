@@ -140,9 +140,6 @@ invitesRoutes.post('/redeem', ipRateLimitMiddleware(10), async (c) => {
     keyHash: hashApiKey(rawKey),
     userId,
     name: displayName,
-    shareToken: null,
-    shareBaseUrl: null,
-    shareAltUrls: null,
     createdBy: null,
   });
 
