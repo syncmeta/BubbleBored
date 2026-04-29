@@ -260,10 +260,10 @@ authRoutes.post('/clerk/exchange', async (c) => {
 // ── DELETE /api/account ────────────────────────────────────────────────────
 //
 // In-app deletion path required by App Store guideline 5.1.1(v). Wipes every
-// row owned by the caller and unlinks every attachment from disk, then clears
-// the session cookie. The Clerk-side identity is the user's responsibility to
-// delete via the Clerk Account UI; we don't proxy that because it'd require
-// holding Clerk admin credentials server-side just to purge an external row.
+// row owned by the caller, unlinks every attachment from disk, deletes the
+// Clerk-side user record (best-effort — failure is logged, not surfaced, so
+// an already-deleted Clerk row doesn't strand the local cleanup), and clears
+// the session cookie.
 //
 // Admins can't delete themselves through this endpoint — that would brick the
 // instance. They have to demote first via the admin panel.
@@ -274,8 +274,24 @@ authRoutes.delete('/account', async (c) => {
   if (auth.is_admin) {
     return c.json({ error: 'admins must demote before deleting account' }, 403);
   }
+  // Capture clerk_user_id before the local cascade wipes it.
+  const fullUser = findUserById(auth.id) as { clerk_user_id?: string | null } | null;
+  const clerkUserId = fullUser?.clerk_user_id ?? null;
+
   const paths = deleteUserCascade(auth.id);
   await unlinkAttachmentFiles(paths).catch(() => {});
+
+  if (clerkUserId) {
+    const client = getClerkClient();
+    if (client) {
+      try {
+        await client.users.deleteUser(clerkUserId);
+      } catch (e) {
+        console.warn('[clerk] users.deleteUser failed:', e);
+      }
+    }
+  }
+
   clearSessionCookie(c);
   return c.json({ ok: true });
 });
