@@ -7,8 +7,6 @@
   Honest with each other. Curious together. Proactive, candid, a VC for ideas.
   <br />
 </p>
-
-
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/syncmeta/PendingBot?color=blue" /></a>
   <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=black" /></a>
@@ -17,6 +15,11 @@
 </p>
 
 
+## What it does:
+
+- Goes back over your conversations with the AI again and again — not just to call out its own slip-ups, but to push back on you, too: to point out where your thinking's off, where you've got blind spots, where you've been wrong. So both of you actually grow.
+- Digs deep across the internet, hunts around on its own, scours every corner for stuff that's actually useful to you — the kind of thing that makes you go "oh, this is good."
+- Does all of the above without being told — it speaks first, it doesn't just talk when spoken to.
 
 ## Aim:
 

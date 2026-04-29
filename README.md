@@ -10,6 +10,7 @@
 </p>
 
 
+
 <p align="center">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/syncmeta/PendingBot?color=blue" /></a>
   <a href="https://bun.sh"><img alt="Bun" src="https://img.shields.io/badge/runtime-Bun-fbf0df?logo=bun&logoColor=black" /></a>
@@ -20,10 +21,15 @@
 <p align="center">
   <a href="README.md">中文</a> · <a href="README_EN.md">English</a>
 </p>
+## 主要功能
+
+- 不断回顾、查证你和 AI 之间的对话，不仅是它自己反省，还要批评你，发现你自身认知的错误和局限，让大家都持续进化、变得更好。
+- 深挖互联网，主动探索，到处苦苦寻觅对你有价值的、让你眼前一亮的信息。
+- 主动地实现上述功能，不是你喊了才动，问一句答一句。
 
 ## 两大目标
 
-- **及时复盘、校正彼此** — 免得聊着聊着就被AI带偏、被骗了、不清醒了
+- **及时复盘、校正彼此** — 免得聊着聊着就被AI带偏、被骗了、不清醒了。当局者迷，旁观者清。
 - **探索未知 做信息的 VC** — 缓解一下我们局限的视野和信息茧房
 
 不是助手，不是又一个什么 Agent 什么虾——助手类应用大把人做，我才不重复造轮子。
