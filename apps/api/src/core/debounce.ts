@@ -1,5 +1,6 @@
 import { configManager } from '../config/loader';
 import { typedSince } from './typing';
+import { logContent } from './log';
 import type { OutboundMessage } from '../bus/types';
 
 // Behavioral debounce based on the user's input activity:
@@ -94,7 +95,7 @@ export function addMessage(
   }
   const textCount = state.pending.filter(e => e.content.length > 0).length;
   const attCount = state.pending.reduce((n, e) => n + e.attachmentIds.length, 0);
-  console.log(`[debounce] buffered (${textCount} msgs, ${attCount} attachments): ${content.slice(0, 50)}`);
+  console.log(`[debounce] buffered (${textCount} msgs, ${attCount} attachments): ${logContent(content, 50)}`);
 
   // Hard timeout — safety net
   if (!state.hardTimer) {
@@ -193,9 +194,9 @@ function doFlush(conversationId: string): void {
   states.delete(conversationId);
 
   if (entries.length > 0 && onReady) {
-    const preview = entries.map(e => e.content).filter(Boolean).join(' ‖ ').slice(0, 80);
+    const joined = entries.map(e => e.content).filter(Boolean).join(' ‖ ');
     const attTotal = entries.reduce((n, e) => n + e.attachmentIds.length, 0);
-    console.log(`[debounce] flushed → ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} "${preview}" +${attTotal} att`);
+    console.log(`[debounce] flushed → ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} "${logContent(joined, 80)}" +${attTotal} att`);
     onReady(entries);
   }
 }
