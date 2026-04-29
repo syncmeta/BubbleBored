@@ -21,6 +21,7 @@ struct MessageTabView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var creatingForBot: Bot?
+    @State private var showBotPicker = false
     // Path-based nav for compact: keyed to .toolbar(.hidden, for: .tabBar)
     // so the bottom tab bar slides out alongside the push transition (rather
     // than snapping back in *after* the back transition finishes, which is
@@ -41,6 +42,14 @@ struct MessageTabView: View {
         .alert("出错了", isPresented: .constant(error != nil), actions: {
             Button("好") { error = nil }
         }, message: { Text(error ?? "") })
+        .sheet(isPresented: $showBotPicker) {
+            BotPickerView { bot in
+                showBotPicker = false
+                Task { await createConversation(with: bot) }
+            }
+            .tint(Theme.Palette.accent)
+            .presentationDragIndicator(.visible)
+        }
     }
 
     // ── Compact (iPhone) ────────────────────────────────────────────────────
@@ -89,25 +98,13 @@ struct MessageTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "消息") {
-                Menu {
-                    Section("选择一个机器人") {
-                        ForEach(bots) { bot in
-                            Button(bot.nameWithModel) {
-                                Task { await createConversation(with: bot) }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                }
-                .disabled(bots.isEmpty)
+                PlusButton(action: { showBotPicker = true }, disabled: bots.isEmpty)
             }
             Group {
                 if loading && conversations.isEmpty {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if conversations.isEmpty {
-                    EmptyHint(text: "和 AI 聊天")
+                    EmptyHint(text: "点这里 选一个机器人聊天", arrowToTopTrailing: true)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {

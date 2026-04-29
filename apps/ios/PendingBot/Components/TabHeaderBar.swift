@@ -35,3 +35,22 @@ struct TabHeaderBar<Trailing: View>: View {
         .padding(.bottom, 8)
     }
 }
+
+/// Native translucent circular "+" — system `.bordered` + `.circle` combo,
+/// matches Apple's own "add" buttons on iOS 17+.
+struct PlusButton: View {
+    let action: () -> Void
+    var disabled: Bool = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+        .tint(Theme.Palette.ink)
+        .disabled(disabled)
+    }
+}

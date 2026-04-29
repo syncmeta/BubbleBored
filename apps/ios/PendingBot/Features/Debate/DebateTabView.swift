@@ -76,15 +76,11 @@ struct DebateTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "议论") {
-                Button { creating = true } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                }
-                .disabled(bots.isEmpty)
+                PlusButton(action: { creating = true }, disabled: bots.isEmpty)
             }
             Group {
                 if conversations.isEmpty {
-                    EmptyHint(text: "让 AI 们议论你")
+                    EmptyHint(text: "点这里 让 AI 们议论你", arrowToTopTrailing: true)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {

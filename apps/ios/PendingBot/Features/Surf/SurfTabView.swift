@@ -63,15 +63,11 @@ struct SurfTabView: View {
     private var sidebarBody: some View {
         VStack(spacing: 0) {
             TabHeaderBar(title: "冲浪") {
-                Button { creating = true } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                }
-                .disabled(bots.isEmpty)
+                PlusButton(action: { creating = true }, disabled: bots.isEmpty)
             }
             Group {
                 if conversations.isEmpty {
-                    EmptyHint(text: "让 AI 帮你网上冲浪，挖掘信息")
+                    EmptyHint(text: "点这里 让 AI 帮你网上冲浪", arrowToTopTrailing: true)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
