@@ -40,28 +40,46 @@ The content below is, for now, written by Claude. I'll check it later.
 
 It revolves around three things — chat, reflection, exploration — and you don't have to nudge it. It does these on its own.
 
-- **🧠 Proactive chat** — WeChat-style by default: short turns, pauses, no over-explaining; switchable to a standard AI tone. If you're typing fast mid-thought, it pauses (debounce) instead of barreling over you.
-- **🪞 Self-review / keeping each other honest** — every N rounds it goes back over the recent conversation: was something it said muddled? Where do you have blind spots? Then it comes back and tells you. The "Review" tab is the surface for this.
-- **🌊 Web surfing** — a separate pipeline. It picks a search direction from your recent topics + portrait, then searches, digs, and skims on its own, and writes the best bits into the conversation. Send `/surf` to trigger manually, or flip on `autoTrigger` to let it run on a schedule.
-- **🗣️ Multi-bot debate** — pick a topic, let two bots with different personalities argue it out, you watch.
-- **🪪 Long-term portrait** — the bot gradually builds a "picture of you in its eyes" that feeds back into how it reflects and what it surfs for.
-- **👥 Multi-bot, co-raised** — each bot is a markdown personality file with its own model, access scope, review cadence, surf cadence. Raise alone or co-raise one with friends.
-- **🛠️ Agent Skills** — Anthropic-style markdown skill snippets. Toggle on, they get spliced into the system prompt; toggle off, they vanish. Six Anthropic presets ship with the repo.
+- **🧠 Proactive chat** — WeChat-style by default: short turns, pauses, no over-explaining; switchable to a standard AI tone. If you're typing fast mid-thought, it pauses instead of barreling over you.
+- **🪞 Self-review / keeping each other honest** — every N rounds it goes back over the recent conversation: was something it said muddled? Where do you have blind spots? Then it comes back and tells you.
+- **🌊 Web surfing** — it goes off and scrounges around the internet for things actually worth showing you, and brings the best bits back to the conversation. Trigger manually with `/surf`, or let it run on a schedule.
+- **🗣️ A circle of bots talking about you** — pull the bots you regularly chat with into a group, and let them discuss *you* — like a circle of friends talking about you behind your back. Multi-angle outside perspective.
+- **🪪 Long-term portrait & memory** — backed by [Honcho](https://honcho.dev): it builds a picture of you over time and remembers things, which feeds back into how it chats, reflects, and surfs.
+- **👥 Many-to-many social / information network** — one bot can chat with many people, and one person can chat with many bots, weaving humans and bots into a network. Friends can co-raise the same bot, which then carries an impression of each of you.
+- **🤖 Basic agent capabilities** — Anthropic-style markdown skills as a starting point; more mature agent capability is on the way.
 - **🔐 BYOK** — don't want to be billed by the host? Drop in your own OpenRouter key and every call runs on your account.
-- **🧩 Hot-reloaded prompts** — anything under `apps/api/prompts/` takes effect on save, no restart.
 
 ## 💬 What it's like to actually use
 
 A few concrete moments:
 
-- **It pulls the brake mid-chat**: you're hashing out a decision; a few rounds later it sends, "Hold on — what I said earlier contradicts itself, retracting." That's the review loop firing.
-- **You wake up to a surf haul**: `autoTrigger` was on overnight; based on what you'd been talking about, it went off and rummaged for hours, and now there are three angles you hadn't considered.
-- **Make two bots argue**: stuck on a choice, hand the topic to two bots with very different personalities and watch them debate it.
+- **It pulls the brake mid-chat**: you're hashing out a decision; a few rounds later it sends, "Hold on — what I said earlier contradicts itself, retracting."
+- **You wake up to a surf haul**: `autoTrigger` was on overnight; it went off and rummaged for hours, and now there are three angles you hadn't considered.
+- **Listening to your bots talk about you**: the bots you usually chat with sit down together and discuss a decision you're stuck on, while you watch — multi-angle outsiders.
+- **A few friends co-raising one bot**: a small friend group raises one bot together; it has an impression of each of you and can stitch the different perspectives together.
 - **Heavy GPT/Claude/Grok user with your own key**: drop your OpenRouter key under "Me" → Settings; from then on every model call goes against your account.
 
 ## 🚀 Get started
 
-### Self-host (simplest)
+The app is live. A few ways in right now.
+
+### iOS (most convenient — but unfinished)
+
+Native SwiftUI, six tabs: Messages / Debate / Surf / Review / Portrait / Me. **Not yet on the App Store, still actively iterating.** For now, build from source and run it via Xcode:
+
+```bash
+brew install xcodegen
+cd apps/ios && xcodegen generate
+open PendingBot.xcodeproj
+```
+
+Pick a Signing Team on first open. On first launch you **pick one of three import flows**: QR scan / paste login code / manual entry. See [apps/ios/README.md](apps/ios/README.md).
+
+### Web — bot.pendingname.com
+
+The hosted instance is live at [`bot.pendingname.com`](https://bot.pendingname.com). **It's rough right now** — basically a scaffold Claude put together — usable, but a long way from finished. Iterating.
+
+### Self-host
 
 Zero external accounts, runs locally:
 
@@ -77,49 +95,36 @@ Open the `http://localhost:3456/i/...` link printed in the console → create th
 
 ### Hosted deployment
 
-Full Fly.io + Cloudflare + Turso/R2 + Clerk recipe in [docs/deploy.md](docs/deploy.md). Machine cost ~$3/month. `bot.pendingname.com` runs this stack.
+Full Fly.io + Cloudflare + Turso/R2 + Clerk + Honcho recipe in [docs/deploy.md](docs/deploy.md). Machine cost ~$3/month. `bot.pendingname.com` runs this stack.
 
-An adapter layer lets both modes share one codebase: env unset → local SQLite + local disk + invite codes; env set → Turso / R2 / Clerk. Switch by changing env, not code.
+An adapter layer lets both modes share one codebase: env unset → local SQLite + local disk + invite codes; env set → Turso / R2 / Clerk / Honcho. Switch by changing env, not code.
 
 ### Configure bots
 
 Add or tweak bots in `apps/api/config.yaml`; personality files go under `apps/api/prompts/bots/`, no fixed format. Full schema: [apps/api/src/config/schema.ts](apps/api/src/config/schema.ts).
 
-### Web
-
-Just open the URL the backend prints (default `http://localhost:3456`). Responsive — works on mobile too.
-
-### iOS
-
-Native SwiftUI, six tabs: Messages / Debate / Surf / Review / Portrait / Me.
-
-```bash
-brew install xcodegen
-cd apps/ios && xcodegen generate
-open PendingBot.xcodeproj
-```
-
-Pick a Signing Team on first open. On first launch you **pick one of three import flows**: QR scan / paste login code / manual entry. See [apps/ios/README.md](apps/ios/README.md).
-
 ## 📍 Progress
 
-- **Backend (apps/api)** — everything above is in; this is the core of the repo.
-- **iOS (apps/ios)** — all six tabs working; sign-in via Apple / Google / invite code.
-- **Web (apps/web)** — React + shadcn/ui scaffold, rewrite in progress; day-to-day use still goes through the backend's bundled legacy UI.
-- **Hosted instance** — `bot.pendingname.com` (Fly.io + Cloudflare + Clerk).
+Concrete shell — walls up, finish work pending.
+
+- **Backend (apps/api)** — running, most of the features above work, still iterating heavily.
+- **iOS (apps/ios)** — all six tabs working; sign-in via Apple / Google / invite code; not yet on the App Store.
+- **Web (apps/web)** — Claude-scaffolded, mid-rewrite. `bot.pendingname.com` currently still serves the backend's bundled legacy UI.
+- **Hosted instance** — `bot.pendingname.com` (Fly.io + Cloudflare + Clerk + Honcho).
 
 ## 🙏 Credits & references
 
+- **Portrait & memory** are powered by [Honcho](https://honcho.dev) ([plastic-labs/honcho](https://github.com/plastic-labs/honcho), Apache-2.0).
 - **Agent Skills presets** come from [anthropic/skills](https://github.com/anthropics/skills) (Apache-2.0), vendored verbatim under [apps/api/prompts/skills/anthropic/](apps/api/prompts/skills/anthropic/) — see [NOTICE](apps/api/prompts/skills/anthropic/NOTICE.md).
 - **Runtime**: [Bun](https://bun.sh) (MIT) · [Hono](https://hono.dev) (MIT) · [OpenAI Node SDK](https://github.com/openai/openai-node) (Apache-2.0) · [Honcho SDK](https://github.com/plastic-labs/honcho) (Apache-2.0) · [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk) (MIT) · [Zod](https://github.com/colinhacks/zod) (MIT) · [yaml](https://github.com/eemeli/yaml) (ISC) · [node-qrcode](https://github.com/soldair/node-qrcode) (MIT).
-- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Jina AI](https://jina.ai) (search / fetch, optional) · Apple Push Notification service (optional) · [Clerk](https://clerk.com) (auth, optional).
+- **External services**: [OpenRouter](https://openrouter.ai) (model routing) · [Honcho](https://honcho.dev) (portrait / memory) · [Jina AI](https://jina.ai) (search / fetch, optional) · [Clerk](https://clerk.com) (auth, optional) · Apple Push Notification service (optional).
 
 ## 🧱 Stack
 
-- **Backend**: Bun + Hono + SQLite + OpenRouter + WebSocket
+- **Backend**: Bun + Hono + SQLite + OpenRouter + Honcho + WebSocket
 - **Web**: React + Vite + Tailwind + shadcn/ui + TanStack Query
 - **iOS**: Swift + SwiftUI + XcodeGen
-- **Hosted**: Fly.io (API) + Cloudflare (DNS/WAF/Pages/R2) + Clerk (Auth)
+- **Hosted**: Fly.io (API) + Cloudflare (DNS/WAF/Pages/R2) + Clerk (Auth) + Honcho (portrait / memory)
 
 ## 📂 Repo layout
 
